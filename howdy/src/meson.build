@@ -56,6 +56,7 @@ pam_module_conf_data.set('config_file_path', config_path)
 pam_config_dir = get_option('prefix') / get_option('datadir') / 'pam-configs'
 if (get_option('pam_config_dir'))
     pam_config_dir = get_option('pam_config_dir')
+endif
 subdir('pam')
 if get_option('install_pam_config')
     # pamdir is inherited from the pam subproject
