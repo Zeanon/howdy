@@ -53,6 +53,9 @@ endif
 pam_module_conf_data = configuration_data(paths_dict)
 pam_module_conf_data.set('compare_script_path', join_paths(pysourcesinstalldir, 'compare.py'))
 pam_module_conf_data.set('config_file_path', config_path)
+pam_config_dir = get_option('prefix') / get_option('datadir') / 'pam-configs'
+if (get_option('pam_config_dir'))
+    pam_config_dir = get_option('pam_config_dir')
 subdir('pam')
 if get_option('install_pam_config')
     # pamdir is inherited from the pam subproject
@@ -63,7 +66,7 @@ if get_option('install_pam_config')
     )
     install_data(
         pam_config,
-        install_dir: get_option('prefix') / get_option('datadir') / 'pam-configs',
+        install_dir: pam_config_dir,
         install_mode: 'rwxr-xr-x',
         install_tag: 'pam',
         rename: 'howdy',
