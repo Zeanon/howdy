@@ -99,7 +99,7 @@ python3 -m venv .venv
 
 # Then activate it and install meson in it
 source .venv/bin/activate
-pip3 install meson
+pip3 install dlib meson elevate keyboard
 
 # Deactivate it and install system site packages
 deactivate
@@ -121,13 +121,13 @@ source .venv/bin/activate
 
 # (.venv) should now appear before your username in bash
 
-meson setup build --python.install-env venv 
+meson setup build --python.install-env venv
 
 # If everything appears to finish without error then you are
 # good to move on
 ```
 
-While still in the venv, it is a good time to install the pip package dependencies (mainly dlib) as well as meson (Meson was already installed earlier but for this to work properly you should use the pip version installed separately in the venv. You may even get away with not installing it through apt although I have not tested that).
+While still in the venv, it is a good time to install the pip package dependencies again in case one failed before before of missing system site packages (mainly dlib) as well as meson (Meson was already installed earlier but for this to work properly you should use the pip version installed separately in the venv. You may even get away with not installing it through apt although I have not tested that).
 You can run pip like normal for installation **([don't use sudo](https://stackoverflow.com/questions/78003100/running-pip-install-in-virtual-environment-tries-to-install-packages-in-default))**:
 
 ```

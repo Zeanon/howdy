@@ -7,6 +7,6 @@ option('log_path', type: 'string', value: '/var/log/howdy', description: 'Set th
 option('install_in_site_packages', type: 'boolean', value: false, description: 'Install howdy python files in site packages')
 option('py_sources_dir', type: 'string', value: '', description: 'Set the python sources directory')
 option('install_pam_config', type: 'boolean', value: true, description: 'Install pam config file (for Debian/Ubuntu)')
-option('python_path', type: 'string', value: '.venv/bin/python3', description: 'Set the path to the python executable')
+option('python_path', type: 'string', value: '/home/user/Howdy/.venv/bin/python3', description: 'Set the path to the python executable')
 option('with_polkit', type: 'boolean', value: true, description: 'Install polkit policy config file')
 option('pam_config_dir', type: 'string', value: '/usr/share/pam-configs', description: 'Set the path to the pam-config drop in')
