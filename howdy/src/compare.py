@@ -1,6 +1,13 @@
 # Compare incoming video with known faces
 # Running in a local python instance to get around PATH issues
 
+# Intercept Ctrl+C and exit gracefully
+def handle_sigint(signum, frame):
+	raise SystemExit
+
+import signal
+signal.signal(signal.SIGINT, handle_sigint)
+
 # Import time so we can start timing asap
 import time
 
@@ -31,8 +38,16 @@ def exit(code=None):
 	global gtk_proc
 
 	# Exit the auth ui process if there is one
-	if "gtk_proc" in globals():
-		gtk_proc.terminate()
+	if "gtk_proc" in globals() and gtk_proc is not None:
+		try:
+			# Try to close stdin to signal EOF to the GTK process
+			gtk_proc.stdin.close()
+			# Give it a moment to exit gracefully
+			gtk_proc.wait(timeout=0.5)
+		except:
+			# Force kill if it doesn't exit gracefully
+			gtk_proc.kill()
+			gtk_proc.wait()
 
 	# Exit compare
 	if code is not None:

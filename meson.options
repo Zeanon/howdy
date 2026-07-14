@@ -10,3 +10,4 @@ option('install_pam_config', type: 'boolean', value: true, description: 'Install
 option('python_path', type: 'string', value: '/home/user/Howdy/.venv/bin/python3', description: 'Set the path to the python executable')
 option('with_polkit', type: 'boolean', value: true, description: 'Install polkit policy config file')
 option('pam_config_dir', type: 'string', value: '/usr/share/pam-configs', description: 'Set the path to the pam-config drop in')
+option('install_config', type: 'boolean', value: true, description: 'Install Howdy config file')
