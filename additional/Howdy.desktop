@@ -5,4 +5,3 @@ GenericName=Howdy
 Exec=pkexec env DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS sudo /usr/local/bin/howdy-gtk
 X-MultipleArgs=false
 Type=Application
-Icon=/home/user/Howdy/howdy-gtk/src/logo.png
