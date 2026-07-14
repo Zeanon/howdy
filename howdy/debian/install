@@ -9,6 +9,9 @@ src/logo.png lib/security/howdy
 src/snapshot.py lib/security/howdy
 
 build/pam_howdy.so lib/security/howdy
+build/pam_howdy_off.so lib/security/howdy
+build/pam_howdy_input.so lib/security/howdy
+build/pam_howdy_native.so lib/security/howdy
 
 src/dlib-data/. etc/howdy/dlib-data
 src/config.ini etc/howdy

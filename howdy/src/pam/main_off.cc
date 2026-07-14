@@ -32,7 +32,7 @@
 #include <security/pam_modules.h>
 
 #include "enter_device.hh"
-#include "main.hh"
+#include "main_off.hh"
 #include "optional_task.hh"
 #include <paths.hh>
 
