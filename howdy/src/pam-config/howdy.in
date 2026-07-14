@@ -3,4 +3,4 @@ Default: yes
 Priority: 512
 Auth-Type: Primary
 Auth:
-	[success=2 default=ignore]        @pamdir@/pam_howdy.so
+	[success=2 default=ignore]			@pamdir@/pam_howdy.so
