@@ -1,0 +1,6 @@
+#%PAM-1.0
+
+auth	[success=2 default=ignore]  /usr/local/lib/x86_64-linux-gnu/security/pam_howdy_off.so
+auth	[success=1 default=ignore]  pam_unix.so nullok try_first_pass
+auth	requisite                   pam_deny.so
+auth	required                    pam_permit.so

@@ -1,7 +1,7 @@
 [Service]
-ReadOnlyPaths=/usr/lib/security
 ProtectHome=no
 PrivateDevices=no
+ReadOnlyPaths=/usr/lib/security
 DeviceAllow=/dev/video2
 DeviceAllow=/dev/uinput rw
 DeviceAllow=char-video4linux rw
