@@ -77,7 +77,7 @@ auto howdy_error(int status,
       break;
     default:
       conv_function(PAM_ERROR_MSG,
-                    std::string(S("UUnknown error: ") + status).c_str());
+                    std::string(S(" Unknown error: ") + status).c_str());
       syslog(LOG_ERR, "Failure, unknown error %d", status);
     }
   } else if (WIFSIGNALED(status)) {
