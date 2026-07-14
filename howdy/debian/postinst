@@ -192,9 +192,9 @@ handleStatus(sc(["chmod 755 -R /etc/howdy/"], shell=True))
 # Restrict biometric model files to root only
 models_dir = "/etc/howdy/models"
 if os.path.isdir(models_dir):
-	os.chmod(models_dir, 0o700)
+	os.chmod(models_dir, 0o755)
 	for f in os.listdir(models_dir):
-		os.chmod(os.path.join(models_dir, f), 0o600)
+		os.chmod(os.path.join(models_dir, f), 0o644)
 
 # Allow anyone to execute the python CLI
 os.chmod("/lib/security/howdy", 0o755)

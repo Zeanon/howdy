@@ -56,7 +56,7 @@ encodings = []
 # Make the ./models folder if it doesn't already exist
 if not os.path.exists(paths_factory.user_models_dir_path()):
 	print(_("No face model folder found, creating one"))
-	os.makedirs(paths_factory.user_models_dir_path(), mode=0o700)
+	os.makedirs(paths_factory.user_models_dir_path(), mode=0o755)
 
 # To try read a premade encodings file if it exists
 try:
@@ -210,7 +210,7 @@ with open(enc_file, "w") as datafile:
 	json.dump(encodings, datafile)
 
 # Restrict permissions so only root can read the biometric model
-os.chmod(enc_file, 0o600)
+os.chmod(enc_file, 0o644)
 
 # Give let the user know how it went
 print(_("""\nScan complete
