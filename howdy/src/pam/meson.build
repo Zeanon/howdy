@@ -33,3 +33,60 @@ shared_library(
 	install_tag: 'pam_module',
 	name_prefix: ''
 )
+
+shared_library(
+	'pam_howdy_off',
+	'main_off.cc',
+	'enter_device.cc',
+	dependencies: [
+		libpam,
+		inih_cpp,
+		threads,
+		libevdev,
+	],
+	link_depends: [
+		paths_h,
+	],
+	install: true,
+	install_dir: pamdir,
+	install_tag: 'pam_module',
+	name_prefix: ''
+)
+
+shared_library(
+	'pam_howdy_input',
+	'main_input.cc',
+	'enter_device.cc',
+	dependencies: [
+		libpam,
+		inih_cpp,
+		threads,
+		libevdev,
+	],
+	link_depends: [
+		paths_h,
+	],
+	install: true,
+	install_dir: pamdir,
+	install_tag: 'pam_module',
+	name_prefix: ''
+)
+
+shared_library(
+	'pam_howdy_native',
+	'main_native.cc',
+	'enter_device.cc',
+	dependencies: [
+		libpam,
+		inih_cpp,
+		threads,
+		libevdev,
+	],
+	link_depends: [
+		paths_h,
+	],
+	install: true,
+	install_dir: pamdir,
+	install_tag: 'pam_module',
+	name_prefix: ''
+)

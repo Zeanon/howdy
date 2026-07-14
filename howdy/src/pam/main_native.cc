@@ -224,9 +224,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     return pam_res;
   }
 
-  Workaround workaround =
-      get_workaround(config.GetString("core", "workaround", "input"));
-
   // Will contain PAM conversation structure
   struct pam_conv *conv = nullptr;
   const void **conv_ptr =
@@ -313,11 +310,9 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     return std::tuple<int, char *>(pam_res, auth_tok_ptr);
   });
 
-  auto ask_pass = ask_auth_tok && workaround != Workaround::Off;
-
   // We ask for the password if the function requires it and if a workaround is
   // set
-  if (ask_pass) {
+  if (ask_auth_tok) {
     pass_task.activate();
   }
 
@@ -358,7 +353,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   // If python process ran into a timeout
   // Do not send enter presses or terminate the PAM function, as the user might
   // still be typing their password
-  if (WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS && ask_pass) {
+  if (WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS && ask_auth_tok) {
     // Wait for the password to be typed
     pass_task.stop(false);
 
@@ -379,47 +374,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
 
   // UNSAFE: We cancel the thread using pthread, pam_get_authtok seems to be
   // a cancellation point
-  if (workaround == Workaround::Native) {
-    pass_task.stop(true);
-  } else if (workaround == Workaround::Input) {
-    // We check if we have the right permissions on /dev/uinput
-    if (euidaccess("/dev/uinput", W_OK | R_OK) != 0) {
-      syslog(LOG_WARNING, "Insufficient permissions to create the fake device");
-      conv_function(PAM_ERROR_MSG,
-                    S("Insufficient permissions to send Enter "
-                      "press, waiting for user to press it instead"));
-    } else {
-      try {
-        EnterDevice enter_device;
-        int retries;
-
-        // We try to send it
-        enter_device.send_enter_press();
-
-        for (retries = 0;
-             retries < MAX_RETRIES &&
-             pass_task.wait(DEFAULT_TIMEOUT) == std::future_status::timeout;
-             retries++) {
-          enter_device.send_enter_press();
-        }
-
-        if (retries == MAX_RETRIES) {
-          syslog(LOG_WARNING,
-                 "Failed to send enter input before the retries limit");
-          conv_function(PAM_ERROR_MSG, S("Failed to send Enter press, waiting "
-                                         "for user to press it instead"));
-        }
-      } catch (std::runtime_error &err) {
-        syslog(LOG_WARNING, "Failed to send enter input: %s", err.what());
-        conv_function(PAM_ERROR_MSG, S("Failed to send Enter press, waiting "
-                                       "for user to press it instead"));
-      }
-
-      // We stop the thread (will block until the enter key is pressed if the
-      // input wasn't focused or if the uinput device failed to send keypress)
-      pass_task.stop(false);
-    }
-  }
+  pass_task.stop(true);
 
   return howdy_status(username, status, config, conv_function);
 }
