@@ -95,6 +95,14 @@ cd /path/to/project/
 # Create venv under folder named .venv/ inside project
 # directory that can access system-managed python packages
 
+python3 -m venv .venv
+
+# Then activate it and install meson in it
+source .venv/bin/activate
+pip3 install meson
+
+# Deactivate it and install system site packages
+deactivate
 python3 -m venv .venv/ --system-site-packages
 ```
 
@@ -141,7 +149,7 @@ meson compile -C build
  You can then install Howdy to your system with:
  
 ```
-meson install -C build
+sudo meson install -C build
 ```
 
 Howdy should now be installed with the main directory of note at `/usr/local/lib/x86_64-linux-gnu/howdy/` and configs at `/usr/local/etc/howdy`.
