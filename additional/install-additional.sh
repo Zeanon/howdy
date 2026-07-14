@@ -1,5 +1,13 @@
 #!/bin/bash
 
+read -n1 -p "Install howdy-gtk desktop file? [y,n]" howdy_gtk
+echo
+case $howdy_gtk in
+    y|Y) cp Howdy.desktop ~/.local/share/applications/Howdy.desktop && echo "Created howdy-gtk desktop file" ;;
+    *) echo "Did not create howdy-gtk desktop file" ;;
+esac
+echo
+
 read -n1 -p "Install kde pam file? [y,n]" kde
 echo
 case $kde in
@@ -16,5 +24,4 @@ case $polkit in
 esac
 echo
 
-echo
 echo "Done"
