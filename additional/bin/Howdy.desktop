@@ -1,7 +1,6 @@
-#!/usr/bin/env xdg-open
 [Desktop Entry]
 Name=Howdy
-GenericName=Howdy
+GenericName=Howdy-Gk
 Exec=pkexec env DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS sudo /usr/local/bin/howdy-gtk
 X-MultipleArgs=false
 Type=Application
