@@ -33,6 +33,11 @@ import paths_factory
 from recorders.video_capture import VideoCapture
 from i18n import _
 
+# Force singlethreaded BLAS. dlib's OpenBLAS/OpenMP matmuls can livelock when raced against this scri>
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("GOTO_NUM_THREADS", "1")
+
 def exit(code=None):
 	"""Exit while closing howdy-gtk properly"""
 	global gtk_proc
