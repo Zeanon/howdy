@@ -109,7 +109,7 @@ auto howdy_status(char *username, int status, const INIReader &config,
     return howdy_error(status, conv_function);
   }
 
-  if (!config.GetBoolean("core", "no_confirmation", true)) {
+  if (!config.GetBoolean("core", "no_confirmation", false)) {
     // Construct confirmation text from i18n string
     std::string confirm_text(S("Authenticated as {}"));
     std::string identify_msg =
@@ -225,7 +225,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   }
 
   Workaround workaround =
-      get_workaround(config.GetString("core", "workaround", "input"));
+      get_workaround(config.GetString("core", "workaround", "off"));
 
   // Will contain PAM conversation structure
   struct pam_conv *conv = nullptr;
@@ -403,10 +403,22 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
           enter_device.send_enter_press();
         }
 
+        if (pass_task.wait(DEFAULT_TIMEOUT) == std::future_status::timeout) {
+          sleep(1);
+        }
+
+        for (retries = 0;
+             retries < MAX_RETRIES &&
+             pass_task.wait(DEFAULT_TIMEOUT) == std::future_status::timeout;
+             retries++) {
+          enter_device.send_enter_press();
+          sleep(1);
+        }
+
         if (retries == MAX_RETRIES) {
           syslog(LOG_WARNING,
                  "Failed to send enter input before the retries limit");
-          conv_function(PAM_ERROR_MSG, S("Failed to send Enter press, waiting "
+          conv_function(PAM_ERROR_MSG, S("Failed to send Enter press before the retries limit, waiting "
                                          "for user to press it instead"));
         }
       } catch (std::runtime_error &err) {

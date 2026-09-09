@@ -109,7 +109,7 @@ auto howdy_status(char *username, int status, const INIReader &config,
     return howdy_error(status, conv_function);
   }
 
-  if (!config.GetBoolean("core", "no_confirmation", true)) {
+  if (!config.GetBoolean("core", "no_confirmation", false)) {
     // Construct confirmation text from i18n string
     std::string confirm_text(S("Authenticated as {}"));
     std::string identify_msg =
