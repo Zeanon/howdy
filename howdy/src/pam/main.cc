@@ -61,14 +61,14 @@ auto howdy_error(int status,
       syslog(LOG_NOTICE, "Failure, no face model known");
       break;
     case CompareError::TIMEOUT_REACHED:
-      conv_function(PAM_ERROR_MSG, S("Failure, timeout reached"));
+      conv_function(PAM_ERROR_MSG, S("\nFailure, timeout reached"));
       syslog(LOG_ERR, "Failure, timeout reached");
       break;
     case CompareError::ABORT:
       syslog(LOG_ERR, "Failure, general abort");
       break;
     case CompareError::TOO_DARK:
-      conv_function(PAM_ERROR_MSG, S("Face detection image too dark"));
+      conv_function(PAM_ERROR_MSG, S("\nFace detection image too dark"));
       syslog(LOG_ERR, "Failure, image too dark");
       break;
     case CompareError::INVALID_DEVICE:
@@ -77,7 +77,7 @@ auto howdy_error(int status,
       break;
     default:
       conv_function(PAM_ERROR_MSG,
-                    std::string(S(" Unknown error: ") + status).c_str());
+                    std::string(S("\nUnknown error: ") + status).c_str());
       syslog(LOG_ERR, "Failure, unknown error %d", status);
     }
   } else if (WIFSIGNALED(status)) {
@@ -359,6 +359,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   // Do not send enter presses or terminate the PAM function, as the user might
   // still be typing their password
   if (WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS && ask_pass) {
+    howdy_status(username, status, config, conv_function);
     // Wait for the password to be typed
     pass_task.stop(false);
 
