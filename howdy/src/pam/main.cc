@@ -297,6 +297,10 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   });
   child_task.activate();
 
+  std::optional<EnterDevice> enter_device = euidaccess("/dev/uinput", W_OK | R_OK) == 0
+                                              ? std::optional<EnterDevice>{std::in_place}
+                                              : std::nullopt;
+
   // This task waits for the password input (if the workaround wants it)
   optional_task<std::tuple<int, char *>> pass_task([&] {
     char *auth_tok_ptr = nullptr;
@@ -383,36 +387,23 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     pass_task.stop(true);
   } else if (workaround == Workaround::Input) {
     // We check if we have the right permissions on /dev/uinput
-    if (euidaccess("/dev/uinput", W_OK | R_OK) != 0) {
+    if (!enter_device.has_value()) {
       syslog(LOG_WARNING, "Insufficient permissions to create the fake device");
       conv_function(PAM_ERROR_MSG,
                     S("Insufficient permissions to send Enter "
                       "press, waiting for user to press it instead"));
     } else {
       try {
-        EnterDevice enter_device;
         int retries;
 
         // We try to send it
-        enter_device.send_enter_press();
+        enter_device.value().send_enter_press();
 
         for (retries = 0;
              retries < MAX_RETRIES &&
              pass_task.wait(DEFAULT_TIMEOUT) == std::future_status::timeout;
              retries++) {
-          enter_device.send_enter_press();
-        }
-
-        if (pass_task.wait(DEFAULT_TIMEOUT) == std::future_status::timeout) {
-          sleep(1);
-        }
-
-        for (retries = 0;
-             retries < MAX_RETRIES &&
-             pass_task.wait(DEFAULT_TIMEOUT) == std::future_status::timeout;
-             retries++) {
-          enter_device.send_enter_press();
-          sleep(1);
+          enter_device.value().send_enter_press();
         }
 
         if (retries == MAX_RETRIES) {
