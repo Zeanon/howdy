@@ -37,7 +37,7 @@
 #include <paths.hh>
 
 const auto DEFAULT_TIMEOUT =
-    std::chrono::duration<int, std::chrono::milliseconds::period>(100);
+    std::chrono::duration<int, std::chrono::milliseconds::period>(500);
 const auto MAX_RETRIES = 5;
 
 #define S(msg) gettext(msg)
