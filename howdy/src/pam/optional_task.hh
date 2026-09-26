@@ -16,20 +16,31 @@ template <typename T> class optional_task {
 
 public:
   explicit optional_task(std::function<T()> func);
+
   void activate();
+
   template <typename R, typename P>
   auto wait(std::chrono::duration<R, P> dur) -> std::future_status;
+
   auto get() -> T;
+
   void stop(bool force);
+
+  bool active() const;
+  bool spawned_thread() const;
+
   ~optional_task();
 };
 
 template <typename T>
 optional_task<T>::optional_task(std::function<T()> func)
-    : task(std::packaged_task<T()>(std::move(func))), future(task.get_future()) {}
+    : task(std::packaged_task<T()>(std::move(func))),
+      future(task.get_future()) {}
 
 // Create a new thread and launch the task on it.
 template <typename T> void optional_task<T>::activate() {
+  assert(!spawned);
+
   thread = std::thread(std::move(task));
   spawned = true;
   is_active = true;
@@ -51,22 +62,31 @@ template <typename T> auto optional_task<T>::get() -> T {
   return future.get();
 }
 
+template <typename T> bool optional_task<T>::active() const {
+  return is_active;
+}
+
+template <typename T> bool optional_task<T>::spawned_thread() const {
+  return spawned;
+}
+
 // Stop the thread:
 // - if `force` is `false`, by joining the thread.
 // - if `force` is `true`, by cancelling the thread using `pthread_cancel`.
-// WARNING: This function should be used with extreme caution when `force` is
-// set to `true`.
+//
+// WARNING: pthread_cancel() must only be used for tasks which are explicitly
+// written to be cancellation-safe.
 template <typename T> void optional_task<T>::stop(bool force) {
-  if (!(is_active && thread.joinable()) && spawned) {
+  if (!spawned || !thread.joinable()) {
     is_active = false;
     return;
   }
 
-  // We use pthread to cancel the thread
   if (force) {
     auto native_hd = thread.native_handle();
     pthread_cancel(native_hd);
   }
+
   thread.join();
   is_active = false;
 }

@@ -1,12 +1,17 @@
-#ifndef MAIN_H_
-#define MAIN_H_
+#ifndef MAIN_INPUT_H_
+#define MAIN_INPUT_H_
 
 #include <cstring>
 #include <string>
 #include <unistd.h>
 #include <cstdint>
 
-enum class ConfirmationType : std::uint8_t { Unset, Howdy, Pam };
+enum class ConfirmationType {
+  Unset,
+  Howdy,
+  Fingerprint,
+  Pam
+};
 enum class Workaround : std::uint8_t { Off, Input, Native };
 
 // Exit status codes returned by the compare process
