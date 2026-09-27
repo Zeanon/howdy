@@ -186,7 +186,7 @@ auto check_enabled(const INIReader &config, const char *username) -> int {
 }
 
 inline auto workaround_function(const Workaround &workaround,
-                                optional_task<std::tuple<int, char *>> &pass_task,
+                                optional_task<int> &pass_task,
                                 const std::optional<EnterDevice> &enter_device,
                                 const std::function<int(int, const char *)> &conv_function,
                                 const termios &original_terminal_flags,
@@ -412,7 +412,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
    * Password task
    * ---------------------------------------------------------------
    */
-  optional_task<std::tuple<int, char *>> pass_task([&] {
+  optional_task<int> pass_task([&] {
     char *auth_tok_ptr = nullptr;
 
     int rc = pam_get_authtok(
@@ -445,9 +445,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
 
     convar.notify_all();
 
-    return std::tuple<int, char *>(
-        rc,
-        auth_tok_ptr);
+    return rc;
   });
 
   bool ask_pass = ask_auth_tok && (workaround != Workaround::Off || (fingerprint_workaround != Workaround::Off && fingerprint));
@@ -682,20 +680,22 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
         if (detection_notice) {
           howdy_init(conv_function);
         }
-      } else {
-        std::unique_lock<std::mutex> lock(mutx);
-        howdy_finished = true;
-        howdy_success = success;
-        howdy_status_code = status;
+      }
+    }
 
-        if (confirmation_type == ConfirmationType::Unset) {
-          if (success) {
-            confirmation_type = ConfirmationType::Howdy;
-          } else if (terminated) {
-            confirmation_type = ConfirmationType::Terminated;
-          } else {
-            howdy_error(status, conv_function);
-          }
+    {
+      std::unique_lock<std::mutex> lock(mutx);
+      howdy_finished = true;
+      howdy_success = success;
+      howdy_status_code = status;
+
+      if (confirmation_type == ConfirmationType::Unset) {
+        if (success) {
+          confirmation_type = ConfirmationType::Howdy;
+        } else if (terminated) {
+          confirmation_type = ConfirmationType::Terminated;
+        } else {
+          howdy_error(status, conv_function);
         }
       }
     }
@@ -858,11 +858,11 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       /*
       * Stop fingerprint authentication.
       */
-      if (fingerprint && fingerprint_task.active()) {
+      if (fingerprint_task.active()) {
         fingerprint_task.stop(true);
-        if (fingerprint_timeout_task.active()) {
-          fingerprint_timeout_task.stop(false);
-        }
+      }
+      if (fingerprint_timeout_task.active()) {
+        fingerprint_timeout_task.stop(false);
       }
 
       /*
@@ -871,12 +871,9 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       */
       pass_task.stop(false);
 
-      char *password = nullptr;
+      pam_res = pass_task.get();
 
-      std::tie(
-          pam_res,
-          password) = pass_task.get();
-
+      conv_function(PAM_TEXT_INFO, std::to_string(pam_res).c_str());
       if (pam_res != PAM_SUCCESS) {
         return pam_res;
       }
@@ -885,6 +882,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       * Preserve the original Howdy/PAM behaviour:
       * PAM_IGNORE means the following PAM module may continue.
       */
+      conv_function(PAM_TEXT_INFO, "IGNORE");
       return PAM_IGNORE;
     }
 
@@ -899,23 +897,23 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       * Howdy has already finished successfully.
       */
       child_task.stop(false);
-      int status = child_task.get();
+      pam_res = child_task.get();
 
       /*
       * Stop fingerprint.
       */
-      if (fingerprint && fingerprint_task.active()) {
+      if (fingerprint_task.active()) {
         fingerprint_task.stop(true);
-        if (fingerprint_timeout_task.active()) {
-          fingerprint_timeout_task.stop(false);
-        }
+      }
+      if (fingerprint_timeout_task.active()) {
+        fingerprint_timeout_task.stop(false);
       }
 
       workaround_function(workaround, pass_task, enter_device, conv_function, original_terminal_flags, ask_pass);
 
       return howdy_status(
           username,
-          status,
+          pam_res,
           config,
           conv_function);
     }
@@ -927,29 +925,26 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     */
     case ConfirmationType::Terminated:
     {
-      /*
-      * Howdy has already finished successfully.
-      */
       kill(child_pid, SIGTERM);
       child_task.stop(false);
 
-      int status = child_task.get();
+      pam_res = child_task.get();
 
       /*
       * Stop fingerprint.
       */
-      if (fingerprint && fingerprint_task.active()) {
+      if (fingerprint_task.active()) {
         fingerprint_task.stop(true);
-        if (fingerprint_timeout_task.active()) {
-          fingerprint_timeout_task.stop(false);
-        }
+      }
+      if (fingerprint_timeout_task.active()) {
+        fingerprint_timeout_task.stop(false);
       }
 
       workaround_function(Workaround::Native, pass_task, enter_device, conv_function, original_terminal_flags, ask_pass);
 
       return howdy_status(
           username,
-          status,
+          pam_res,
           config,
           conv_function);
     }
@@ -990,11 +985,11 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
    * when Howdy actually ran to completion.
    */
   if (howdy_finished) {
-    int status = child_task.get();
+    pam_res = child_task.get();
 
     return howdy_status(
         username,
-        status,
+        pam_res,
         config,
         conv_function);
   }
