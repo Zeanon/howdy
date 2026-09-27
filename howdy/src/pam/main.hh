@@ -1,5 +1,5 @@
-#ifndef MAIN_INPUT_H_
-#define MAIN_INPUT_H_
+#ifndef MAIN_H_
+#define MAIN_H_
 
 #include <cstring>
 #include <string>
@@ -8,11 +8,12 @@
 
 enum class ConfirmationType {
   Unset,
+  Terminated,
   Howdy,
   Fingerprint,
   Pam
 };
-enum class Workaround : std::uint8_t { Off, Input, Native };
+enum class Workaround : std::uint8_t { Off, Manual, Input, Native };
 
 // Exit status codes returned by the compare process
 enum CompareError : std::uint8_t {
@@ -21,10 +22,14 @@ enum CompareError : std::uint8_t {
   ABORT = 12,
   TOO_DARK = 13,
   INVALID_DEVICE = 14,
-  RUBBERSTAMP = 15
+  RUBBERSTAMP = 20,
 };
 
 inline auto get_workaround(const std::string &workaround) -> Workaround {
+  if (workaround == "manual") {
+    return Workaround::Manual;
+  }
+  
   if (workaround == "input") {
     return Workaround::Input;
   }

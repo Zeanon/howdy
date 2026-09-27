@@ -169,6 +169,9 @@ save_successful = config.getboolean("snapshots", "save_successful", fallback=Fal
 gtk_stdout = config.getboolean("debug", "gtk_stdout", fallback=False)
 rotate = config.getint("video", "rotate", fallback=0)
 
+if len(sys.argv) == 3:
+	timeout = int(sys.argv[2])
+
 # Send the gtk output to the terminal if enabled in the config
 gtk_pipe = sys.stdout if gtk_stdout else subprocess.DEVNULL
 
@@ -218,11 +221,6 @@ if rotate == 2:
 	height = video_capture.internal.get(cv2.CAP_PROP_FRAME_WIDTH) or 1
 # Calculate the amount the image has to shrink
 scaling_factor = (max_height / height) or 1
-
-# Fetch config settings out of the loop
-timeout = config.getint("video", "timeout", fallback=4)
-dark_threshold = config.getfloat("video", "dark_threshold", fallback=60)
-end_report = config.getboolean("debug", "end_report", fallback=False)
 
 # Initiate histogram equalization
 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))

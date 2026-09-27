@@ -8,7 +8,7 @@
 
 // A task executed only if activated.
 template <typename T> class optional_task {
-  std::thread thread;
+  std::jthread thread;
   std::packaged_task<T()> task;
   std::future<T> future;
   bool spawned{false};
@@ -41,7 +41,7 @@ optional_task<T>::optional_task(std::function<T()> func)
 template <typename T> void optional_task<T>::activate() {
   assert(!spawned);
 
-  thread = std::thread(std::move(task));
+  thread = std::jthread(std::move(task));
   spawned = true;
   is_active = true;
 }
