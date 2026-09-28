@@ -273,11 +273,11 @@ struct CustomConversationContext {
   bool cancelled;
 };
 
-static int conv_wrapper(
+inline auto conv_wrapper(
   int num_msg,
   const struct pam_message **msg,
   struct pam_response **resp,
-  void *appdata_ptr)
+  void *appdata_ptr) -> int
 {
   auto *ctx =
       static_cast<CustomConversationContext *>(appdata_ptr);
@@ -292,6 +292,91 @@ static int conv_wrapper(
       ctx->cancelled = true;
   }
   return rc;
+}
+
+inline auto start_tasks(
+  bool ask_pass,
+  bool fingerprint,
+  bool detection_notice,
+  int fingerprint_timeout,
+  bool &terminate,
+  optional_task<int> &pass_task,
+  optional_task<int> &child_task,
+  optional_task<int> &fingerprint_task,
+  optional_task<void> &fingerprint_timeout_task,
+  bool &howdy_finished,
+  bool &fingerprint_finished,
+  bool &password_finished,
+  ConfirmationType &confirmation_type,
+  std::mutex &mutx,
+  std::condition_variable &convar,
+  const std::function<int(int, const char *)> &conv_function)
+{
+  if (terminate || confirmation_type != ConfirmationType::Unset) {
+    return;
+  }
+  child_task.activate();
+
+  if (terminate || confirmation_type != ConfirmationType::Unset) {
+    return;
+  }
+  if (fingerprint) {
+    fingerprint_task.activate();
+    if (fingerprint_timeout > 0) {
+      fingerprint_timeout_task.activate();
+    }
+  }
+  if (ask_pass) {
+    pass_task.activate();
+  }
+
+  usleep(100000);
+
+  if (terminate || confirmation_type != ConfirmationType::Unset) {
+    return;
+  }
+  if (ask_pass) {
+    conv_function(PAM_TEXT_INFO, "");
+  }
+  if (detection_notice) {
+    if (ask_pass) {
+      conv_function(PAM_TEXT_INFO, "");
+    }
+    if ((conv_function(PAM_TEXT_INFO, S("Facial authentication..."))) != PAM_SUCCESS ||
+        howdy_init(conv_function) != PAM_SUCCESS) {
+      syslog(LOG_ERR, "Failed to send detection notice");
+    }
+  }
+  if (fingerprint) {
+    conv_function(PAM_TEXT_INFO, "");
+    conv_function(PAM_TEXT_INFO, S("Fingerprint authentication..."));
+  }
+
+  /*
+  * ---------------------------------------------------------------
+  * Wait for first successful authentication
+  * ---------------------------------------------------------------
+  */
+  if (!terminate && confirmation_type == ConfirmationType::Unset) {
+    std::unique_lock<std::mutex> lock(mutx);
+
+    convar.wait(lock, [&] {
+      /*
+      * A successful authentication has won.
+      */
+      if (confirmation_type != ConfirmationType::Unset) {
+        return true;
+      }
+
+      /*
+      * If every available authentication method has finished
+      * unsuccessfully, we also need to leave the wait.
+      */
+      return howdy_finished &&
+            fingerprint_finished &&
+            (!ask_pass || password_finished);
+    });
+  }
 }
 
 /**
@@ -323,8 +408,8 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   std::string workaround_string = config.GetString("core", "workaround", "off");
   std::optional<Workaround> fingerprint_workaround_opt = std::nullopt;
 
-  int max_tries = config.GetInteger("core", "max-tries", 1);
-  int max_password_tries = config.GetInteger64("core", "max-password-tries", 3);
+  int max_tries = config.GetInteger("core", "max_tries", 1);
+  int max_password_tries = config.GetInteger64("core", "max_password_tries", 3);
   auto fingerprint = config.GetBoolean("core", "use_fingerprint", false);
   auto detection_notice = config.GetBoolean("core", "detection_notice", true);
   auto fingerprint_timeout = config.GetInteger("core", "fingerprint_timeout", -1);
@@ -949,62 +1034,24 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
           : std::nullopt;
 
 
-  if (!terminate) {
-    child_task.activate();
-    if (fingerprint) {
-      fingerprint_task.activate();
-      if (fingerprint_timeout > 0) {
-        fingerprint_timeout_task.activate();
-      }
-    }
-    if (ask_pass) {
-      pass_task.activate();
-    }
-
-    usleep(100000);
-    if (ask_pass) {
-      conv_function(PAM_TEXT_INFO, "");
-    }
-    if (detection_notice) {
-      if (ask_pass) {
-        conv_function(PAM_TEXT_INFO, "");
-      }
-      if ((conv_function(PAM_TEXT_INFO, S("Facial authentication..."))) != PAM_SUCCESS ||
-          howdy_init(conv_function) != PAM_SUCCESS) {
-        syslog(LOG_ERR, "Failed to send detection notice");
-      }
-    }
-    if (fingerprint) {
-      conv_function(PAM_TEXT_INFO, "");
-      conv_function(PAM_TEXT_INFO, S("Fingerprint authentication..."));
-    }
-
-    /*
-    * ---------------------------------------------------------------
-    * Wait for first successful authentication
-    * ---------------------------------------------------------------
-    */
-    {
-      std::unique_lock<std::mutex> lock(mutx);
-
-      convar.wait(lock, [&] {
-        /*
-        * A successful authentication has won.
-        */
-        if (confirmation_type != ConfirmationType::Unset) {
-          return true;
-        }
-
-        /*
-        * If every available authentication method has finished
-        * unsuccessfully, we also need to leave the wait.
-        */
-        return howdy_finished &&
-              fingerprint_finished &&
-              (!ask_pass || password_finished);
-      });
-    }
-  }
+  start_tasks(
+    ask_pass,
+    fingerprint,
+    detection_notice,
+    fingerprint_timeout,
+    terminate,
+    pass_task,
+    child_task,
+    fingerprint_task,
+    fingerprint_timeout_task,
+    howdy_finished,
+    fingerprint_finished,
+    password_finished,
+    confirmation_type,
+    mutx,
+    convar,
+    conv_function
+  );
 
   if (signal_task.active()) {
     signal_task.stop(true);
