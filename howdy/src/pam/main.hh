@@ -22,6 +22,7 @@ enum CompareError : std::uint8_t {
   ABORT = 12,
   TOO_DARK = 13,
   INVALID_DEVICE = 14,
+  TERMINATED = 15,
   RUBBERSTAMP = 20,
 };
 
