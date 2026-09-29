@@ -406,6 +406,9 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     return PAM_SYSTEM_ERR;
   }
 
+  std::set<std::string> whitelist;
+  std::set<std::string> blacklist;
+
   std::string workaround_string = config.GetString("core", "workaround", "off");
   std::optional<Workaround> fingerprint_workaround_opt = std::nullopt;
 
@@ -416,6 +419,8 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   auto fingerprint_timeout = config.GetInteger("core", "fingerprint_timeout", -1);
   auto service_name = config.GetString("core", "service_name", "howdy-fingerprint");
   auto password_service_name = config.GetString("core", "password_service_name", "howdy-password");
+  whitelist = split_string(config.GetString("core", "whitelist", ""), ',');
+  blacklist = split_string(config.GetString("core", "blacklist", ""), ',');
   std::optional<const char*> timeout = std::nullopt;
 
   for (int i = 0; i < argc; i++) {
@@ -444,6 +449,10 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       service_name = arg.substr(13, arg.length());
     } else if (arg.starts_with("password-service-name=")) {
       password_service_name = arg.substr(22, arg.length());
+    } else if (arg.starts_with("whitelist=")) {
+      whitelist = split_string(arg.substr(10, arg.length()), ',');
+    } else if (arg.starts_with("blacklist=")) {
+      blacklist = split_string(arg.substr(10, arg.length()), ',');
     } else if (arg.starts_with("timeout=")) {
       timeout = std::optional<const char*>(arg.substr(8, arg.length()).c_str());
     }
@@ -488,6 +497,15 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   if (pam_res != PAM_SUCCESS) {
     return pam_res;
   }
+
+  if (!whitelist.empty() && !whitelist.count(std::string(username))) {
+    return PAM_IGNORE;
+  }
+
+  if (blacklist.find(std::string(username)) != blacklist.end()) {
+    return PAM_IGNORE;
+  }
+
 
   // Will contain PAM conversation structure
   struct pam_conv *conv = nullptr;
@@ -700,6 +718,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     while (retries < max_password_tries
            && !success
            && !terminated) {
+      syslog(LOG_ERR, std::to_string(retries).c_str());
       /*
       * The cleanup handler makes sure pam_end() is executed when
       * this thread is cancelled.
@@ -1190,7 +1209,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
 
       raise(SIGINT);
       
-      return PAM_AUTH_ERR;
+      return PAM_ABORT;
     }
 
     default:

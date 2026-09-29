@@ -42,6 +42,24 @@ inline auto get_workaround(const std::string &workaround) -> Workaround {
   return Workaround::Off;
 }
 
+inline std::set<std::string> split_string(const std::string& str, char delimiter) {
+    std::set<std::string> tokens;
+    if (str == "") {
+      return tokens;
+    }
+    size_t start = 0;
+    size_t end = str.find(delimiter);
+    
+    while (end != std::string::npos) {
+        tokens.insert(str.substr(start, end - start));
+        start = end + 1;
+        end = str.find(delimiter, start);
+    }
+    
+    tokens.insert(str.substr(start));
+    return tokens;
+}
+
 /**
  * Check if an environment variable exists either in the environ array or using
  * getenv.
