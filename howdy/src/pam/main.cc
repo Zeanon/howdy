@@ -113,6 +113,7 @@ auto howdy_status(char *username, int status, const INIReader &config,
     std::string identify_msg =
         confirm_text.replace(confirm_text.find("{}"), 2, std::string(username));
     conv_function(PAM_TEXT_INFO, identify_msg.c_str());
+    conv_function(PAM_TEXT_INFO, "");
   }
 
   syslog(LOG_INFO, "Login approved");
@@ -1075,6 +1076,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       * Fingerprint already returned PAM_SUCCESS.
       */
       fingerprint_task.stop(false);
+      pam_res = fingerprint_task.get();
       if (fingerprint_timeout_task.active()) {
         fingerprint_timeout_task.stop(false);
       }
@@ -1084,13 +1086,14 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       */
       std::string confirm_text(S("Fingerprint authenticated as {}"));
       conv_function(PAM_TEXT_INFO, confirm_text.replace(confirm_text.find("{}"), 2, std::string(username)).c_str());
+      conv_function(PAM_TEXT_INFO, "");
       syslog(
           LOG_INFO,
           "Authenticated with fingerprint");
 
       workaround_function(fingerprint_workaround, pass_task, enter_device, conv_function, original_terminal_flags, ask_pass);
 
-      return PAM_SUCCESS;
+      return pam_res;
     }
 
     /*
@@ -1103,6 +1106,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       syslog(
           LOG_INFO,
           "Authenticated with password");
+      conv_function(PAM_TEXT_INFO, "");
 
       /*
       * Stop Howdy.
@@ -1125,15 +1129,9 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       * normally.
       */
       pass_task.stop(false);
-
       pam_res = pass_task.get();
-
+ 
       return pam_res;
-
-      /*
-      * Preserve the original Howdy/PAM behaviour:
-      * PAM_IGNORE means the following PAM module may continue.
-      */
     }
 
     /*
@@ -1178,8 +1176,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       kill(child_pid, SIGTERM);
       child_task.stop(false);
 
-      pam_res = child_task.get();
-
       /*
       * Stop fingerprint.
       */
@@ -1194,11 +1190,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
 
       raise(SIGINT);
       
-      return howdy_status(
-          username,
-          pam_res,
-          config,
-          conv_function);
+      return PAM_AUTH_ERR;
     }
 
     default:
