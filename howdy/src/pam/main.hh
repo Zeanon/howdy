@@ -60,6 +60,10 @@ inline std::set<std::string> split_string(const std::string& str, char delimiter
     return tokens;
 }
 
+inline bool str_to_bool(const std::string& str) {
+  return str == "true" || str == "on" || str == "1";
+}
+
 /**
  * Check if an environment variable exists either in the environ array or using
  * getenv.

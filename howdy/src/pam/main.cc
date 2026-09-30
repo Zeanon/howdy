@@ -49,8 +49,11 @@ const auto MAX_ENTER_RETRIES = 5;
  * @param  status        The status code
  * @param  conv_function The PAM conversation function
  */
-inline auto howdy_error(int status,
-                 const std::function<int(int, const char *)> &conv_function) {
+inline auto howdy_error(
+  int status,
+  bool timeout_notice,
+  const std::function<int(int, const char *)> &conv_function)
+  {
   // If the process has exited
   if (WIFEXITED(status)) {
     // Get the status code returned
@@ -61,8 +64,10 @@ inline auto howdy_error(int status,
       syslog(LOG_NOTICE, "Failure: no face model known");
       break;
     case CompareError::TIMEOUT_REACHED:
-      conv_function(PAM_TEXT_INFO, "");
-      conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached"));
+      if (timeout_notice) {
+        conv_function(PAM_TEXT_INFO, "");
+        conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached"));
+      }
       syslog(LOG_ERR, "Failure: face authentication timeout reached");
       break;
     case CompareError::ABORT:
@@ -347,10 +352,10 @@ inline auto start_tasks(
         howdy_init(conv_function) != PAM_SUCCESS) {
       syslog(LOG_ERR, "Failed to send detection notice");
     }
-  }
-  if (fingerprint) {
-    conv_function(PAM_TEXT_INFO, "");
-    conv_function(PAM_TEXT_INFO, S("Fingerprint authentication..."));
+    if (fingerprint) {
+      conv_function(PAM_TEXT_INFO, "");
+      conv_function(PAM_TEXT_INFO, S("Fingerprint authentication..."));
+    }
   }
 
   /*
@@ -416,6 +421,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   int max_password_tries = config.GetInteger64("core", "max_password_tries", 3);
   auto fingerprint = config.GetBoolean("core", "use_fingerprint", false);
   auto detection_notice = config.GetBoolean("core", "detection_notice", true);
+  auto timeout_notice = config.GetBoolean("core", "timeout_notice", true);
   auto fingerprint_timeout = config.GetInteger("core", "fingerprint_timeout", -1);
   auto service_name = config.GetString("core", "service_name", "howdy-fingerprint");
   auto password_service_name = config.GetString("core", "password_service_name", "howdy-password");
@@ -428,13 +434,15 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     if (arg == "fingerprint") {
       fingerprint = true;
     } else if (arg.starts_with("fingerprint=")) {
-      auto temp = arg.substr(12, arg.length());
-      fingerprint = temp == "true" || temp == "1";
+      fingerprint = str_to_bool(arg.substr(12, arg.length()));
     } else if (arg == "detection-notice") {
       detection_notice = true;
     } else if (arg.starts_with("detection-notice=")) {
-      auto temp = arg.substr(17, arg.length());
-      detection_notice = temp == "true" || temp == "1";
+      detection_notice = str_to_bool(arg.substr(17, arg.length()));
+    } else if (arg == "timeout_notice") {
+      timeout_notice = true;
+    } else if (arg.starts_with("timeout_notice=")) {
+      timeout_notice = str_to_bool(arg.substr(15, arg.length()));
     } else if (arg.starts_with("fingerprint-timeout=")) {
       fingerprint_timeout = std::stoi(arg.substr(20, arg.length()).c_str());
     } else if (arg.starts_with("max-tries=")) {
@@ -498,14 +506,9 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     return pam_res;
   }
 
-  if (!whitelist.empty() && !whitelist.count(std::string(username))) {
+  if ((!whitelist.empty() && !whitelist.count(std::string(username))) || blacklist.find(std::string(username)) != blacklist.end()) {
     return PAM_IGNORE;
   }
-
-  if (blacklist.find(std::string(username)) != blacklist.end()) {
-    return PAM_IGNORE;
-  }
-
 
   // Will contain PAM conversation structure
   struct pam_conv *conv = nullptr;
@@ -665,7 +668,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
               errno);
           return PAM_SYSTEM_ERR;
         }
-        howdy_error(status, conv_function);
+        howdy_error(status, timeout_notice, conv_function);
         if (detection_notice) {
           howdy_init(conv_function);
         }
@@ -684,7 +687,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
         } else if (terminated) {
           confirmation_type = ConfirmationType::Terminated;
         } else {
-          howdy_error(status, conv_function);
+          howdy_error(status, timeout_notice, conv_function);
         }
       }
     }
@@ -718,7 +721,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     while (retries < max_password_tries
            && !success
            && !terminated) {
-      syslog(LOG_ERR, std::to_string(retries).c_str());
       /*
       * The cleanup handler makes sure pam_end() is executed when
       * this thread is cancelled.
@@ -818,7 +820,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
         if (retries != 1) {
           conv_function(PAM_TEXT_INFO, "");
         }
-        if (retries < max_tries) {
+        if (retries < max_password_tries) {
           conv_function(
               PAM_ERROR_MSG,
               S("Password authentication failed, please try again"));
@@ -1021,7 +1023,9 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
         if (!fingerprint_finished &&
             confirmation_type == ConfirmationType::Unset) {
 
-          conv_function(PAM_ERROR_MSG, "Fingerprint authentication timeout reached");
+          if (timeout_notice) {
+            conv_function(PAM_ERROR_MSG, "Fingerprint authentication timeout reached");
+          }
           syslog(LOG_ERR, "Failure: fingerprint authentication timeout reached");
 
           fingerprint_status_code = PAM_AUTH_ERR;
@@ -1209,7 +1213,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
 
       raise(SIGINT);
       
-      return PAM_ABORT;
+      return PAM_CONV_ERR;
     }
 
     default:
