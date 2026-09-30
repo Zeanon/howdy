@@ -304,12 +304,10 @@ inline auto start_tasks(
   bool ask_pass,
   bool fingerprint,
   bool detection_notice,
-  int fingerprint_timeout,
   bool &terminate,
   optional_task<int> &pass_task,
   optional_task<int> &child_task,
   optional_task<int> &fingerprint_task,
-  optional_task<void> &fingerprint_timeout_task,
   bool &howdy_finished,
   bool &fingerprint_finished,
   bool &password_finished,
@@ -328,9 +326,6 @@ inline auto start_tasks(
   }
   if (fingerprint) {
     fingerprint_task.activate();
-    if (fingerprint_timeout > 0) {
-      fingerprint_timeout_task.activate();
-    }
   }
   if (ask_pass) {
     pass_task.activate();
@@ -876,13 +871,12 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
    *
    *     auth required pam_fprintd.so
    */
-  struct FingerprintPamContext {
-    pam_handle_t *pamh = nullptr;
-  };
-  auto fingerprint_context =
-      std::make_shared<FingerprintPamContext>();
+  auto fingerprint_authenticator =
+    std::make_shared<FprintdAuthenticator>(
+        username
+    );
 
-  optional_task<int> fingerprint_task([&, fingerprint_context] {
+  optional_task<int> fingerprint_task([&] {
     /*
      * Make the thread asynchronously cancellable.
      *
@@ -892,104 +886,26 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
-    /*
-     * The cleanup handler makes sure pam_end() is executed when
-     * this thread is cancelled.
-     */
-    auto cleanup = [](void *arg) {
-      auto *ctx =
-          static_cast<FingerprintPamContext *>(arg);
-      if (ctx->pamh != nullptr) {
-        pam_end(ctx->pamh, PAM_ABORT);
-        ctx->pamh = nullptr;
-      }
-    };
+    bool success = false;
+    bool terminated = terminate;
 
-    pam_handle_t *finger_pamh = nullptr;
+    FprintdAuthenticator::Result rc = fingerprint_authenticator->authenticate(
+      std::chrono::seconds(fingerprint_timeout > 0 ? fingerprint_timeout : UINT64_MAX)
+    );
 
-    /*
-     * The PAM conversation structure itself can be copied.
-     *
-     * The PAM handle MUST remain separate.
-     */
-      CustomConversationContext fingerprint_conv_ctx{
-          .original = conv,
-          .cancelled = false,
-      };
-
-      struct pam_conv fingerprint_conv{
-          .conv = conv_wrapper,
-          .appdata_ptr = &fingerprint_conv_ctx,
-      };
-
-    int rc = pam_start(
-        service_name.c_str(),
-        username,
-        &fingerprint_conv,
-        &finger_pamh);
-
-    if (rc != PAM_SUCCESS) {
-      syslog(
-          LOG_ERR,
-          "Fingerprint pam_start() failed: %d",
-          rc);
-      {
-        std::unique_lock<std::mutex> lock(mutx);
-
-        fingerprint_finished = true;
-        fingerprint_status_code = rc;
-      }
-
-      convar.notify_all();
-
-      return rc;
-    }
-
-    fingerprint_context->pamh = finger_pamh;
-
-    /*
-     * Register cleanup BEFORE entering pam_authenticate().
-     */
-    pthread_cleanup_push(cleanup, fingerprint_context.get());
-
-    rc = pam_authenticate(
-        finger_pamh,
-        0);
-
-    /*
-     * Normal completion:
-     * unregister cleanup without executing it.
-     */
-    pthread_cleanup_pop(0);
-
-    /*
-     * pam_authenticate() has returned, therefore it is safe to
-     * terminate this independent PAM transaction.
-     */
-    fingerprint_context->pamh = nullptr;
-
-    int end_rc = pam_end(
-        finger_pamh,
-        rc);
-
-    if (rc == PAM_SUCCESS && end_rc != PAM_SUCCESS) {
-      rc = end_rc;
-    }
-
-    bool success = (rc == PAM_SUCCESS);
-    bool terminated = (fingerprint_conv_ctx.cancelled || terminate);
-
+    success = rc == FprintdAuthenticator::Result::Success;
+    terminated = rc == FprintdAuthenticator::Result::Cancelled || rc == FprintdAuthenticator::Result::Disconnected || terminate;
     {
       std::unique_lock<std::mutex> lock(mutx);
 
       fingerprint_finished = true;
       fingerprint_success = success;
-      fingerprint_status_code = rc;
+      fingerprint_status_code = fingerprint_result_to_int(rc);
 
       /*
        * Only PAM_SUCCESS may win the race.
        *
-       * A fingerprint failure does NOT wake the main authentication
+       * A password failure does NOT wake the main authentication
        * flow as a winner.
        */
       if (confirmation_type == ConfirmationType::Unset) {
@@ -1003,46 +919,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
 
     convar.notify_all();
 
-    return rc;
-  });
-
-  /*
-   * ---------------------------------------------------------------
-   * Fingerprint timeout task
-   * ---------------------------------------------------------------
-   *
-   * Terminates the fingerprint task if a timeout is exceeded.
-   */
-  optional_task<void> fingerprint_timeout_task([&] {
-    if (fingerprint_task.wait(std::chrono::seconds(fingerprint_timeout)) ==
-        std::future_status::timeout) {
-
-      {
-        std::unique_lock<std::mutex> lock(mutx);
-
-        if (!fingerprint_finished &&
-            confirmation_type == ConfirmationType::Unset) {
-
-          if (timeout_notice) {
-            conv_function(PAM_ERROR_MSG, "Fingerprint authentication timeout reached");
-          }
-          syslog(LOG_ERR, "Failure: fingerprint authentication timeout reached");
-
-          fingerprint_status_code = PAM_AUTH_ERR;
-          fingerprint_finished = true;
-        }
-      }
-
-      /*
-      * This cancels the thread which is currently blocked in
-      * pam_authenticate().
-      *
-      * fingerprint_pam_cleanup() then calls pam_end(..., PAM_ABORT).
-      */
-      fingerprint_task.stop(true);
-
-      convar.notify_all();
-    }
+    return fingerprint_result_to_int(rc);
   });
 
   /*
@@ -1062,12 +939,10 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
     ask_pass,
     fingerprint,
     detection_notice,
-    fingerprint_timeout,
     terminate,
     pass_task,
     child_task,
     fingerprint_task,
-    fingerprint_timeout_task,
     howdy_finished,
     fingerprint_finished,
     password_finished,
@@ -1080,6 +955,7 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
   if (signal_task.active()) {
     signal_task.stop(true);
   }
+  fingerprint_authenticator->cancel();
 
   switch (confirmation_type) {
     /*
@@ -1100,9 +976,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       */
       fingerprint_task.stop(false);
       pam_res = fingerprint_task.get();
-      if (fingerprint_timeout_task.active()) {
-        fingerprint_timeout_task.stop(false);
-      }
 
       /*
       * Print and log message
@@ -1143,9 +1016,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       if (fingerprint_task.active()) {
         fingerprint_task.stop(true);
       }
-      if (fingerprint_timeout_task.active()) {
-        fingerprint_timeout_task.stop(false);
-      }
 
       /*
       * Password task is the winner, therefore it can be joined
@@ -1176,9 +1046,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       if (fingerprint_task.active()) {
         fingerprint_task.stop(true);
       }
-      if (fingerprint_timeout_task.active()) {
-        fingerprint_timeout_task.stop(false);
-      }
 
       workaround_function(workaround, pass_task, enter_device, conv_function, original_terminal_flags, ask_pass);
 
@@ -1204,9 +1071,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
       */
       if (fingerprint_task.active()) {
         fingerprint_task.stop(true);
-      }
-      if (fingerprint_timeout_task.active()) {
-        fingerprint_timeout_task.stop(false);
       }
 
       workaround_function(Workaround::Native, pass_task, enter_device, conv_function, original_terminal_flags, ask_pass);
@@ -1237,9 +1101,6 @@ auto identify(pam_handle_t *pamh, int flags, int argc, const char **argv,
 
   if (fingerprint && fingerprint_task.active()) {
     fingerprint_task.stop(false);
-    if (fingerprint_timeout_task.active()) {
-      fingerprint_timeout_task.stop(false);
-    }
   }
 
   if (ask_pass &&

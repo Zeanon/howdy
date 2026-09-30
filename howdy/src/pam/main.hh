@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <cstdint>
 
+#include "fprintd_client.hh"
+
 enum class ConfirmationType {
   Unset,
   Terminated,
@@ -62,6 +64,10 @@ inline std::set<std::string> split_string(const std::string& str, char delimiter
 
 inline bool str_to_bool(const std::string& str) {
   return str == "true" || str == "on" || str == "1";
+}
+
+inline int fingerprint_result_to_int(FprintdAuthenticator::Result result) {
+  return static_cast<int>(result); //TODO need to properly convert
 }
 
 /**
