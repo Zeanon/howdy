@@ -326,8 +326,7 @@ FprintdAuthenticator::authenticate(
     std::chrono::milliseconds timeout,
     bool detection_notice,
     int max_tries
-    )
-{
+) {
     result_ = Result::Error;
 
     if (!connect())
@@ -577,14 +576,6 @@ int FprintdAuthenticator::verify_finger_selected(
     //    stderr,
     //    "[fprintd] VerifyFingerSelected: %s\n",
     //    finger ? finger : "(null)");
-
-    /*
-     * Optional:
-     *
-     * "Place your finger..."
-     *
-     * Howdy kann das momentan vermutlich ignorieren.
-     */
 
     return 0;
 }
