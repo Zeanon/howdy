@@ -77,6 +77,10 @@ template <typename T> bool optional_task<T>::spawned_thread() const {
 // WARNING: pthread_cancel() must only be used for tasks which are explicitly
 // written to be cancellation-safe.
 template <typename T> void optional_task<T>::stop(bool force) {
+  if (!is_active) {
+    return;
+  }
+
   if (!spawned || !thread.joinable()) {
     is_active = false;
     return;

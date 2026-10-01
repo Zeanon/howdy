@@ -1,9 +1,16 @@
-#include "fprintd_client.hh"
+#include "fingerprint_authenticator.hh"
 
 #include <systemd/sd-bus.h>
 
+#include <security/pam_ext.h>
+
+#include <sys/syslog.h>
+
 #include <cerrno>
 #include <cstring>
+#include <libintl.h>
+
+#define S(msg) gettext(msg)
 
 namespace {
 
@@ -162,7 +169,7 @@ bool FprintdAuthenticator::claim()
 }
 
 
-bool FprintdAuthenticator::verify_start()
+bool FprintdAuthenticator::verify_init()
 {
     /*
      * Install signal handlers BEFORE VerifyStart().
@@ -198,10 +205,16 @@ bool FprintdAuthenticator::verify_start()
         return false;
     }
 
+    return true;
+}
+
+
+bool FprintdAuthenticator::verify_start()
+{
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message* reply = nullptr;
 
-    r = sd_bus_call_method(
+    int r = sd_bus_call_method(
         bus_,
         FPRINTD_BUS,
         device_.c_str(),
@@ -244,15 +257,15 @@ bool FprintdAuthenticator::verify_start()
 bool FprintdAuthenticator::process_events(
     std::chrono::steady_clock::time_point deadline)
 {
-    std::fprintf(
-        stderr,
-        "[fprintd] entering event loop\n");
+    //std::fprintf(
+    //    stderr,
+    //    "[fprintd] entering event loop\n");
     while (!finished_ && !cancelled_) {
 
         /*
          * Process events which are already queued.
          */
-        for (;;) {
+        while(true) {
             const int r = sd_bus_process(bus_, nullptr);
 
             if (r < 0) {
@@ -308,7 +321,12 @@ bool FprintdAuthenticator::process_events(
 
 
 FprintdAuthenticator::Result
-FprintdAuthenticator::authenticate(std::chrono::milliseconds timeout)
+FprintdAuthenticator::authenticate(
+    const std::function<int(int, const char *)> &conv_function,
+    std::chrono::milliseconds timeout,
+    bool detection_notice,
+    int max_tries
+    )
 {
     result_ = Result::Error;
 
@@ -326,25 +344,63 @@ FprintdAuthenticator::authenticate(std::chrono::milliseconds timeout)
         return result_;
     }
 
-    if (!verify_start()) {
+    if (!verify_init()) {
         cleanup();
         return result_;
     }
 
-    std::fprintf(
-        stderr,
-        "[fprintd] VerifyStart succeeded\n");
-
     const auto deadline =
         std::chrono::steady_clock::now() + timeout;
 
-    process_events(deadline);
+    int retries = 0;
+    bool no_match = true;
+    bool terminated = cancelled_;
+    while (retries < max_tries && no_match && !terminated) {
+        finished_ = false;
+        if (!verify_start()) {
+            cleanup();
+            return result_;
+        }
 
-    /*
-     * VerifyStop MUST happen before Release.
-     */
-    if (verify_started_) {
-        verify_stop();
+        if (detection_notice) {
+            conv_function(PAM_TEXT_INFO, "Place your finger on the fingerprint reader");
+        }
+
+        //std::fprintf(
+        //    stderr,
+        //    "[fprintd] VerifyStart succeeded\n");
+
+        process_events(deadline);
+
+        /*
+        * VerifyStop MUST happen before Release.
+        */
+        if (verify_started_) {
+            verify_stop();
+        }
+
+        no_match = (result_ == Result::NoMatch);
+        terminated = (
+            cancelled_ ||
+            result_ == Result::Cancelled ||
+            result_ == Result::Disconnected
+        );
+
+        retries++;
+        if (no_match && !cancelled_) {
+            syslog(
+                LOG_NOTICE,
+                "Fingerprint authentication failed "
+                "(attempt %d/%d)",
+                retries,
+                max_tries);
+            if (retries < max_tries) {
+                conv_function(PAM_ERROR_MSG, S("Failed to match fingerprint, please try again"));
+            } else {
+                conv_function(PAM_ERROR_MSG, S("Failed to match fingerprint"));
+                result_ = Result::MaxTries;
+            }
+        }
     }
 
     release();
@@ -466,11 +522,11 @@ int FprintdAuthenticator::verify_status(
         return 0;
     }
 
-    std::fprintf(
-        stderr,
-        "[fprintd] VerifyStatus: '%s', done=%d\n",
-        status,
-        done);
+    //std::fprintf(
+    //    stderr,
+    //    "[fprintd] VerifyStatus: '%s', done=%d\n",
+    //    status,
+    //    done);
 
     /*
      * Intermediate status.
@@ -482,23 +538,14 @@ int FprintdAuthenticator::verify_status(
         return 0;
 
     if (std::strcmp(status, "verify-match") == 0) {
-
         self->result_ = Result::Success;
-
     } else if (std::strcmp(status, "verify-no-match") == 0) {
-
         self->result_ = Result::NoMatch;
-
     } else if (std::strcmp(status, "verify-disconnected") == 0) {
-
         self->result_ = Result::Disconnected;
-
     } else if (std::strcmp(status, "verify-unknown-error") == 0) {
-
         self->result_ = Result::Error;
-
     } else {
-
         self->result_ = Result::Error;
     }
 
@@ -519,17 +566,17 @@ int FprintdAuthenticator::verify_finger_selected(
             "s",
             &finger) < 0) {
 
-        std::fprintf(
-            stderr,
-            "[fprintd] VerifyFingerSelected: read failed\n");
+        //std::fprintf(
+        //    stderr,
+        //    "[fprintd] VerifyFingerSelected: read failed\n");
 
         return 0;
     }
 
-    std::fprintf(
-        stderr,
-        "[fprintd] VerifyFingerSelected: %s\n",
-        finger ? finger : "(null)");
+    //std::fprintf(
+    //    stderr,
+    //    "[fprintd] VerifyFingerSelected: %s\n",
+    //    finger ? finger : "(null)");
 
     /*
      * Optional:

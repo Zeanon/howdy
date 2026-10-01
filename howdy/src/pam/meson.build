@@ -17,9 +17,9 @@ paths_h = configure_file(
 pamdir = get_option('pam_dir') != '' ? get_option('pam_dir') : join_paths(get_option('prefix'), get_option('libdir'), 'security')
 
 shared_library(
-	'pam_howdy',
+	'pam_howdy_new',
 	'main.cc',
-	'fprintd_client.cc',
+	'fingerprint_authenticator.cc',
 	'enter_device.cc',
 	dependencies: [
 		libpam,

@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <cstdint>
 
-#include "fprintd_client.hh"
+#include "fingerprint_authenticator.hh"
 
 enum class ConfirmationType {
   Unset,
@@ -67,7 +67,24 @@ inline bool str_to_bool(const std::string& str) {
 }
 
 inline int fingerprint_result_to_int(FprintdAuthenticator::Result result) {
-  return static_cast<int>(result); //TODO need to properly convert
+  switch (result) {
+    case FprintdAuthenticator::Result::Success:
+      return PAM_SUCCESS;
+    case FprintdAuthenticator::Result::NoDevice:
+    case FprintdAuthenticator::Result::Busy:
+    case FprintdAuthenticator::Result::NoEnrolledPrints:
+      return PAM_AUTHINFO_UNAVAIL;
+    case FprintdAuthenticator::Result::NoMatch:
+      return PAM_AUTH_ERR;
+    case FprintdAuthenticator::Result::MaxTries:
+      return PAM_MAXTRIES;
+    case FprintdAuthenticator::Result::Timeout:
+    case FprintdAuthenticator::Result::Cancelled:
+    case FprintdAuthenticator::Result::Disconnected:
+    case FprintdAuthenticator::Result::Error:
+    default:
+      return PAM_CONV_ERR;
+  }
 }
 
 /**

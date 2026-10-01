@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <string>
+#include <functional>
 
 class FprintdAuthenticator {
 public:
@@ -13,6 +14,7 @@ public:
         Busy,
         NoEnrolledPrints,
         NoMatch,
+        MaxTries,
         Timeout,
         Cancelled,
         Disconnected,
@@ -34,7 +36,12 @@ public:
      * This does NOT create a thread.
      * Run it inside your existing optional_task.
      */
-    Result authenticate(std::chrono::milliseconds timeout);
+    Result authenticate(
+        const std::function<int(int, const char *)> &conv_function,
+        std::chrono::milliseconds timeout,
+        bool detection_notice,
+        int max_tries
+    );
 
     /*
      * Can be called from the controlling Howdy thread.
@@ -53,6 +60,7 @@ private:
     bool get_default_device();
 
     bool claim();
+    bool verify_init();
     bool verify_start();
 
     void verify_stop();
