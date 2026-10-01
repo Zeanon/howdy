@@ -44,16 +44,49 @@ const auto MAX_ENTER_RETRIES = 5;
 
 #define S(msg) gettext(msg)
 
+termios original_terminal_flags;
+
+std::mutex mutx;
+std::condition_variable convar;
+
+bool abort_if_ssh;
+bool abort_if_lid_closed;
+
+std::set<std::string> whitelist;
+std::set<std::string> blacklist;
+
+int max_tries;
+int max_password_tries;
+int max_fingerprint_tries;
+bool timeout_notice;
+bool detection_notice;
+bool no_confirmation;
+
+bool face_unlock;
+std::optional<const char*> timeout = std::nullopt;
+
+bool fingerprint;
+int fingerprint_timeout;
+
+bool password;
+std::string password_service_name;
+
+std::function<int(int, const char *)> conv_function;
+
+Workaround workaround = Workaround::Unset;
+Workaround fingerprint_workaround = Workaround::Unset;
+
+char *username = nullptr;
+
+ConfirmationType confirmation_type = ConfirmationType::Unset;
+std::optional<EnterDevice> enter_device = std::nullopt;
+
 /**
  * Inspect the status code returned by the compare process
  * @param  status        The status code
  * @param  conv_function The PAM conversation function
  */
-inline auto howdy_error(
-  int status,
-  bool timeout_notice,
-  const std::function<int(int, const char *)> &conv_function)
-  {
+inline auto howdy_error(int status) {
   // If the process has exited
   if (WIFEXITED(status)) {
     // Get the status code returned
@@ -105,14 +138,14 @@ inline auto howdy_error(
  * @param  conv_function PAM conversation function
  * @return          Returns the conversation function return code
  */
-auto howdy_status(char *username, int status, const INIReader &config,
-                  const std::function<int(int, const char *)> &conv_function)
-    -> int {
+auto howdy_status(
+  int status
+) -> int {
   if (status != EXIT_SUCCESS) {
     return PAM_AUTH_ERR;
   }
 
-  if (!config.GetBoolean("core", "no_confirmation", false)) {
+  if (!no_confirmation) {
     // Construct confirmation text from i18n string
     std::string confirm_text(S("Face authenticated as {}"));
     std::string identify_msg =
@@ -134,15 +167,15 @@ auto howdy_status(char *username, int status, const INIReader &config,
  * @return        Returns PAM_AUTHINFO_UNAVAIL if it shouldn't be enabled,
  * PAM_SUCCESS otherwise
  */
-auto check_enabled(const INIReader &config, const char *username) -> int {
+auto check_enabled(bool disabled) -> int {
   // Stop executing if Howdy has been disabled in the config
-  if (config.GetBoolean("core", "disabled", false)) {
+  if (disabled) {
     syslog(LOG_INFO, "Skipped authentication, Howdy is disabled");
     return PAM_AUTHINFO_UNAVAIL;
   }
 
   // Stop if we're in a remote shell and configured to exit
-  if (config.GetBoolean("core", "abort_if_ssh", true)) {
+  if (abort_if_ssh) {
     if (checkenv("SSH_CONNECTION") || checkenv("SSH_CLIENT") ||
         checkenv("SSH_TTY") || checkenv("SSHD_OPTS")) {
       syslog(LOG_INFO, "Skipped authentication, SSH session detected");
@@ -151,7 +184,7 @@ auto check_enabled(const INIReader &config, const char *username) -> int {
   }
 
   // Try to detect the laptop lid state and stop if it's closed
-  if (config.GetBoolean("core", "abort_if_lid_closed", true)) {
+  if (abort_if_lid_closed) {
     glob_t glob_result;
 
     // Get any files containing lid state
@@ -180,15 +213,17 @@ auto check_enabled(const INIReader &config, const char *username) -> int {
     globfree(&glob_result);
   }
 
+  if ((!whitelist.empty() && !whitelist.count(std::string(username))) || blacklist.find(std::string(username)) != blacklist.end()) {
+    return PAM_IGNORE;
+  }
+
   return PAM_SUCCESS;
 }
 
-inline auto workaround_function(const Workaround &workaround,
-                                optional_task<int> &pass_task,
-                                const std::optional<EnterDevice> &enter_device,
-                                const std::function<int(int, const char *)> &conv_function,
-                                const termios &original_terminal_flags,
-                                const bool password) {
+inline auto workaround_function(
+  const Workaround &workaround,
+  optional_task<int> &pass_task
+) {
   // We want to stop the password prompt, either by canceling the thread when
   // workaround is set to "native", or by emulating "Enter" input with
   // "input"
@@ -288,10 +323,6 @@ inline auto conv_wrapper(
 }
 
 inline auto start_tasks(
-  bool &face_unlock,
-  bool &password,
-  bool &fingerprint,
-  bool &detection_notice,
   bool &terminate,
   optional_task<int> &pass_task,
   optional_task<int> &child_task,
@@ -299,11 +330,8 @@ inline auto start_tasks(
   bool &howdy_finished,
   bool &fingerprint_finished,
   bool &password_finished,
-  ConfirmationType &confirmation_type,
-  std::mutex &mutx,
-  std::condition_variable &convar,
-  const std::function<int(int, const char *)> &conv_function)
-{
+  ConfirmationType &confirmation_type
+) {
   if (terminate || confirmation_type != ConfirmationType::Unset) {
     return;
   }
@@ -403,31 +431,40 @@ auto identify(
     return PAM_SYSTEM_ERR;
   }
 
-  std::set<std::string> whitelist;
-  std::set<std::string> blacklist;
+  // Stop if we're in a remote shell and configured to exit
+  abort_if_ssh = config.GetBoolean("core", "abort_if_ssh", true);
+
+  // Try to detect the laptop lid state and stop if it's closed
+  abort_if_lid_closed = config.GetBoolean("core", "abort_if_lid_closed", true);
 
   std::string workaround_string = config.GetString("core", "workaround", "off");
   std::optional<Workaround> fingerprint_workaround_opt = std::nullopt;
 
-  int max_tries = config.GetInteger("core", "max_tries", 1);
-  int max_password_tries = config.GetInteger("core", "max_password_tries", 3);
-  int max_fingerprint_tries = config.GetInteger("core", "max_fingerprint_tries", 3);
-  auto timeout_notice = config.GetBoolean("core", "timeout_notice", true);
-  auto detection_notice = config.GetBoolean("core", "detection_notice", true);
+  max_tries = config.GetInteger("core", "max_tries", 1);
+  max_password_tries = config.GetInteger("core", "max_password_tries", 3);
+  max_fingerprint_tries = config.GetInteger("core", "max_fingerprint_tries", 3);
 
-  auto face_unlock = config.GetBoolean("core", "use_face_authentication", true);
+  timeout_notice = config.GetBoolean("core", "timeout_notice", true);
+  detection_notice = config.GetBoolean("core", "detection_notice", true);
+  no_confirmation = config.GetBoolean("core", "no_confirmation", false);
 
-  auto fingerprint = config.GetBoolean("core", "use_fingerprint", false);
-  auto fingerprint_timeout = config.GetInteger("core", "fingerprint_timeout", 30);
+  face_unlock = config.GetBoolean("core", "use_face_authentication", true);
 
-  auto password = config.GetBoolean("core", "use_password", false);
-  auto password_service_name = config.GetString("core", "password_service_name", "howdy-password");
+  fingerprint = config.GetBoolean("core", "use_fingerprint", false);
+  fingerprint_timeout = config.GetInteger("core", "fingerprint_timeout", 30);
+
+  password = config.GetBoolean("core", "use_password", false);
+  password_service_name = config.GetString("core", "password_service_name", "howdy-password");
   whitelist = split_string(config.GetString("core", "whitelist", ""), ',');
   blacklist = split_string(config.GetString("core", "blacklist", ""), ',');
-  std::optional<const char*> timeout = std::nullopt;
 
+  std::string arg;
   for (int i = 0; i < argc; i++) {
-    auto arg = std::string(argv[i]);
+    if (argv[i] == NULL) {
+      continue;
+    }
+
+    arg = std::string(argv[i]);
     if (arg == "timeout-notice") {
       timeout_notice = true;
     } else if (arg.starts_with("timeout-notice=")) {
@@ -436,6 +473,10 @@ auto identify(
       detection_notice = true;
     } else if (arg.starts_with("detection-notice=")) {
       detection_notice = str_to_bool(arg.substr(17, arg.length()));
+    } else if (arg == "no-confirmation") {
+      no_confirmation = true;
+    } else if (arg.starts_with("no-confirmation=")) {
+      no_confirmation = str_to_bool(arg.substr(17, arg.length()));
     } else if (arg == "face-unlock") {
       face_unlock = true;
     } else if (arg.starts_with("face-unlock=")) {
@@ -481,8 +522,8 @@ auto identify(
     return PAM_SYSTEM_ERR;
   }
 
-  Workaround workaround = get_workaround(workaround_string);
-  Workaround fingerprint_workaround = fingerprint_workaround_opt.value_or(
+  workaround = get_workaround(workaround_string);
+  fingerprint_workaround = fingerprint_workaround_opt.value_or(
                                         get_workaround(
                                           config.GetString("core", "fingerprint-workaround", workaround_string)
                                         )
@@ -490,7 +531,6 @@ auto identify(
   
   password = password && ask_auth_tok;
 
-  termios original_terminal_flags;
   tcgetattr(STDIN_FILENO, &original_terminal_flags);
 
   bool terminate = false;
@@ -498,7 +538,6 @@ auto identify(
   int pam_res = PAM_IGNORE;
 
   // Get the username from PAM, needed to match correct face model
-  char *username = nullptr;
   pam_res = pam_get_user(pamh, const_cast<const char **>(&username), nullptr);
   if (pam_res != PAM_SUCCESS) {
     syslog(LOG_ERR, "Failed to get username");
@@ -506,7 +545,7 @@ auto identify(
   }
 
   // Check whether Howdy should run
-  pam_res = check_enabled(config, username);
+  pam_res = check_enabled(config.GetBoolean("core", "disabled", false));
   if (pam_res != PAM_SUCCESS) {
     return pam_res;
   }
@@ -516,10 +555,6 @@ auto identify(
   struct stat stat_;
   if (stat(model_path.c_str(), &stat_) != 0) {
     face_unlock = false;
-  }
-
-  if ((!whitelist.empty() && !whitelist.count(std::string(username))) || blacklist.find(std::string(username)) != blacklist.end()) {
-    return PAM_IGNORE;
   }
 
   // Will contain PAM conversation structure
@@ -536,7 +571,7 @@ auto identify(
   }
 
   // Wrap the PAM conversation function in our own, easier function
-  auto conv_function = [conv](int msg_type, const char *msg_str) {
+  conv_function = [conv](int msg_type, const char *msg_str) {
     const struct pam_message msg = {.msg_style = msg_type, .msg = msg_str};
     const struct pam_message *msgp = &msg;
 
@@ -551,12 +586,6 @@ auto identify(
    * Authentication state
    * ---------------------------------------------------------------
    */
-  std::mutex mutx;
-  std::condition_variable convar;
-
-  ConfirmationType confirmation_type =
-      ConfirmationType::Unset;
-
   bool howdy_finished = false;
   bool howdy_success = false;
 
@@ -682,7 +711,7 @@ auto identify(
               errno);
           return PAM_SYSTEM_ERR;
         }
-        howdy_error(status, timeout_notice, conv_function);
+        howdy_error(status);
         if (detection_notice) {
           conv_function(PAM_TEXT_INFO, S("Please look directly into the camera"));
         }
@@ -701,7 +730,7 @@ auto identify(
         } else if (terminated) {
           confirmation_type = ConfirmationType::Terminated;
         } else {
-          howdy_error(status, timeout_notice, conv_function);
+          howdy_error(status);
         }
       }
     }
@@ -951,19 +980,16 @@ auto identify(
    * EnterDevice
    * ---------------------------------------------------------------
    */
-  std::optional<EnterDevice> enter_device =
-          (workaround == Workaround::Input ||
-           fingerprint_workaround == Workaround::Input) &&
-          euidaccess("/dev/uinput", W_OK | R_OK) == 0
-          ? std::optional<EnterDevice>{std::in_place}
-          : std::nullopt;
+  if (
+    (workaround == Workaround::Input ||
+     fingerprint_workaround == Workaround::Input) &&
+    euidaccess("/dev/uinput", W_OK | R_OK) == 0
+  ) {
+    enter_device.emplace();
+  }
 
 
   start_tasks(
-    face_unlock,
-    password,
-    fingerprint,
-    detection_notice,
     terminate,
     pass_task,
     child_task,
@@ -971,10 +997,7 @@ auto identify(
     howdy_finished,
     fingerprint_finished,
     password_finished,
-    confirmation_type,
-    mutx,
-    convar,
-    conv_function
+    confirmation_type
   );
 
   signal_task.stop(true);
@@ -1012,7 +1035,7 @@ auto identify(
             "Authenticated with fingerprint");
       }
 
-      workaround_function(fingerprint_workaround, pass_task, enter_device, conv_function, original_terminal_flags, password);
+      workaround_function(fingerprint_workaround, pass_task);
 
       return pam_res;
     }
@@ -1071,13 +1094,9 @@ auto identify(
       */
       fingerprint_task.stop(true);
 
-      workaround_function(workaround, pass_task, enter_device, conv_function, original_terminal_flags, password);
+      workaround_function(workaround, pass_task);
 
-      return howdy_status(
-          username,
-          pam_res,
-          config,
-          conv_function);
+      return howdy_status(pam_res);
     }
 
     /*
@@ -1095,7 +1114,7 @@ auto identify(
       */
       fingerprint_task.stop(true);
 
-      workaround_function(Workaround::Native, pass_task, enter_device, conv_function, original_terminal_flags, password);
+      workaround_function(Workaround::Native, pass_task);
 
       raise(SIGINT);
       
@@ -1130,11 +1149,7 @@ auto identify(
   if (howdy_finished) {
     pam_res = child_task.get();
 
-    return howdy_status(
-        username,
-        pam_res,
-        config,
-        conv_function);
+    return howdy_status(pam_res);
   }
 
   /*

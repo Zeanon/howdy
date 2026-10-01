@@ -15,7 +15,12 @@ enum class ConfirmationType {
   Fingerprint,
   Pam
 };
-enum class Workaround : std::uint8_t { Off, Manual, Input, Native };
+enum class Workaround : std::uint8_t {
+  Unset,
+  Manual,
+  Input,
+  Native
+};
 
 // Exit status codes returned by the compare process
 enum CompareError : std::uint8_t {
@@ -41,7 +46,7 @@ inline auto get_workaround(const std::string &workaround) -> Workaround {
     return Workaround::Native;
   }
 
-  return Workaround::Off;
+  return Workaround::Unset;
 }
 
 inline std::set<std::string> split_string(const std::string& str, char delimiter) {
