@@ -32,6 +32,12 @@ enum CompareError : std::uint8_t {
   RUBBERSTAMP = 20,
 };
 
+// Part of the definition of pam_handle so we can access the authtok to reset it for password auth
+struct pam_handle {
+    char *authtok;
+};
+
+// Parse string to Workaround enum
 inline auto get_workaround(const std::string &workaround) -> Workaround {
   if (workaround == "input") {
     return Workaround::Input;
@@ -63,7 +69,7 @@ inline std::set<std::string> split_string(const std::string& str, char delimiter
 }
 
 inline bool str_to_bool(const std::string& str) {
-  return str == "true" || str == "on" || str == "1";
+  return str == "true" || str == "yes" || str == "on" || str == "1";
 }
 
 inline int fingerprint_result_to_int(FprintdAuthenticator::Result result) {

@@ -388,7 +388,7 @@ FprintdAuthenticator::authenticate(
         retries++;
         if (no_match && !cancelled_) {
             syslog(
-                LOG_NOTICE,
+                LOG_ERR,
                 "Fingerprint authentication failed "
                 "(attempt %d/%d)",
                 retries,
