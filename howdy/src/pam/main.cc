@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <limits.h>
 #include <termios.h>
 
 #include <chrono>
@@ -38,9 +39,8 @@
 #include "optional_task.hh"
 #include <paths.hh>
 
-const auto DEFAULT_TIMEOUT =
+const auto DEFAULT_ENTER_TIMEOUT =
     std::chrono::duration<int, std::chrono::milliseconds::period>(500);
-const auto MAX_ENTER_RETRIES = 5;
 
 #define S(msg) gettext(msg)
 
@@ -52,9 +52,11 @@ std::condition_variable convar;
 std::set<std::string> whitelist;
 std::set<std::string> blacklist;
 
-int max_tries;
-int max_password_tries;
-int max_fingerprint_tries;
+unsigned int max_tries;
+unsigned int max_password_tries;
+unsigned int max_fingerprint_tries;
+unsigned int max_enter_tries;
+
 bool timeout_notice;
 bool detection_notice;
 bool no_confirmation;
@@ -63,15 +65,12 @@ bool face_unlock;
 std::optional<const char*> timeout = std::nullopt;
 
 bool fingerprint;
-int fingerprint_timeout;
+unsigned int fingerprint_timeout;
 
 bool password;
 std::string password_service_name;
 
 std::function<int(int, const char *)> conv_function;
-
-Workaround password_workaround = Workaround::Unset;
-Workaround fingerprint_workaround = Workaround::Unset;
 
 char *username = nullptr;
 
@@ -103,6 +102,32 @@ int password_status_code = PAM_AUTH_ERR;
 optional_task<int> *child_task_ptr;
 optional_task<int> *pass_task_ptr;
 optional_task<int> *fingerprint_task_ptr;
+
+struct CustomConversationContext {
+  const struct pam_conv *original;
+  bool cancelled;
+};
+
+inline int conv_wrapper(
+  int num_msg,
+  const struct pam_message **msg,
+  struct pam_response **resp,
+  void *appdata_ptr
+) {
+  auto *ctx =
+      static_cast<CustomConversationContext *>(appdata_ptr);
+
+  int rc = ctx->original->conv(
+      num_msg,
+      msg,
+      resp,
+      ctx->original->appdata_ptr);
+
+  if (rc == PAM_CONV_ERR) {
+      ctx->cancelled = true;
+  }
+  return rc;
+}
 
 /**
  * Inspect the status code returned by the compare process
@@ -177,103 +202,7 @@ inline int howdy_status(int status) {
   return PAM_SUCCESS;
 }
 
-inline void workaround_function(const Workaround &workaround) {
-  // We want to stop the password prompt, either by canceling the thread when
-  // workaround is set to "native", or by emulating "Enter" input with
-  // "input"
-  switch (workaround) {
-    // UNSAFE: We cancel the thread using pthread, pam_get_authtok seems to be
-    // a cancellation point
-    case Workaround::Native:
-      pass_task_ptr->stop(true);
-      break;
-    case Workaround::Input:
-      if (!enter_device.has_value()) {
-        syslog(
-            LOG_WARNING,
-            "Insufficient permissions to create the fake device");
-        conv_function(
-            PAM_ERROR_MSG,
-            S("Insufficient permissions to send Enter "
-              "press, waiting for user to press it instead"));
-      } else {
-        try {
-          int retries;
-
-          enter_device.value().send_enter_press();
-
-          for (retries = 0;
-              retries < MAX_ENTER_RETRIES &&
-              password &&
-              pass_task_ptr->active() &&
-              pass_task_ptr->wait(DEFAULT_TIMEOUT) == std::future_status::timeout;
-              retries++) {
-            enter_device.value().send_enter_press();
-          }
-
-          if (retries == MAX_ENTER_RETRIES) {
-            syslog(
-                LOG_WARNING,
-                "Failed to send enter input before the retries limit");
-            conv_function(
-                PAM_ERROR_MSG,
-                S("Failed to send Enter press before the "
-                  "retries limit, waiting for user to press it instead"));
-          }
-        } catch (std::runtime_error &err) {
-          syslog(
-              LOG_WARNING,
-              "Failed to send enter input: %s",
-              err.what());
-          conv_function(
-              PAM_ERROR_MSG,
-              S("Failed to send Enter press, waiting for user "
-                "to press it instead"));
-        }
-      }
-
-    case Workaround::Manual:
-      // We stop the thread (will block until the enter key is pressed if the
-      // input wasn't focused or if the uinput device failed to send keypress)
-      if (password) {
-        pass_task_ptr->stop(false);
-      }
-    default:
-      break;
-  }
-
-  if (password) {
-    tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal_flags);
-  }
-}
-
-struct CustomConversationContext {
-  const struct pam_conv *original;
-  bool cancelled;
-};
-
-inline int conv_wrapper(
-  int num_msg,
-  const struct pam_message **msg,
-  struct pam_response **resp,
-  void *appdata_ptr
-) {
-  auto *ctx =
-      static_cast<CustomConversationContext *>(appdata_ptr);
-
-  int rc = ctx->original->conv(
-      num_msg,
-      msg,
-      resp,
-      ctx->original->appdata_ptr);
-
-  if (rc == PAM_CONV_ERR) {
-      ctx->cancelled = true;
-  }
-  return rc;
-}
-
-inline void start_tasks() {
+inline void do_auth() {
   if (terminate || confirmation_type != ConfirmationType::Unset) {
     return;
   }
@@ -319,11 +248,6 @@ inline void start_tasks() {
     }
   }
 
-  /*
-  * ---------------------------------------------------------------
-  * Wait for first successful authentication
-  * ---------------------------------------------------------------
-  */
   if (!terminate && confirmation_type == ConfirmationType::Unset) {
     std::unique_lock<std::mutex> lock(mutx);
 
@@ -343,6 +267,74 @@ inline void start_tasks() {
             fingerprint_finished &&
             (!password || password_finished);
     });
+  }
+}
+
+inline void workaround_function(const Workaround &workaround) {
+  // We want to stop the password prompt, either by canceling the thread when
+  // workaround is set to "native", or by emulating "Enter" input with
+  // "input"
+  switch (workaround) {
+    // UNSAFE: We cancel the thread using pthread, pam_get_authtok seems to be
+    // a cancellation point
+    case Workaround::Native:
+      pass_task_ptr->stop(true);
+      break;
+    case Workaround::Input:
+      if (enter_device.has_value()) {
+        try {
+          unsigned int retries;
+
+          enter_device.value().send_enter_press();
+          for (retries = 1;
+               retries < max_enter_tries &&
+               password &&
+               pass_task_ptr->active() &&
+               pass_task_ptr->wait(DEFAULT_ENTER_TIMEOUT) == std::future_status::timeout;
+               retries++) {
+            enter_device.value().send_enter_press();
+          }
+
+          if (retries >= max_enter_tries) {
+            syslog(
+                LOG_WARNING,
+                "Failed to send enter input before the retries limit");
+            conv_function(
+                PAM_ERROR_MSG,
+                S("Failed to send Enter press before the "
+                  "retries limit, waiting for user to press it instead"));
+          }
+        } catch (std::runtime_error &err) {
+          syslog(
+              LOG_WARNING,
+              "Failed to send enter input: %s",
+              err.what());
+          conv_function(
+              PAM_ERROR_MSG,
+              S("Failed to send Enter press, waiting for user "
+                "to press it instead"));
+        }
+      } else {
+        syslog(
+            LOG_WARNING,
+            "Insufficient permissions to create the fake device");
+        conv_function(
+            PAM_ERROR_MSG,
+            S("Insufficient permissions to send Enter "
+              "press, waiting for user to press it instead"));
+      }
+    case Workaround::Off:
+      // We stop the thread (will block until the enter key is pressed if the
+      // input wasn't focused or if the uinput device failed to send keypress)
+      if (password) {
+        pass_task_ptr->stop(false);
+      }
+    default:
+      break;
+  }
+
+  if (password) {
+    tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal_flags);
   }
 }
 
@@ -382,12 +374,12 @@ inline int identify(
   // Try to detect the laptop lid state and stop if it's closed
   bool abort_if_lid_closed = config.GetBoolean("core", "abort_if_lid_closed", true);
 
-  std::string password_workaround_string = config.GetString("core", "face_auth_workaround", "off");
-  std::optional<Workaround> fingerprint_workaround_opt = std::nullopt;
+  Workaround workaround = get_workaround(config.GetString("core", "workaround", "off"));
 
-  max_tries = config.GetInteger("core", "max_tries", 1);
-  max_password_tries = config.GetInteger("core", "max_password_tries", 3);
-  max_fingerprint_tries = config.GetInteger("core", "max_fingerprint_tries", 3);
+  max_tries = (unsigned) config.GetInteger("core", "max_tries", 1);
+  max_password_tries = (unsigned) config.GetInteger("core", "max_password_tries", 3);
+  max_fingerprint_tries = (unsigned) config.GetInteger("core", "max_fingerprint_tries", 3);
+  max_enter_tries = (unsigned) config.GetInteger64("core", "max_enter_tries", 5);
 
   timeout_notice = config.GetBoolean("core", "timeout_notice", true);
   detection_notice = config.GetBoolean("core", "detection_notice", true);
@@ -451,22 +443,27 @@ inline int identify(
       password = str_to_bool(arg.substr(9, arg.length()));
     }
     else if (arg.starts_with("fingerprint-timeout=")) {
-      fingerprint_timeout = std::stoi(arg.substr(20, arg.length()).c_str());
+      int fingerprint_timeout_opt = std::stol(arg.substr(20, arg.length()).c_str());
+      fingerprint_timeout = fingerprint_timeout_opt < 1 ? UINT_MAX : (unsigned) fingerprint_timeout_opt;
     }
     else if (arg.starts_with("max-tries=")) {
-      max_tries = std::stoi(arg.substr(10, arg.length()).c_str());
+      int max_tries_opt = std::stoi(arg.substr(10, arg.length()).c_str());
+      max_tries = max_tries_opt < 1 ? UINT_MAX : (unsigned) max_tries_opt;
     }
     else if (arg.starts_with("max-password-tries=")) {
-      max_password_tries = std::stoi(arg.substr(19, arg.length()).c_str());
+      int max_password_tries_opt = std::stoi(arg.substr(19, arg.length()).c_str());
+      max_password_tries = max_password_tries_opt < 1 ? UINT_MAX : (unsigned) max_password_tries_opt;
     }
     else if (arg.starts_with("max-fingerprint-tries=")) {
-      max_fingerprint_tries = std::stoi(arg.substr(22, arg.length()).c_str());
+      int max_fingerprint_tries_opt = std::stoi(arg.substr(22, arg.length()).c_str());
+      max_fingerprint_tries = max_fingerprint_tries_opt < 1 ? UINT_MAX : (unsigned) max_fingerprint_tries_opt;
     }
-    else if (arg.starts_with("face-auth-workaround=")) {
-      password_workaround_string = arg.substr(21, arg.length());
+    else if (arg.starts_with("max-enter-tries=")) {
+      int max_enter_tries_opt = std::stoi(arg.substr(16, arg.length()).c_str());
+      max_enter_tries = max_enter_tries_opt < 1 ? UINT_MAX : (unsigned) max_enter_tries_opt;
     }
-    else if (arg.starts_with("fingerprint-workaround=")) {
-      fingerprint_workaround_opt = std::optional<Workaround>(get_workaround(arg.substr(23, arg.length())));
+    else if (arg.starts_with("workaround=")) {
+      workaround = get_workaround(arg.substr(11, arg.length()));
     }
     else if (arg.starts_with("password-service-name=")) {
       password_service_name = arg.substr(22, arg.length());
@@ -481,29 +478,6 @@ inline int identify(
       timeout = std::optional<const char*>(arg.substr(8, arg.length()).c_str());
     }
   }
-
-  if (max_tries < 1) {
-    max_tries = INT32_MAX;
-  }
-
-  if (max_password_tries < 1) {
-    max_password_tries = INT32_MAX;
-  }
-
-  if (max_fingerprint_tries < 1) {
-    max_fingerprint_tries = INT32_MAX;
-  }
-
-  if (fingerprint_timeout < 1) {
-    fingerprint_timeout = INT32_MAX;
-  }
-
-  password_workaround = get_workaround(password_workaround_string);
-  fingerprint_workaround = fingerprint_workaround_opt.value_or(
-                                        get_workaround(
-                                          config.GetString("core", "fingerprint-workaround", password_workaround_string)
-                                        )
-                                      );
   
   password = password && ask_auth_tok;
 
@@ -571,8 +545,7 @@ inline int identify(
 
   // Will contain PAM conversation structure
   struct pam_conv *conv = nullptr;
-  const void **conv_ptr =
-      const_cast<const void **>(reinterpret_cast<void **>(&conv));
+  const void **conv_ptr = const_cast<const void **>(reinterpret_cast<void **>(&conv));
 
   // Retrieve the PAM conversation structure
   pam_res = pam_get_item(pamh, PAM_CONV, conv_ptr);
@@ -675,12 +648,11 @@ inline int identify(
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
     int status = 0;
-    int retries = 0;
+    bool retry = true;
     bool success = false;
     bool terminated = terminate;
-    while (retries < max_tries
-         && !success
-         && !terminated) {
+    unsigned int retries = 0;
+    while (retry) {
       waitpid(child_pid, &status, 0);
       success = (
           WIFEXITED(status) &&
@@ -689,8 +661,13 @@ inline int identify(
           (status == CompareError::TERMINATED &&
            WTERMSIG(status) == CompareError::TERMINATED)
           || terminate);
-      
-      if (++retries < max_tries && !success && !terminated) {
+      retry = (
+        ++retries < max_tries
+        && !success
+        && !terminated
+        && confirmation_type == ConfirmationType::Unset);
+
+      if (retry) {
         if (posix_spawnp(
                 &child_pid,
                 PYTHON_EXECUTABLE_PATH,
@@ -753,12 +730,11 @@ inline int identify(
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
     int rc = 0;
-    int retries = 0;
+    bool retry = true;
     bool success = false;
     bool terminated = terminate;
-    while (retries < max_password_tries
-           && !success
-           && !terminated) {
+    unsigned int retries = 0;
+    while (retries < max_password_tries && retry) {
       /*
       * The cleanup handler makes sure pam_end() is executed when
       * this thread is cancelled.
@@ -845,9 +821,10 @@ inline int identify(
 
       success = (rc == PAM_SUCCESS);
       terminated = (password_conv_ctx.cancelled || terminate);
+      retry = (!success && !terminated && confirmation_type == ConfirmationType::Unset);
 
       retries++;
-      if (!success && !terminated) {
+      if (retry) {
         syslog(
             LOG_NOTICE,
             "Password authentication failed "
@@ -978,14 +955,13 @@ inline int identify(
    * ---------------------------------------------------------------
    */
   if (
-    (password_workaround == Workaround::Input ||
-     fingerprint_workaround == Workaround::Input) &&
+    workaround == Workaround::Input &&
     euidaccess("/dev/uinput", W_OK | R_OK) == 0
   ) {
     enter_device.emplace();
   }
 
-  start_tasks();
+  do_auth();
 
   fingerprint_authenticator->cancel();
   signal_task.stop(true);
@@ -1022,7 +998,7 @@ inline int identify(
             "Authenticated with fingerprint");
       }
 
-      workaround_function(fingerprint_workaround);
+      workaround_function(workaround);
 
       return pam_res;
     }
@@ -1081,7 +1057,7 @@ inline int identify(
       */
       fingerprint_task.stop(true);
 
-      workaround_function(password_workaround);
+      workaround_function(workaround);
 
       return howdy_status(pam_res);
     }

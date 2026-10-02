@@ -16,8 +16,7 @@ enum class ConfirmationType {
   Pam
 };
 enum class Workaround : std::uint8_t {
-  Unset,
-  Manual,
+  Off,
   Input,
   Native
 };
@@ -34,10 +33,6 @@ enum CompareError : std::uint8_t {
 };
 
 inline auto get_workaround(const std::string &workaround) -> Workaround {
-  if (workaround == "manual") {
-    return Workaround::Manual;
-  }
-  
   if (workaround == "input") {
     return Workaround::Input;
   }
@@ -46,7 +41,7 @@ inline auto get_workaround(const std::string &workaround) -> Workaround {
     return Workaround::Native;
   }
 
-  return Workaround::Unset;
+  return Workaround::Off;
 }
 
 inline std::set<std::string> split_string(const std::string& str, char delimiter) {
