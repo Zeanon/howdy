@@ -505,14 +505,13 @@ inline int identify(
       blacklist = split_string(arg.substr(10, arg.length()), ',');
     }
     else if (arg.starts_with("password:")) {
-      std::string password_arg = arg.substr(9, arg.length());
-      if (password_arg == "nodelay") {
-        password_nodelay = true;
-      }
-      password_args.push_back(password_arg.c_str());
+      password_args.push_back(arg.substr(9, arg.length()).c_str());
     }
   }
 
+  if (password_nodelay) {
+    password_args.push_back("nodelay");
+  }
   password_args.shrink_to_fit();
   password = password && ask_auth_tok;
 
@@ -815,13 +814,14 @@ inline int identify(
     while (retries < max_password_tries && retry) {
       orig_authtok = pamh->authtok;
       rc = password_pam_sm(pamh, flags, password_args.size(), password_args.data());
-      pamh->authtok = orig_authtok;
 
       success = (rc == PAM_SUCCESS);
       retry = (!success && !terminate && confirmation_type == ConfirmationType::Unset);
 
       retries++;
       if (retry) {
+        pamh->authtok = orig_authtok;
+
         if (!password_nodelay) {
           sleep(2);
         }
