@@ -1,9 +1,10 @@
-#ifndef ENTER_DEVICE_H_
-#define ENTER_DEVICE_H_
+#pragma once
 
 #include <libevdev/libevdev-uinput.h>
 #include <libevdev/libevdev.h>
+
 #include <memory>
+
 
 class EnterDevice {
   std::unique_ptr<struct libevdev, decltype(&libevdev_free)> raw_device;
@@ -15,5 +16,3 @@ public:
   void send_enter_press() const;
   ~EnterDevice() = default;
 };
-
-#endif // ENTER_DEVICE_H

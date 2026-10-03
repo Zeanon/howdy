@@ -1,50 +1,34 @@
-#include <cerrno>
-#include <csignal>
-#include <cstdlib>
-
-#include <glob.h>
-#include <libintl.h>
-#include <pthread.h>
-#include <spawn.h>
-#include <stdexcept>
-#include <sys/signalfd.h>
-#include <sys/stat.h>
-#include <sys/syslog.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <syslog.h>
-#include <unistd.h>
-#include <limits.h>
-#include <termios.h>
-
-#include <chrono>
-#include <condition_variable>
-#include <cstring>
-#include <fstream>
-#include <functional>
-#include <future>
-#include <mutex>
-#include <string>
-#include <tuple>
-#include <iostream>
-
-#include <dlfcn.h>
-
-#include <INIReader.h>
-
-#include <security/pam_appl.h>
-#include <security/pam_ext.h>
-#include <security/pam_modules.h>
+#include "main.hh"
 
 #include "enter_device.hh"
-#include "main.hh"
 #include "optional_task.hh"
+
+#include <glob.h>
+#include <spawn.h>
+#include <dlfcn.h>
+#include <termios.h>
+#include <INIReader.h>
+
 #include <paths.hh>
 
-const auto DEFAULT_ENTER_TIMEOUT =
-    std::chrono::duration<int, std::chrono::milliseconds::period>(500);
+#include <sys/stat.h>
+#include <sys/syslog.h>
+
+#include <mutex>
+#include <chrono>
+#include <future>
+#include <fstream>
+#include <functional>
+#include <condition_variable>
+
 
 #define S(msg) gettext(msg)
+
+
+static const unsigned int UINT_MAX = -1;
+static const auto DEFAULT_ENTER_TIMEOUT =
+    std::chrono::duration<int, std::chrono::milliseconds::period>(500);
+
 
 termios original_terminal_flags;
 
@@ -59,6 +43,7 @@ unsigned int max_password_tries;
 unsigned int max_fingerprint_tries;
 unsigned int max_enter_tries;
 
+bool quiet;
 bool verbose;
 bool timeout_notice;
 bool detection_notice;
@@ -331,7 +316,7 @@ inline void workaround_function(const Workaround &workaround) {
 
   // reset the terminal flags, so input does not stay hidden for example
   if (password) {
-    tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal_flags);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_terminal_flags);
   }
 }
 
@@ -370,6 +355,7 @@ inline int identify(
   bool abort_if_ssh = config.GetBoolean("core", "abort_if_ssh", true);
   bool abort_if_lid_closed = config.GetBoolean("core", "abort_if_lid_closed", true);
 
+  quiet = config.GetBoolean("core", "quiet", false);
   verbose = config.GetBoolean("core", "verbose", true);
   timeout_notice = config.GetBoolean("core", "timeout_notice", true);
   detection_notice = config.GetBoolean("core", "detection_notice", true);
@@ -392,7 +378,7 @@ inline int identify(
   max_password_tries = (unsigned) config.GetInteger("password", "max_tries", 3);
   max_enter_tries = (unsigned) config.GetInteger64("password", "max_enter_tries", 5);
   bool password_nodelay = config.GetBoolean("password", "nodelay", false);
-  Workaround workaround = get_workaround(config.GetString("password", "workaround", "off"));
+  Workaround workaround = get_workaround(config.GetString("core", "workaround", "off"));
 
 
   std::vector<const char*> password_args;
@@ -415,6 +401,11 @@ inline int identify(
       abort_if_lid_closed = true;
     } else if (arg.starts_with("abort-if-lid-closed=")) {
       abort_if_lid_closed = str_to_bool(arg.substr(20, arg.length()));
+    }
+    else if (arg == "quiet") {
+      quiet = true;
+    } else if (arg.starts_with("quiet=")) {
+      quiet = str_to_bool(arg.substr(6, arg.length()));
     }
     else if (arg == "verbose") {
       verbose = true;
@@ -495,8 +486,8 @@ inline int identify(
       int max_enter_tries_opt = std::stoi(arg.substr(25, arg.length()).c_str());
       max_enter_tries = max_enter_tries_opt < 1 ? UINT_MAX : (unsigned) max_enter_tries_opt;
     }
-    else if (arg.starts_with("password:workaround=")) {
-      workaround = get_workaround(arg.substr(20, arg.length()));
+    else if (arg.starts_with("workaround=")) {
+      workaround = get_workaround(arg.substr(11, arg.length()));
     }
     else if (arg.starts_with("whitelist=")) {
       whitelist = split_string(arg.substr(10, arg.length()), ',');
@@ -584,7 +575,6 @@ inline int identify(
 
   // Retrieve the PAM conversation structure
   pam_res = pam_get_item(pamh, PAM_CONV, conv_ptr);
-
   if (pam_res != PAM_SUCCESS || conv == nullptr || conv->conv == nullptr) {
     syslog(LOG_ERR, "Failed to acquire conversation");
     return PAM_SYSTEM_ERR;
@@ -597,7 +587,10 @@ inline int identify(
 
     struct pam_response res = {};
     struct pam_response *resp = &res;
-     
+    
+    if (quiet) {
+      return 0;
+    }
     return conv->conv(1, &msgp, &resp, conv->appdata_ptr);
   };
 
@@ -605,6 +598,8 @@ inline int identify(
   sigemptyset(&set);
   sigaddset(&set, SIGINT);
   sigaddset(&set, SIGTERM);
+  sigaddset(&set, SIGQUIT);
+  sigaddset(&set, SIGKILL);
 
   pthread_sigmask(SIG_BLOCK, &set, nullptr);
   /*
@@ -1157,11 +1152,19 @@ PAM_EXTERN auto pam_sm_close_session(
 ) -> int {
   return PAM_IGNORE;
 }
-PAM_EXTERN auto pam_sm_chauthtok(pam_handle_t *pamh, int flags, int argc,
-                                 const char **argv) -> int {
+PAM_EXTERN auto pam_sm_chauthtok(
+  pam_handle_t *pamh,
+  int flags,
+  int argc,
+  const char **argv
+) -> int {
   return PAM_IGNORE;
 }
-PAM_EXTERN auto pam_sm_setcred(pam_handle_t *pamh, int flags, int argc,
-                               const char **argv) -> int {
+PAM_EXTERN auto pam_sm_setcred(
+  pam_handle_t *pamh,
+  int flags,
+  int argc,
+  const char **argv
+) -> int {
   return PAM_IGNORE;
 }

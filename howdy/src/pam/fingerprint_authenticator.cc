@@ -1,19 +1,17 @@
 #include "fingerprint_authenticator.hh"
 
-#include <systemd/sd-bus.h>
-
 #include <security/pam_ext.h>
-
 #include <sys/syslog.h>
-
-#include <cerrno>
-#include <cstring>
 #include <libintl.h>
+
+#include <cstring>
+#include <cerrno>
+
 
 #define S(msg) gettext(msg)
 
-namespace {
 
+namespace {
 constexpr const char* FPRINTD_BUS =
     "net.reactivated.Fprint";
 
@@ -37,20 +35,16 @@ constexpr const char* FPRINTD_ERROR_CLAIM_DEVICE =
 
 constexpr const char* FPRINTD_ERROR_NO_ACTION =
     "net.reactivated.Fprint.Error.NoActionInProgress";
-
 } // namespace{
 
 
 
 FprintdAuthenticator::FprintdAuthenticator(
     std::string username)
-    : username_(std::move(username))
-{
-}
+    : username_(std::move(username)) {}
 
 
-FprintdAuthenticator::~FprintdAuthenticator()
-{
+FprintdAuthenticator::~FprintdAuthenticator() {
     cleanup();
 
     if (bus_) {
@@ -60,8 +54,7 @@ FprintdAuthenticator::~FprintdAuthenticator()
 }
 
 
-bool FprintdAuthenticator::connect()
-{
+bool FprintdAuthenticator::connect() {
     const int r = sd_bus_open_system(&bus_);
 
     if (r < 0) {
@@ -86,8 +79,7 @@ bool FprintdAuthenticator::connect()
 }
 
 
-bool FprintdAuthenticator::get_default_device()
-{
+bool FprintdAuthenticator::get_default_device() {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message* reply = nullptr;
 
@@ -129,8 +121,7 @@ bool FprintdAuthenticator::get_default_device()
 }
 
 
-bool FprintdAuthenticator::claim()
-{
+bool FprintdAuthenticator::claim() {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message* reply = nullptr;
 
@@ -169,8 +160,7 @@ bool FprintdAuthenticator::claim()
 }
 
 
-bool FprintdAuthenticator::verify_init()
-{
+bool FprintdAuthenticator::verify_init() {
     /*
      * Install signal handlers BEFORE VerifyStart().
      *
@@ -209,8 +199,7 @@ bool FprintdAuthenticator::verify_init()
 }
 
 
-bool FprintdAuthenticator::verify_start()
-{
+bool FprintdAuthenticator::verify_start() {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message* reply = nullptr;
 
@@ -255,8 +244,8 @@ bool FprintdAuthenticator::verify_start()
 
 
 bool FprintdAuthenticator::process_events(
-    std::chrono::steady_clock::time_point deadline)
-{
+    std::chrono::steady_clock::time_point deadline
+) {
     //std::fprintf(
     //    stderr,
     //    "[fprintd] entering event loop\n");
@@ -408,8 +397,7 @@ FprintdAuthenticator::authenticate(
 }
 
 
-void FprintdAuthenticator::verify_stop()
-{
+void FprintdAuthenticator::verify_stop() {
     if (!verify_started_ || !bus_)
         return;
 
@@ -450,8 +438,7 @@ void FprintdAuthenticator::verify_stop()
 }
 
 
-void FprintdAuthenticator::release()
-{
+void FprintdAuthenticator::release() {
     if (!claimed_ || !bus_)
         return;
 
@@ -475,8 +462,7 @@ void FprintdAuthenticator::release()
 }
 
 
-void FprintdAuthenticator::cleanup()
-{
+void FprintdAuthenticator::cleanup() {
     if (!bus_)
         return;
 
@@ -500,8 +486,7 @@ void FprintdAuthenticator::cleanup()
 int FprintdAuthenticator::verify_status(
     sd_bus_message* message,
     void* userdata,
-    sd_bus_error*)
-{
+    sd_bus_error*) {
     auto* self =
         static_cast<FprintdAuthenticator*>(userdata);
 
@@ -556,8 +541,8 @@ int FprintdAuthenticator::verify_status(
 int FprintdAuthenticator::verify_finger_selected(
     sd_bus_message* message,
     void*,
-    sd_bus_error*)
-{
+    sd_bus_error*
+) {
     const char* finger = nullptr;
 
     if (sd_bus_message_read(
@@ -583,8 +568,8 @@ int FprintdAuthenticator::verify_finger_selected(
 int FprintdAuthenticator::fprintd_name_owner_changed(
     sd_bus_message* message,
     void* userdata,
-    sd_bus_error*)
-{
+    sd_bus_error*
+) {
     auto* self =
         static_cast<FprintdAuthenticator*>(userdata);
 
@@ -624,7 +609,6 @@ int FprintdAuthenticator::fprintd_name_owner_changed(
     return 0;
 }
 
-void FprintdAuthenticator::cancel()
-{
+void FprintdAuthenticator::cancel() {
     cancelled_ = true;
 }

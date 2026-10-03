@@ -1,8 +1,7 @@
 #include "enter_device.hh"
 
 #include <cstring>
-#include <memory>
-#include <stdexcept>
+
 
 EnterDevice::EnterDevice()
     : raw_device(libevdev_new(), &libevdev_free),

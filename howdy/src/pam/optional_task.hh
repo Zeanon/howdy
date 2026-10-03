@@ -1,10 +1,10 @@
-#ifndef OPTIONAL_TASK_H_
-#define OPTIONAL_TASK_H_
+#pragma once
 
-#include <cassert>
 #include <chrono>
 #include <future>
 #include <thread>
+#include <cassert>
+
 
 // A task executed only if activated.
 template <typename T> class optional_task {
@@ -17,17 +17,17 @@ template <typename T> class optional_task {
 public:
   explicit optional_task(std::function<T()> func);
 
-  void activate();
+  auto activate() -> void;
 
   template <typename R, typename P>
   auto wait(std::chrono::duration<R, P> dur) -> std::future_status;
 
   auto get() -> T;
 
-  void stop(bool force);
+  auto active() const -> bool;
+  auto spawned_thread() const -> bool;
 
-  bool active() const;
-  bool spawned_thread() const;
+  auto stop(bool force) -> void;
 
   ~optional_task();
 };
@@ -38,7 +38,8 @@ optional_task<T>::optional_task(std::function<T()> func)
       future(task.get_future()) {}
 
 // Create a new thread and launch the task on it.
-template <typename T> void optional_task<T>::activate() {
+template <typename T>
+auto optional_task<T>::activate() -> void {
   assert(!spawned);
 
   thread = std::jthread(std::move(task));
@@ -57,16 +58,19 @@ auto optional_task<T>::wait(std::chrono::duration<R, P> dur)
 // Get the value.
 // WARNING: The function should be run only if the task has successfully been
 // stopped.
-template <typename T> auto optional_task<T>::get() -> T {
+template <typename T>
+auto optional_task<T>::get() -> T {
   assert(!is_active && spawned);
   return future.get();
 }
 
-template <typename T> bool optional_task<T>::active() const {
+template <typename T>
+auto optional_task<T>::active() const -> bool {
   return is_active;
 }
 
-template <typename T> bool optional_task<T>::spawned_thread() const {
+template <typename T>
+auto optional_task<T>::spawned_thread() const -> bool {
   return spawned;
 }
 
@@ -76,7 +80,8 @@ template <typename T> bool optional_task<T>::spawned_thread() const {
 //
 // WARNING: pthread_cancel() must only be used for tasks which are explicitly
 // written to be cancellation-safe.
-template <typename T> void optional_task<T>::stop(bool force) {
+template <typename T>
+auto optional_task<T>::stop(bool force) -> void {
   if (!is_active) {
     return;
   }
@@ -95,10 +100,9 @@ template <typename T> void optional_task<T>::stop(bool force) {
   is_active = false;
 }
 
-template <typename T> optional_task<T>::~optional_task() {
+template <typename T>
+optional_task<T>::~optional_task() {
   if (is_active && spawned) {
     stop(false);
   }
 }
-
-#endif // OPTIONAL_TASK_H_

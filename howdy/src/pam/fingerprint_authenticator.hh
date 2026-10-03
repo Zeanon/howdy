@@ -1,14 +1,15 @@
 #pragma once
 
-#include <systemd/sd-bus.h>
-
 #include <chrono>
 #include <string>
 #include <functional>
 
+#include <systemd/sd-bus.h>
+
+
 class FprintdAuthenticator {
 public:
-    enum class Result {
+    enum class Result : std::uint_fast8_t {
         Success,
         NoDevice,
         Busy,
@@ -18,7 +19,8 @@ public:
         Timeout,
         Cancelled,
         Disconnected,
-        Error
+        Error,
+        Unset
     };
 
     FprintdAuthenticator(
