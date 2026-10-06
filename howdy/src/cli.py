@@ -20,8 +20,8 @@ user = next((u for u in [sudo_user, doas_user, pkexec_user, env_user] if u), "")
 
 # If that fails, error out
 if user == "":
-    print(_("Could not determine user, please use the --user flag"))
-    sys.exit(1)
+	print(_("Could not determine user, please use the --user flag"))
+	sys.exit(1)
 
 # Basic command setup
 parser = argparse.ArgumentParser(

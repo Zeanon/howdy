@@ -3,6 +3,7 @@ import os
 import re
 
 from i18n import _
+from exit_codes import CompareResult
 
 from importlib.machinery import SourceFileLoader
 
@@ -170,10 +171,10 @@ def execute(config, gtk_proc, opencv):
 		# Abort authentication if the stamp returned false
 		if result is False:
 			if verbose: print("Authentication aborted by rubber stamp")
-			sys.exit(20)
+			sys.exit(CompareResult.Rubberstamp.value)
 
 	# This is outside the for loop, so we've run all the rules
 	if verbose: print("All rubberstamps processed, authentication successful")
 
 	# Exit with no errors
-	sys.exit(0)
+	sys.exit(CompareResult.Success.value)

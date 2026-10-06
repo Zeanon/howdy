@@ -9,13 +9,14 @@ from subprocess import Popen, PIPE
 from cv2 import CAP_PROP_FRAME_WIDTH
 from cv2 import CAP_PROP_FRAME_HEIGHT
 from i18n import _
+from exit_codes import CompareResult
 
 try:
 	import ffmpeg
 except ImportError:
 	print(_("Missing ffmpeg module, please run:"))
 	print(" pip3 install ffmpeg-python\n")
-	sys.exit(12)
+	sys.exit(CompareResult.Abort.value)
 
 
 class ffmpeg_reader:
@@ -118,7 +119,7 @@ class ffmpeg_reader:
 			self.record(self.numframes)
 
 		# Add one to num_frames_read. If we were at 0, that's fine as frame 0 is almost 100% going to be black
-		# as the IR lights aren't fully active yet anyways. Saves us one iteration in the while loop ni add/compare.py.
+		# as the IR lights aren't fully active yet anyways. Saves us one iteration in the while loop in add/compare.py.
 		self.num_frames_read += 1
 
 		# Return a single frame of video

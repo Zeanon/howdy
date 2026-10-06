@@ -2,6 +2,7 @@ import time
 import sys
 
 from i18n import _
+from exit_codes import CompareResult
 
 # Import the root rubberstamp class
 from rubberstamps import RubberStamp
@@ -31,7 +32,7 @@ class hotkey(RubberStamp):
 			print("\nMissing module for rubber stamp keyboard!")
 			print("Please run:")
 			print("\t pip3 install keyboard")
-			sys.exit(1)
+			sys.exit(CompareResult.Error.value)
 
 		# Register hotkeys with the kernel
 		keyboard.add_hotkey(self.options["abort_key"], self.on_key, args=["abort"])

@@ -9,89 +9,115 @@
 
 
 enum class ConfirmationType {
-  Unset,
-  Terminated,
-  Howdy,
-  Fingerprint,
-  Pam
+	Unset,
+	Terminated,
+	Howdy,
+	Fingerprint,
+	Password
 };
-enum class Workaround : std::uint_fast8_t {
-  Off,
-  Input,
-  Native
+enum class Workaround {
+	Off,
+	Input,
+	Native
 };
 
 // Exit status codes returned by the compare process
-enum CompareError : std::uint_fast8_t {
-  NO_FACE_MODEL = 10,
-  TIMEOUT_REACHED = 11,
-  ABORT = 12,
-  TOO_DARK = 13,
-  INVALID_DEVICE = 14,
-  TERMINATED = 15,
-  RUBBERSTAMP = 20,
+enum CompareResult : std::uint_fast8_t {
+	Abort = 10,
+	Terminated = 11,
+	NoFaceModel = 12,
+	InvalidDevice = 13,
+	TooDark = 14,
+	TimeoutReached = 15,
+	Rubberstamp = 20,
 };
 
 // Part of the definition of pam_handle so we can access the authtok to reset it for password auth
 struct pam_handle {
-    char *authtok;
+	char *authtok;
 };
 
 // Parse string to Workaround enum
 inline Workaround get_workaround(const std::string &workaround) {
-  if (workaround == "input") {
-    return Workaround::Input;
-  }
+	if (workaround == "input") {
+		return Workaround::Input;
+	}
 
-  if (workaround == "native") {
-    return Workaround::Native;
-  }
+	if (workaround == "native") {
+		return Workaround::Native;
+	}
 
-  return Workaround::Off;
+	return Workaround::Off;
 }
 
 inline std::set<std::string> split_string(const std::string &str, const char &delimiter) {
-    std::set<std::string> tokens;
-    if (str == "") {
-      return tokens;
-    }
-    size_t start = 0;
-    size_t end = str.find(delimiter);
-    
-    while (end != std::string::npos) {
-        tokens.insert(str.substr(start, end - start));
-        start = end + 1;
-        end = str.find(delimiter, start);
-    }
-    
-    tokens.insert(str.substr(start));
-    return tokens;
+		std::set<std::string> tokens;
+		if (str == "") {
+			return tokens;
+		}
+		size_t start = 0;
+		size_t end = str.find(delimiter);
+		
+		while (end != std::string::npos) {
+				tokens.insert(str.substr(start, end - start));
+				start = end + 1;
+				end = str.find(delimiter, start);
+		}
+		
+		tokens.insert(str.substr(start));
+		return tokens;
 }
 
-inline bool str_to_bool(const std::string& str) {
-  return str == "true" || str == "yes" || str == "on" || str == "1";
+inline int fingerprint_result_to_pam_result(const FprintdAuthenticator::Result &result) {
+	switch (result) {
+		case FprintdAuthenticator::Result::Success:
+			return PAM_SUCCESS;
+		case FprintdAuthenticator::Result::NoDevice:
+		case FprintdAuthenticator::Result::Busy:
+		case FprintdAuthenticator::Result::NoEnrolledPrints:
+		case FprintdAuthenticator::Result::Unset:
+			return PAM_AUTHINFO_UNAVAIL;
+		case FprintdAuthenticator::Result::NoMatch:
+			return PAM_AUTH_ERR;
+		case FprintdAuthenticator::Result::MaxTries:
+			return PAM_MAXTRIES;
+		case FprintdAuthenticator::Result::Timeout:
+		case FprintdAuthenticator::Result::Cancelled:
+		case FprintdAuthenticator::Result::Disconnected:
+		case FprintdAuthenticator::Result::Error:
+		default:
+			return PAM_CONV_ERR;
+	}
 }
 
-inline int fingerprint_result_to_int(const FprintdAuthenticator::Result &result) {
-  switch (result) {
-    case FprintdAuthenticator::Result::Success:
-      return PAM_SUCCESS;
-    case FprintdAuthenticator::Result::NoDevice:
-    case FprintdAuthenticator::Result::Busy:
-    case FprintdAuthenticator::Result::NoEnrolledPrints:
-    case FprintdAuthenticator::Result::Unset:
-      return PAM_AUTHINFO_UNAVAIL;
-    case FprintdAuthenticator::Result::NoMatch:
-      return PAM_AUTH_ERR;
-    case FprintdAuthenticator::Result::MaxTries:
-      return PAM_MAXTRIES;
-    case FprintdAuthenticator::Result::Timeout:
-    case FprintdAuthenticator::Result::Cancelled:
-    case FprintdAuthenticator::Result::Disconnected:
-    case FprintdAuthenticator::Result::Error:
-    default:
-      return PAM_CONV_ERR;
-  }
+inline bool str_to_bool(const std::string &str) {
+	return str == "true" || str == "yes" || str == "on" || str == "1";
+}
+
+inline std::chrono::seconds str_to_seconds(const std::string_view &str) {
+    int value = 0;
+
+    const auto *first = str.data();
+    const auto *last  = first + str.size();
+
+    const auto [ptr, ec] = std::from_chars(first, last, value);
+
+    if (ec != std::errc{})
+        return std::chrono::seconds{0};
+
+    if (ptr == last)
+        return std::chrono::seconds{(unsigned) value};
+
+    switch (*ptr) {
+		case 'd':
+			return std::chrono::hours{(unsigned) value * 24};
+		case 'h':
+			return std::chrono::hours{(unsigned) value};
+		case 'm':
+			return std::chrono::minutes{(unsigned) value};
+		default:
+			return std::chrono::seconds{(unsigned) value};
+    }
 }
 
 /**
@@ -104,17 +130,17 @@ inline int fingerprint_result_to_int(const FprintdAuthenticator::Result &result)
  * some contexts (like sudo).
  */
 inline bool checkenv(const char *name) {
-  if (std::getenv(name) != nullptr) {
-    return true;
-  }
+	if (std::getenv(name) != nullptr) {
+		return true;
+	}
 
-  auto len = strlen(name);
+	auto len = strlen(name);
 
-  for (char **env = environ; *env != nullptr; env++) {
-    if (strncmp(*env, name, len) == 0) {
-      return true;
-    }
-  }
+	for (char **env = environ; *env != nullptr; env++) {
+		if (strncmp(*env, name, len) == 0) {
+			return true;
+		}
+	}
 
-  return false;
+	return false;
 }

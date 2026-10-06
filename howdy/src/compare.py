@@ -17,12 +17,13 @@ timings = {
 }
 
 # Import required modules
-import sys
 import os
+import sys
 import json
 import configparser
 import dlib
 import cv2
+import re
 from datetime import timezone, datetime
 import atexit
 import subprocess
@@ -32,11 +33,55 @@ import _thread as thread
 import paths_factory
 from recorders.video_capture import VideoCapture
 from i18n import _
+from exit_codes import CompareResult
 
 # Force singlethreaded BLAS. dlib's OpenBLAS/OpenMP matmuls can livelock when raced against this scri>
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("GOTO_NUM_THREADS", "1")
+
+# shamelessly copied from psutil
+def process_exists(pid):
+    """Check whether pid exists in the current process table."""
+    if pid == 0:
+        # According to "man 2 kill" PID 0 has a special meaning:
+        # it refers to <<every process in the process group of the
+        # calling process>> so we don't want to go any further.
+        # If we get here it means this UNIX platform *does* have
+        # a process with id 0.
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # EPERM clearly means there's a process to deny access to
+        return True
+    # According to "man 2 kill" possible error values are
+    # (EINVAL, EPERM, ESRCH)
+    else:
+        return True
+
+def str_to_seconds(timestring):
+    if not isinstance(timestring, str):
+        return timestring
+
+    i = 1 if timestring[0] == "-" else 0 
+    while i < len(timestring) and timestring[i].isdigit():
+        i += 1
+
+    timeout = int(timestring[:i])
+    if i == len(timestring):
+        return timeout
+
+    unit = timestring[i]
+    if unit == "d":
+        return timeout * 86400
+    if unit == "h":
+        return timeout * 3600
+    if unit == "m":
+        return timeout * 60
+    return timeout
 
 def exit(code=None):
 	"""Exit while closing howdy-gtk properly"""
@@ -56,8 +101,9 @@ def exit(code=None):
 
 	# Exit compare
 	if code is not None:
+		if isinstance(code, CompareResult):
+			sys.exit(code.value)
 		sys.exit(code)
-
 
 def init_detector(lock):
 	"""Start face detector, encoder and predictor in a new thread"""
@@ -69,7 +115,7 @@ def init_detector(lock):
 		print("\n\tcd " + paths_factory.dlib_data_dir_path())
 		print("\tsudo ./install.sh\n")
 		lock.release()
-		exit(1)
+		exit(CompareResult.Error)
 
 	# Use the CNN detector if enabled
 	if use_cnn:
@@ -116,12 +162,14 @@ def send_to_ui(type, message):
 			pass
 
 
-# Make sure we were given an username to test against
-if len(sys.argv) < 2:
-	exit(12)
+# Make sure we were given an username to test against and a parent pid
+if len(sys.argv) < 3:
+	exit(CompareResult.Abort)
 
 # The username of the user being authenticated
 user = sys.argv[1]
+# The pid of the process calling us
+parent_pid = int(sys.argv[2])
 # The model file contents
 models = []
 # Encoded face models
@@ -148,11 +196,11 @@ try:
 	for model in models:
 		encodings += model["data"]
 except FileNotFoundError:
-	exit(10)
+	exit(CompareResult.NoFaceModel)
 
 # Check if the file contains a model
 if len(models) < 1:
-	exit(10)
+	exit(CompareResult.NoFaceModel)
 
 # Read config from disk
 config = configparser.ConfigParser()
@@ -160,7 +208,7 @@ config.read(paths_factory.config_file_path())
 
 # Get all config values needed
 use_cnn = config.getboolean("face_authentication", "use_cnn", fallback=False)
-timeout = config.getint("face_authentication", "timeout", fallback=4)
+timeout = str_to_seconds(config.get("face_authentication", "timeout", fallback="4s"))
 dark_threshold = config.getfloat("video", "dark_threshold", fallback=50.0)
 video_certainty = config.getfloat("video", "certainty", fallback=3.5) / 10
 end_report = config.getboolean("debug", "end_report", fallback=False)
@@ -169,8 +217,11 @@ save_successful = config.getboolean("snapshots", "save_successful", fallback=Fal
 gtk_stdout = config.getboolean("debug", "gtk_stdout", fallback=False)
 rotate = config.getint("video", "rotate", fallback=0)
 
-if len(sys.argv) == 3:
-	timeout = int(sys.argv[2])
+if len(sys.argv) > 3:
+	timeout = str_to_seconds(sys.argv[3])
+
+if timeout < 1:
+	timeout = sys.maxsize;
 
 # Send the gtk output to the terminal if enabled in the config
 gtk_pipe = sys.stdout if gtk_stdout else subprocess.DEVNULL
@@ -234,7 +285,7 @@ valid_frames = 0
 timings["fr"] = time.time()
 dark_running_total = 0
 
-while True:
+while process_exists(parent_pid):
 	# Increment the frame count every loop
 	frames += 1
 
@@ -254,9 +305,9 @@ while True:
 		if dark_tries == valid_frames:
 			print(_("All frames were too dark, please check dark_threshold in config"))
 			print(_("Average darkness: {avg}, Threshold: {threshold}").format(avg=str(dark_running_total / max(1, valid_frames)), threshold=str(dark_threshold)))
-			exit(13)
+			exit(CompareResult.TooDark)
 		else:
-			exit(11)
+			exit(CompareResult.TimeoutReached)
 
 	# Grab a single frame of video
 	frame, gsframe = video_capture.read_frame()
@@ -394,7 +445,7 @@ while True:
 				})
 
 			# End peacefully
-			exit(0)
+			exit(CompareResult.Success)
 
 	if exposure != -1:
 		# For a strange reason on some cameras (e.g. Lenoxo X1E) setting manual exposure works only after a couple frames
