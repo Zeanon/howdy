@@ -15,7 +15,6 @@
 #include <sys/syslog.h>
 
 #include <mutex>
-#include <chrono>
 #include <future>
 #include <fstream>
 #include <functional>
@@ -191,6 +190,24 @@ inline int howdy_status(
  * wait for a result
  */
 inline void do_auth() {
+	if (fingerprint) {
+		fingerprint_task_ptr->activate();
+	}
+
+	if (terminate || confirmation_type != ConfirmationType::Unset) {
+		return;
+	}
+	if (face_unlock) {
+		child_task_ptr->activate();
+	}
+
+	if (password) {
+		pass_task_ptr->activate();
+	}
+
+	if (terminate || confirmation_type != ConfirmationType::Unset) {
+		return;
+	}
 	if (init_message) {
 		if (face_unlock && fingerprint) {
 			conv_function(-PAM_TEXT_INFO, S("Place your finger on the finerprint reader\nOr look directly into the camera"));
@@ -199,26 +216,6 @@ inline void do_auth() {
 		} else if (face_unlock) {
 			conv_function(-PAM_TEXT_INFO, S("Look directly into the camera"));
 		}
-	}
-	if (terminate || confirmation_type != ConfirmationType::Unset) {
-		return;
-	}
-	if (face_unlock) {
-		child_task_ptr->activate();
-	}
-
-	if (terminate || confirmation_type != ConfirmationType::Unset) {
-		return;
-	}
-	if (fingerprint) {
-		fingerprint_task_ptr->activate();
-	}
-
-	if (terminate || confirmation_type != ConfirmationType::Unset) {
-		return;
-	}
-	if (password) {
-		pass_task_ptr->activate();
 	}
 
 	// small sleep to properly order the info messages in console
@@ -421,6 +418,7 @@ inline int identify(
 	max_password_tries = (unsigned) config.GetInteger("password", "max_tries", 3);
 	max_enter_tries = (unsigned) config.GetInteger64("password", "max_enter_tries", 5);
 	bool password_nodelay = config.GetBoolean("password", "nodelay", false);
+	std::chrono::seconds password_delay = str_to_seconds(config.GetString("password", "delay", "2s"));
 	Workaround workaround = get_workaround(config.GetString("core", "workaround", "off"));
 
 
@@ -525,6 +523,9 @@ inline int identify(
 		else if (arg.starts_with("password:max-enter-tries=")) {
 			max_enter_tries = (unsigned) std::stoi(arg.substr(25, arg.length()));
 		}
+		else if (arg.starts_with("password:delay=")) {
+			password_delay = str_to_seconds(arg.substr(15, arg.length()));
+		}
 		else if (arg.starts_with("workaround=")) {
 			workaround = get_workaround(arg.substr(11, arg.length()));
 		}
@@ -539,6 +540,9 @@ inline int identify(
 		}
 	}
 
+	if (password_delay.count() < 1) {
+		password_nodelay = true;
+	}
 	if (password_nodelay) {
 		password_args.push_back("nodelay");
 	}
@@ -807,7 +811,7 @@ inline int identify(
 				pamh->authtok = orig_authtok;
 
 				if (!password_nodelay) {
-					sleep(2);
+					std::this_thread::sleep_for(password_delay);
 				}
 				syslog(
 					LOG_ERR,
