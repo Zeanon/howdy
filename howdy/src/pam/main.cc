@@ -712,20 +712,37 @@ inline int identify(
 			face_auth_timeout.value_or(nullptr),
 			nullptr,
 	};
+	// When stdout or stderr is a socket, it is a protocol channel rather than a
+	// terminal or a log: polkit's socket-activated agent helper
+	// (polkit-agent-helper@.service, StandardOutput=socket) talks to the
+	// authentication agent over it. Anything the python process prints there
+	// corrupts that protocol, and the agent fails the whole session instead of
+	// falling back to the next PAM module. Send that output to /dev/null.
+	posix_spawn_file_actions_t file_actions;
+	posix_spawn_file_actions_init(&file_actions);
+	for (int output_fd : {STDOUT_FILENO, STDERR_FILENO}) {
+		struct stat output_stat {};
+		if (fstat(output_fd, &output_stat) == 0 && S_ISSOCK(output_stat.st_mode)) {
+			posix_spawn_file_actions_addopen(&file_actions, output_fd, "/dev/null",
+											O_WRONLY, 0);
+		}
+	}
 	if (face_unlock) {
-		if (posix_spawnp(
+		int spawn_result = posix_spawnp(
 			&child_pid,
 			PYTHON_EXECUTABLE_PATH,
-			nullptr,
+			&file_actions,
 			nullptr,
 			const_cast<char *const *>(args),
-			nullptr) != 0
-		) {
+			nullptr
+		);
+		posix_spawn_file_actions_destroy(&file_actions);
+		if (spawn_result != 0) {
 			syslog(
 				LOG_ERR,
 				"Can't spawn the howdy process: %s (%d)",
-				strerror(errno),
-				errno
+				strerror(spawn_result),
+				spawn_result
 			);
 			return PAM_SYSTEM_ERR;
 		}
@@ -897,19 +914,21 @@ inline int identify(
 				&& confirmation_type == ConfirmationType::Unset);
 
 			if (retry) {
-				if (posix_spawnp(
+				int spawn_result = posix_spawnp(
 					&child_pid,
 					PYTHON_EXECUTABLE_PATH,
-					nullptr,
+					&file_actions,
 					nullptr,
 					const_cast<char *const *>(args),
-					nullptr) != 0
-				) {
+					nullptr
+				);
+				posix_spawn_file_actions_destroy(&file_actions);
+				if (spawn_result != 0) {
 					syslog(
 						LOG_ERR,
 						"Can't spawn the howdy process: %s (%d)",
-						strerror(errno),
-						errno
+						strerror(spawn_result),
+						spawn_result
 					);
 					return PAM_SYSTEM_ERR;
 				}
@@ -1019,7 +1038,13 @@ inline int identify(
 
 	signal_task.stop(true);
 
-	kill(child_pid, SIGKILL);
+	kill(-child_pid, SIGTERM);
+	if (child_task.wait(DEFAULT_ENTER_TIMEOUT) == std::future_status::timeout) {
+		syslog(LOG_WARNING,
+			"Compare process group %d did not exit after SIGTERM, sending SIGKILL",
+			child_pid);
+		kill(-child_pid, SIGKILL);
+	}
 	fingerprint_authenticator->cancel();
 
 	switch (confirmation_type) {
