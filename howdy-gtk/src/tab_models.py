@@ -1,5 +1,5 @@
 import subprocess
-import time
+import enroll
 
 from i18n import _
 from gi.repository import Gtk as gtk
@@ -7,118 +7,286 @@ from gi.repository import GObject as gobject
 
 
 def on_user_change(self, select):
-	self.active_user = select.get_active_text()
-	self.load_model_list()
+    self.active_user = select.get_active_text()
+    self.load_model_list()
 
 
 def on_user_add(self, button):
-	# Open question dialog
-	dialog = gtk.MessageDialog(parent=self, flags=gtk.DialogFlags.MODAL, type=gtk.MessageType.QUESTION, buttons=gtk.ButtonsType.OK_CANCEL)
-	dialog.set_title(_("Confirm User Creation"))
-	dialog.props.text = _("Please enter the username of the user you want to add to Howdy")
+    # Open question dialog
+    dialog = gtk.MessageDialog(
+        parent=self,
+        flags=gtk.DialogFlags.MODAL,
+        type=gtk.MessageType.QUESTION,
+        buttons=gtk.ButtonsType.OK_CANCEL
+    )
+    dialog.set_title(_("Confirm User Creation"))
+    dialog.set_markup(
+        _("Please enter the username of the user you want to add to Howdy")
+    )
 
-	# Create the input field
-	entry = gtk.Entry()
+    # Create the input field
+    entry = gtk.Entry()
 
-	# Add a label to ask for a model name
-	hbox = gtk.HBox()
-	hbox.pack_start(gtk.Label(_("Username:")), False, 5, 5)
-	hbox.pack_end(entry, True, True, 5)
+    # Add a label to ask for a username
+    hbox = gtk.Box(orientation=gtk.Orientation.HORIZONTAL, spacing=5)
+    hbox.pack_start(
+        gtk.Label(label=_("Username:")),
+        False,
+        False,
+        5
+    )
+    hbox.pack_start(entry, True, True, 5)
 
-	# Add the box and show the dialog
-	dialog.vbox.pack_end(hbox, True, True, 0)
-	dialog.show_all()
+    # Add the box to the dialog
+    content_area = dialog.get_content_area()
+    content_area.pack_start(hbox, True, True, 5)
 
-	# Show dialog
-	response = dialog.run()
+    dialog.show_all()
 
-	entered_user = entry.get_text()
-	dialog.destroy()
+    # Show dialog
+    response = dialog.run()
 
-	if response == gtk.ResponseType.OK:
-		self.userlist.append_text(entered_user)
-		self.userlist.set_active(self.userlist.items)
-		self.userlist.items += 1
+    entered_user = entry.get_text()
+    dialog.destroy()
 
-		self.active_user = entered_user
-		self.load_model_list()
+    if response == gtk.ResponseType.OK:
+        self.userlist.append_text(entered_user)
+        self.userlist.set_active(self.userlist.items)
+
+        # Keep compatibility with the existing userlist implementation.
+        self.userlist.items += 1
+
+        self.active_user = entered_user
+        self.load_model_list()
 
 
 def on_model_add(self, button):
-	if self.userlist.items == 0:
-		return
-	# Open question dialog
-	dialog = gtk.MessageDialog(parent=self, flags=gtk.DialogFlags.MODAL, type=gtk.MessageType.QUESTION, buttons=gtk.ButtonsType.OK_CANCEL)
-	dialog.set_title(_("Confirm Model Creation"))
-	dialog.props.text = _("Please enter a name for the new model, 24 characters max")
+    if self.userlist.items == 0:
+        return
 
-	# Create the input field
-	entry = gtk.Entry()
+    # Open question dialog
+    dialog = gtk.MessageDialog(
+        parent=self,
+        flags=gtk.DialogFlags.MODAL,
+        type=gtk.MessageType.QUESTION,
+        buttons=gtk.ButtonsType.OK_CANCEL
+    )
+    dialog.set_title(_("Confirm Model Creation"))
+    dialog.set_markup(
+        _("Please enter a name for the new model, 24 characters max")
+    )
 
-	# Add a label to ask for a model name
-	hbox = gtk.HBox()
-	hbox.pack_start(gtk.Label(_("Model name:")), False, 5, 5)
-	hbox.pack_end(entry, True, True, 5)
+    # Create the input field
+    entry = gtk.Entry()
 
-	# Add the box and show the dialog
-	dialog.vbox.pack_end(hbox, True, True, 0)
-	dialog.show_all()
+    # Add a label to ask for a model name
+    hbox = gtk.Box(orientation=gtk.Orientation.HORIZONTAL, spacing=5)
+    hbox.pack_start(
+        gtk.Label(label=_("Model name:")),
+        False,
+        False,
+        5
+    )
+    hbox.pack_start(entry, True, True, 5)
 
-	# Show dialog
-	response = dialog.run()
+    # Add the box to the dialog
+    content_area = dialog.get_content_area()
+    content_area.pack_start(hbox, True, True, 5)
 
-	entered_name = entry.get_text()
-	dialog.destroy()
+    dialog.show_all()
 
-	if response == gtk.ResponseType.OK:
-		dialog = gtk.MessageDialog(parent=self, flags=gtk.DialogFlags.MODAL, buttons=gtk.ButtonsType.NONE)
-		dialog.set_title(_("Creating Model"))
-		dialog.props.text = _("Please look directly into the camera")
-		dialog.show_all()
+    # Show dialog
+    response = dialog.run()
 
-		# Wait a bit to allow the user to read the dialog
-		gobject.timeout_add(600, lambda: execute_add(self, dialog, entered_name))
+    entered_name = entry.get_text()
+    dialog.destroy()
+
+    if response == gtk.ResponseType.OK:
+        # GTK 3 replacement for gtk4compat.PromptWindow
+        dialog = gtk.Dialog(
+            title=_("Creating Model"),
+            parent=self.window,
+            flags=gtk.DialogFlags.MODAL
+        )
+
+        dialog.set_resizable(False)
+        dialog.set_default_size(420, -1)
+
+        content_area = dialog.get_content_area()
+
+        # Main content
+        box = gtk.Box(
+            orientation=gtk.Orientation.VERTICAL,
+            spacing=10
+        )
+        box.set_margin_top(20)
+        box.set_margin_bottom(20)
+        box.set_margin_start(20)
+        box.set_margin_end(20)
+
+        content_area.pack_start(box, True, True, 0)
+
+        info_label = gtk.Label(
+            label=_(
+                "Keep your face inside the camera view and follow "
+                "the prompts; this takes about a minute."
+            )
+        )
+        info_label.set_line_wrap(True)
+        info_label.set_max_width_chars(48)
+        info_label.set_xalign(0.0)
+
+        box.pack_start(info_label, False, False, 0)
+
+        guide_label = gtk.Label(
+            label=_("Look straight at the camera")
+        )
+        guide_label.set_xalign(0.0)
+
+        # GTK 3 replacement for add_css_class("heading")
+        guide_label.get_style_context().add_class("heading")
+
+        box.pack_start(guide_label, False, False, 0)
+
+        progress_label = gtk.Label(label="")
+        progress_label.set_xalign(0.0)
+
+        # GTK 3 replacement for add_css_class("dim-label")
+        progress_label.get_style_context().add_class("dim-label")
+
+        box.pack_start(progress_label, False, False, 0)
+
+        dialog.show_all()
+
+        # Wait a bit to allow the user to read the dialog
+        gobject.timeout_add(
+            600,
+            lambda: execute_add(
+                self,
+                dialog,
+                entered_name,
+                guide_label,
+                progress_label
+            )
+        )
 
 
-def execute_add(box, dialog, entered_name):
+def execute_add(
+    box,
+    dialog,
+    entered_name,
+    guide_label=None,
+    progress_label=None
+):
+    """Run `howdy add` on a worker thread; the dialog shows
+    the live guidance.
+    """
 
-	status, output = subprocess.getstatusoutput(["howdy add '" + entered_name + "' -y -U " + box.active_user])
+    def on_guide(key):
+        text = enroll.guide_text(key)
 
-	dialog.destroy()
+        if guide_label is not None and text:
+            guide_label.set_markup(text)
 
-	if status != 0:
-		dialog = gtk.MessageDialog(parent=box, flags=gtk.DialogFlags.MODAL, type=gtk.MessageType.ERROR, buttons=gtk.ButtonsType.CLOSE)
-		dialog.set_title(_("Howdy Error"))
-		dialog.props.text = _("Error while adding model, error code {}: \n\n").format(str(status))
-		dialog.format_secondary_text(output)
-		dialog.run()
-		dialog.destroy()
+        return False
 
-	box.load_model_list()
+    def on_progress(count, total):
+        if progress_label is not None:
+            progress_label.set_markup(
+                enroll.progress_text(count, total)
+            )
+
+        return False
+
+    def on_done(status, output):
+        dialog.destroy()
+
+        if status != 0:
+            error_dialog = gtk.MessageDialog(
+                parent=box.window,
+                flags=gtk.DialogFlags.MODAL,
+                type=gtk.MessageType.ERROR,
+                buttons=gtk.ButtonsType.CLOSE
+            )
+
+            error_dialog.set_title(_("Howdy Error"))
+            error_dialog.set_markup(
+                _("Error while adding model, error code {}:").format(status)
+            )
+            error_dialog.format_secondary_text(output)
+
+            error_dialog.run()
+            error_dialog.destroy()
+
+        box.load_model_list()
+        return False
+
+    enroll.run_add(
+        [
+            "howdy",
+            "--gui",
+            "-y",
+            "-U",
+            box.active_user,
+            "add",
+            entered_name
+        ],
+        on_guide,
+        on_progress,
+        on_done
+    )
+
+    return False
+
 
 def on_model_delete(self, button):
-	selection = self.treeview.get_selection()
-	(listmodel, rowlist) = selection.get_selected_rows()
+    selection = self.treeview.get_selection()
+    listmodel, rowlist = selection.get_selected_rows()
 
-	if len(rowlist) == 1:
-		id = listmodel.get_value(listmodel.get_iter(rowlist[0]), 0)
-		name = listmodel.get_value(listmodel.get_iter(rowlist[0]), 2)
+    if len(rowlist) == 1:
+        tree_iter = listmodel.get_iter(rowlist[0])
 
-		dialog = gtk.MessageDialog(parent=self, flags=gtk.DialogFlags.MODAL, buttons=gtk.ButtonsType.OK_CANCEL)
-		dialog.set_title(_("Confirm Model Deletion"))
-		dialog.props.text = _("Are you sure you want to delete model {id} ({name})?").format(id=id, name=name)
-		response = dialog.run()
-		dialog.destroy()
+        model_id = listmodel.get_value(tree_iter, 0)
+        name = listmodel.get_value(tree_iter, 2)
 
-		if response == gtk.ResponseType.OK:
-			status, output = subprocess.getstatusoutput(["howdy remove " + id + " -y -U " + self.active_user])
+        dialog = gtk.MessageDialog(
+            parent=self,
+            flags=gtk.DialogFlags.MODAL,
+            buttons=gtk.ButtonsType.OK_CANCEL
+        )
+        dialog.set_title(_("Confirm Model Deletion"))
+        dialog.set_markup(
+            _("Are you sure you want to delete model {id} ({name})?")
+            .format(id=model_id, name=name)
+        )
 
-			if status != 0:
-				dialog = gtk.MessageDialog(parent=self, flags=gtk.DialogFlags.MODAL, type=gtk.MessageType.ERROR, buttons=gtk.ButtonsType.CLOSE)
-				dialog.set_title(_("Howdy Error"))
-				dialog.props.text = _("Error while deleting model, error code {}: \n\n").format(status)
-				dialog.format_secondary_text(output)
-				dialog.run()
-				dialog.destroy()
+        response = dialog.run()
+        dialog.destroy()
 
-			self.load_model_list()
+        if response == gtk.ResponseType.OK:
+            status, output = subprocess.getstatusoutput(
+                "howdy remove {} -y -U {}".format(
+                    model_id,
+                    self.active_user
+                )
+            )
+
+            if status != 0:
+                error_dialog = gtk.MessageDialog(
+                    parent=self,
+                    flags=gtk.DialogFlags.MODAL,
+                    type=gtk.MessageType.ERROR,
+                    buttons=gtk.ButtonsType.CLOSE
+                )
+
+                error_dialog.set_title(_("Howdy Error"))
+                error_dialog.set_markup(
+                    _("Error while deleting model, error code {}:")
+                    .format(status)
+                )
+                error_dialog.format_secondary_text(output)
+
+                error_dialog.run()
+                error_dialog.destroy()
+
+            self.load_model_list()

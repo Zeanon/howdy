@@ -70,6 +70,10 @@ parser.add_argument(
 	default=argparse.SUPPRESS,
 	help=_("Show this help message and exit."))
 
+parser.add_argument(
+	"--gui",
+	action="store_true")
+
 # If we only have 1 argument we print the help text
 if len(sys.argv) < 2:
 	print(_("current active user: ") + user + "\n")

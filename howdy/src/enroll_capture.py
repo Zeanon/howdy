@@ -1,4 +1,4 @@
-# Guided multi-sample face capture used by `ubuntu-hello add`.
+# Guided multi-sample face capture used by `howdy add`.
 #
 # A model used to be one 128-d descriptor from the first frame that showed a
 # face: one pose, one expression, one IR exposure. Authentication is a nearest

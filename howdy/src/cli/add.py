@@ -138,10 +138,12 @@ def emit(line):
 			progress["count"], progress["total"] = int(count), int(total)
 		except ValueError:
 			pass
-		say(line)
+		if builtins.howdy_args.gui:
+			say(line)
 		return
 	if line.startswith("@"):
-		say(line)
+		if builtins.howdy_args.gui:
+			say(line)
 		return
 	text = _(line)
 	say(text)

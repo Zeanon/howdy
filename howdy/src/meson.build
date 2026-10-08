@@ -30,6 +30,7 @@ py_sources = [
     'cli.py',
     'compare.py',
     'enroll_capture.py',
+    'config_edit.py',
     'exit_codes.py',
     'i18n.py',
     'paths_factory.py',
