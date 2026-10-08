@@ -196,18 +196,6 @@ def cleanup():
 		return
 	_cleaned_up = True
 
-	# Release the camera if we opened one (safe if missing/already released)
-	if video_capture is not None:
-		try:
-			video_capture.release()
-		except Exception:
-			pass
-		video_capture = None
-		# Brief settle so the next PAM attempt can reopen the V4L device.
-		try:
-			time.sleep(0.35)
-		except Exception:
-			pass
 
 	# Exit the auth ui process if there is one
 	if "gtk_proc" in globals() and gtk_proc is not None:
@@ -220,6 +208,19 @@ def cleanup():
 				gtk_proc.wait(timeout=1)
 		except Exception:
 			pass
+
+	# Release the camera if we opened one (safe if missing/already released)
+	if video_capture is not None:
+		try:
+			video_capture.release()
+		except Exception:
+			pass
+		video_capture = None
+		# Brief settle so the next PAM attempt can reopen the V4L device.
+		# try:
+		# 	time.sleep(0.35)
+		# except Exception:
+		# 	pass
 
 def exit(code=None):
 	"""Exit while releasing the camera and closing howdy-gtk properly"""
