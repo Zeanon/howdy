@@ -3,6 +3,7 @@ import enroll
 
 from i18n import _
 from gi.repository import Gtk as gtk
+from gi.repository import Gdk as gdk
 from gi.repository import GObject as gobject
 
 
@@ -111,6 +112,26 @@ def on_model_add(self, button):
 
         dialog.set_resizable(False)
         dialog.set_default_size(420, -1)
+
+        # 1. Get the primary monitor safely
+        display = gdk.Display.get_default()
+        monitor = display.get_primary_monitor()
+        
+        # Fallback if no primary monitor is set
+        if not monitor:
+            monitor = display.get_monitor(0)
+            
+        geometry = monitor.get_geometry()
+        
+        # 2. Get the default/requested size of the dialog
+        # (Since it's not drawn yet, use get_default_size)
+        width, height = dialog.get_default_size()
+        
+        # 3. Calculate positioning
+        center_x = geometry.x + (geometry.width // 2) - (width // 2)
+        top_y = 0
+
+        dialog.move(center_x, top_y)
 
         content_area = dialog.get_content_area()
 

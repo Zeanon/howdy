@@ -385,8 +385,6 @@ inline int identify(
 		return PAM_IGNORE;
 	}
 
-	syslog(LOG_ERR, std::to_string(getppid()).c_str());
-
 	// get all values from the config
 	bool abort_if_ssh = config.GetBoolean("core", "abort_if_ssh", true);
 	bool abort_if_lid_closed = config.GetBoolean("core", "abort_if_lid_closed", true);
@@ -739,7 +737,7 @@ inline int identify(
 			const_cast<char *const *>(args),
 			nullptr
 		);
-		posix_spawn_file_actions_destroy(&actions);
+		//posix_spawn_file_actions_destroy(&actions);
 		if (spawn_result != 0) {
 			syslog(
 				LOG_ERR,
@@ -901,6 +899,7 @@ inline int identify(
 		unsigned int retries = 0;
 		while (retry) {
 			waitpid(child_pid, &rc, 0);
+
 			success = (
 					WIFEXITED(rc) &&
 					WEXITSTATUS(rc) == EXIT_SUCCESS);
@@ -912,10 +911,11 @@ inline int identify(
 				++retries < max_face_auth_tries
 				&& !success
 				&& !terminated
-				&& rc >= CompareResult::TooDark
-				&& rc <= CompareResult::Rubberstamp
+				&& WEXITSTATUS(rc) >= CompareResult::TooDark
+				&& WEXITSTATUS(rc) <= CompareResult::Rubberstamp
 				&& confirmation_type == ConfirmationType::Unset);
 
+			syslog(LOG_ERR, std::to_string(rc).c_str());
 			if (retry) {
 				int spawn_result = posix_spawnp(
 					&child_pid,
@@ -925,7 +925,6 @@ inline int identify(
 					const_cast<char *const *>(args),
 					nullptr
 				);
-				posix_spawn_file_actions_destroy(&actions);
 				if (spawn_result != 0) {
 					syslog(
 						LOG_ERR,
@@ -1052,6 +1051,7 @@ inline int identify(
 	*/
 	kill(-child_pid, SIGKILL);
 	fingerprint_authenticator->cancel();
+	posix_spawn_file_actions_destroy(&actions);
 
 	switch (confirmation_type) {
 		/*
@@ -1128,7 +1128,6 @@ inline int identify(
 		 */
 		case ConfirmationType::Terminated:
 		{
-			syslog(LOG_ERR, "TERMINATED");
 			/**
 			 * terminate all sub tasks
 			 */

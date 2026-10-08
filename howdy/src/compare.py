@@ -226,6 +226,7 @@ def exit(code=None):
 	"""Exit while releasing the camera and closing howdy-gtk properly"""
 	cleanup()
 
+	print("TEST")
 	# Exit compare
 	if code is not None:
 		if isinstance(code, CompareResult):
