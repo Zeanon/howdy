@@ -57,7 +57,7 @@ encodings = []
 # Make the ./models folder if it doesn't already exist
 if not os.path.exists(paths_factory.user_models_dir_path()):
 	print(_("No face model folder found, creating one"))
-	os.makedirs(paths_factory.user_models_dir_path())
+	os.makedirs(paths_factory.user_models_dir_path(), mode=0o755)
 
 # To try read a premade encodings file if it exists
 try:
