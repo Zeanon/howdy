@@ -9,6 +9,7 @@ import configparser
 import builtins
 import numpy as np
 import paths_factory
+import enroll_capture
 
 from recorders.video_capture import VideoCapture
 from i18n import _
@@ -56,7 +57,7 @@ encodings = []
 # Make the ./models folder if it doesn't already exist
 if not os.path.exists(paths_factory.user_models_dir_path()):
 	print(_("No face model folder found, creating one"))
-	os.makedirs(paths_factory.user_models_dir_path(), mode=0o755)
+	os.makedirs(paths_factory.user_models_dir_path())
 
 # To try read a premade encodings file if it exists
 try:
@@ -87,12 +88,16 @@ if builtins.howdy_args.arguments:
 else:
 	label = _("Model #") + str(next_id)
 
-# Keep de default name if we can't ask questions
-if builtins.howdy_args.y:
+# Keep the default name if we can't ask questions (-y, or no TTY / closed stdin
+# as when the setup wizard / Settings runs add with capture_output).
+if builtins.howdy_args.y or not sys.stdin.isatty():
 	print(_('Using default label "%s" because of -y flag') % (label, ))
 else:
 	# Ask the user for a custom label
-	label_in = input(_("Enter a label for this new model [{}]: ").format(label))
+	try:
+		label_in = input(_("Enter a label for this new model [{}]: ").format(label))
+	except EOFError:
+		label_in = ""
 
 	# Set the custom label (if any) and limit it to 24 characters
 	if label_in != "":
@@ -114,13 +119,40 @@ insert_model = {
 # Set up video_capture
 video_capture = VideoCapture(config)
 
-print(_("\nPlease look straight into the camera"))
+# The wizard / Settings read our stdout through a pipe: flush every line so
+# the on-screen guidance follows the capture in real time.
+def say(line):
+	print(line, flush=True)
+
+
+# The same prompts go to a desktop notification card: the banner sits right
+# under the camera, where the user is looking during the scan.
+progress = {"count": 0, "total": 0, "prompt": ""}
+
+
+def emit(line):
+	"""Print one capture line; mirror prompts / progress onto the notification."""
+	if line.startswith("@progress "):
+		try:
+			count, total = line[len("@progress "):].split("/", 1)
+			progress["count"], progress["total"] = int(count), int(total)
+		except ValueError:
+			pass
+		say(line)
+		return
+	if line.startswith("@"):
+		say(line)
+		return
+	text = _(line)
+	say(text)
+
+
+emit("@guide center")
+emit(_("\nPlease look straight into the camera"))
 
 # Give the user time to read
 time.sleep(2)
 
-# Will contain found face encodings
-enc = []
 # Count the number of read frames
 frames = 0
 # Count the number of illuminated read frames
@@ -134,49 +166,46 @@ face_locations = None
 
 dark_threshold = config.getfloat("video", "dark_threshold", fallback=60)
 
-exposure = config.getint("video", "exposure", fallback=-1)
-
 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
-# Loop through frames till we hit a timeout
-while frames < 60:
-	frames += 1
 
-	if exposure != -1:
-		# For a strange reason on some cameras (e.g. Lenoxo X1E)
-		# setting manual exposure works only after a couple frames
-		# are captured and even after a delay it does not
-		# always work. Setting exposure at every frame is
-		# reliable though.
-		video_capture.internal.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1.0)  # 1 = Manual
-		video_capture.internal.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
-
-	# Grab a single frame of video
+def usable_frame():
+	"""Read one frame; returns (frame, gsframe) or (frame, None) when it is black / too dark."""
+	global valid_frames, dark_tries, dark_running_total
 	frame, gsframe = video_capture.read_frame()
 	gsframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 	gsframe = clahe.apply(gsframe)
 
-	# Create a histogram of the image with 8 values
-	hist = cv2.calcHist([gsframe], [0], None, [8], [0, 256])
-	# All values combined for percentage calculation
-	hist_total = np.sum(hist)
-
-	# Calculate frame darkness
-	darkness = (hist[0] / hist_total * 100)
-
-	# If the image is fully black due to a bad camera read,
-	# skip to the next frame
-	if (hist_total == 0) or (darkness == 100):
-		continue
+	# If the image is fully black due to a bad camera read, skip it
+	darkness = enroll_capture.frame_darkness(gsframe, np, cv2)
+	if darkness is None or darkness == 100:
+		return frame, None
 
 	# Include this frame in calculating our average session brightness
 	dark_running_total += darkness
 	valid_frames += 1
 
-	# If the image exceeds darkness threshold due to subject distance,
-	# skip to the next frame
-	if (darkness > dark_threshold):
+	# If the image exceeds darkness threshold due to subject distance, skip it
+	if darkness > dark_threshold:
 		dark_tries += 1
+		return frame, None
+	return frame, gsframe
+
+
+def face_rect(face_location):
+	return face_location.rect if use_cnn else face_location
+
+
+def encode(frame, face_location):
+	face_landmark = pose_predictor(frame, face_rect(face_location))
+	return np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1)).tolist()
+
+
+# Loop through frames till we hit a timeout
+while frames < 60:
+	frames += 1
+	frame, gsframe = usable_frame()
+	if gsframe is None:
 		continue
 
 	# Get all faces from that frame as encodings
@@ -186,33 +215,44 @@ while frames < 60:
 	if face_locations:
 		break
 
-video_capture.release()
-
 # If we've found no faces, try to determine why
 if not face_locations:
+	video_capture.release()
 	if valid_frames == 0:
-		print(_("Camera saw only black frames - is IR emitter working?"))
+		reason = _("Camera saw only black frames - is IR emitter working?")
 	elif valid_frames == dark_tries:
-		print(_("All frames were too dark, please check dark_threshold in config"))
-		print(_("Average darkness: {avg}, Threshold: {threshold}").format(avg=str(dark_running_total / valid_frames), threshold=str(dark_threshold)))
+		reason = _("All frames were too dark, please check dark_threshold in config") + " " + \
+			_("Average darkness: {avg}, Threshold: {threshold}").format(avg=str(dark_running_total / valid_frames), threshold=str(dark_threshold))
 	else:
-		print(_("No face detected, aborting"))
+		reason = _("No face detected, aborting")
+	print(reason)
 	sys.exit(1)
 
 # If more than 1 faces are detected we can't know which one belongs to the user
 elif len(face_locations) > 1:
+	video_capture.release()
 	print(_("Multiple faces detected, aborting"))
 	sys.exit(1)
 
-face_location = face_locations[0]
-if use_cnn:
-	face_location = face_location.rect
+# First sample: the frontal frame that started the scan. Then guide the user
+# through small head movements and keep a few more descriptors per pose so
+# the model covers more than one snapshot (see enroll_capture.py).
+try:
+	first_sample = encode(frame, face_locations[0])
+	samples = enroll_capture.capture_guided_samples(
+		read_frame=usable_frame,
+		detect_faces=lambda gs: face_detector(gs, 1),
+		encode_face=encode,
+		emit=emit,
+		first_sample=first_sample,
+	)
+finally:
+	# Release the camera on success and on any detection / encoding / read error
+	# (the wizard's live preview reopens the device right after add exits).
+	video_capture.release()
 
-# Get the encodings in the frame
-face_landmark = pose_predictor(frame, face_location)
-face_encoding = np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1))
-
-insert_model["data"].append(face_encoding.tolist())
+insert_model["data"].extend(samples)
+say(_("Captured {} face samples").format(len(samples)))
 
 # Insert full object into the list
 encodings.append(insert_model)
@@ -220,10 +260,8 @@ encodings.append(insert_model)
 # Save the new encodings to disk
 with open(enc_file, "w") as datafile:
 	json.dump(encodings, datafile)
-
-# Restrict permissions so only root can read the biometric model
-os.chmod(enc_file, 0o644)
+os.chmod(enc_file, 0o600)
 
 # Give let the user know how it went
-print(_("""\nScan complete
+say(_("""\nScan complete
 Added a new model to """) + user)

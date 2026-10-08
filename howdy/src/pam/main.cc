@@ -706,6 +706,8 @@ inline int identify(
 	pid_t child_pid;
 	const char *const args[] = {
 			PYTHON_EXECUTABLE_PATH,
+			"-E",
+			"-s",
 			COMPARE_PROCESS_PATH,
 			username,
 			std::to_string(getpid()).c_str(),
@@ -718,25 +720,26 @@ inline int identify(
 	// authentication agent over it. Anything the python process prints there
 	// corrupts that protocol, and the agent fails the whole session instead of
 	// falling back to the next PAM module. Send that output to /dev/null.
-	posix_spawn_file_actions_t file_actions;
-	posix_spawn_file_actions_init(&file_actions);
-	for (int output_fd : {STDOUT_FILENO, STDERR_FILENO}) {
-		struct stat output_stat {};
-		if (fstat(output_fd, &output_stat) == 0 && S_ISSOCK(output_stat.st_mode)) {
-			posix_spawn_file_actions_addopen(&file_actions, output_fd, "/dev/null",
-											O_WRONLY, 0);
-		}
-	}
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init(&actions);
+	posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+	posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+	// Put compare (and its GTK child) in a new process group so cancel can
+	// signal the whole tree without leaving orphan overlays or open cameras.
+	posix_spawnattr_t spawn_attr;
+	posix_spawnattr_init(&spawn_attr);
+	posix_spawnattr_setflags(&spawn_attr, POSIX_SPAWN_SETPGROUP);
+	posix_spawnattr_setpgroup(&spawn_attr, 0);
 	if (face_unlock) {
 		int spawn_result = posix_spawnp(
 			&child_pid,
 			PYTHON_EXECUTABLE_PATH,
-			&file_actions,
-			nullptr,
+			&actions,
+			&spawn_attr,
 			const_cast<char *const *>(args),
 			nullptr
 		);
-		posix_spawn_file_actions_destroy(&file_actions);
+		posix_spawn_file_actions_destroy(&actions);
 		if (spawn_result != 0) {
 			syslog(
 				LOG_ERR,
@@ -917,12 +920,12 @@ inline int identify(
 				int spawn_result = posix_spawnp(
 					&child_pid,
 					PYTHON_EXECUTABLE_PATH,
-					&file_actions,
-					nullptr,
+					&actions,
+					&spawn_attr,
 					const_cast<char *const *>(args),
 					nullptr
 				);
-				posix_spawn_file_actions_destroy(&file_actions);
+				posix_spawn_file_actions_destroy(&actions);
 				if (spawn_result != 0) {
 					syslog(
 						LOG_ERR,

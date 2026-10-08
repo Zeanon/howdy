@@ -1,12 +1,7 @@
 # Compare incoming video with known faces
 # Running in a local python instance to get around PATH issues
 
-# Intercept Ctrl+C and exit gracefully
-def handle_sigint(signum, frame):
-	raise SystemExit
-
 import signal
-signal.signal(signal.SIGINT, handle_sigint)
 
 # Import time so we can start timing asap
 import time
@@ -40,6 +35,9 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("GOTO_NUM_THREADS", "1")
 
+video_capture = None
+_cleaned_up = False
+
 # shamelessly copied from psutil
 def process_exists(pid):
     """Check whether pid exists in the current process table."""
@@ -62,6 +60,21 @@ def process_exists(pid):
     else:
         return True
 
+def install_parent_death_signal(sig=signal.SIGTERM):
+	"""Ask the kernel to signal us if the PAM parent exits (Esc/cancel).
+
+	Prevents an orphaned compare from holding the camera on the lock shield
+	when gdm-session-worker dies without a clean PAM return.
+	"""
+	try:
+		import ctypes
+
+		libc = ctypes.CDLL("libc.so.6", use_errno=True)
+		# PR_SET_PDEATHSIG == 1 on Linux
+		return libc.prctl(1, sig) == 0
+	except Exception:
+		return False
+
 def str_to_seconds(timestring):
     if not isinstance(timestring, str):
         return timestring
@@ -83,27 +96,158 @@ def str_to_seconds(timestring):
         return timeout * 60
     return timeout
 
-def exit(code=None):
-	"""Exit while closing howdy-gtk properly"""
-	global gtk_proc
+def _session_idle_hint():
+	"""Return True/False for the current login1 session's IdleHint, or None
+	if it can't be determined (busctl missing, no session, DBus error, ...).
+	"""
+	try:
+		session_path = subprocess.run(
+			[BUSCTL_PATH, "--system", "--", "call", "org.freedesktop.login1", "/org/freedesktop/login1",
+			 "org.freedesktop.login1.Manager", "GetSessionByPID", "u", str(os.getpid())],
+			capture_output=True, text=True, timeout=2,
+		)
+		if session_path.returncode != 0:
+			return None
+		# Output looks like: o "/org/freedesktop/login1/session/_31"
+		parts = session_path.stdout.strip().split(None, 1)
+		if len(parts) != 2 or parts[0] != "o":
+			return None
+		path = parts[1].strip().strip('"')
+
+		idle_hint = subprocess.run(
+			[BUSCTL_PATH, "--system", "--", "get-property", "org.freedesktop.login1", path,
+			 "org.freedesktop.login1.Session", "IdleHint"],
+			capture_output=True, text=True, timeout=2,
+		)
+		if idle_hint.returncode != 0:
+			return None
+		# Output must be exactly "b true" or "b false" -- anything else
+		# (malformed output, an unexpected D-Bus type signature like "s true")
+		# is treated as undetermined rather than guessed, since a false
+		# positive here would abort a legitimate scan.
+		parts = idle_hint.stdout.strip().split()
+		if len(parts) != 2 or parts[0] != "b" or parts[1] not in ("true", "false"):
+			return None
+		return parts[1] == "true"
+	except Exception:
+		return None
+
+def _watch_session_idle(poll_interval=0.5):
+	"""Abort the scan if our login1 session goes idle (Esc at a greeter/lock
+	screen falling back to screensaver/idle). Runs on its own daemon thread;
+	any failure here (busctl missing, DBus unavailable, parsing error) just
+	means this watcher does nothing -- it must never block or interfere with
+	the normal auth flow.
+
+	Edge-triggered, not level-triggered: waking a lock screen commonly starts
+	a new auth attempt *while* IdleHint is still true from before (it's only
+	cleared on successful unlock), so aborting on the first poll would reject
+	the normal case. This only aborts on an observed False -> True transition
+	during this attempt, requiring at least one "not idle" reading first.
+
+	Also does not touch the camera/GTK subprocess directly: cleanup() runs on
+	the main thread, which may concurrently be reading from video_capture or
+	writing to gtk_proc's stdin. Instead this sends the process SIGTERM,
+	which Python always delivers to the main thread's registered handler
+	(_signal_exit), so cleanup happens exactly like an external cancel.
+	"""
+	consecutive_failures = 0
+	seen_not_idle = False
+	try:
+		while not _cleaned_up:
+			idle = _session_idle_hint()
+			if idle is None:
+				consecutive_failures += 1
+				# Give up after a few consecutive failures rather than a
+				# single one (avoid bailing out on a transient DBus hiccup),
+				# but still stop eventually if this greeter/login manager or
+				# platform genuinely doesn't expose session idle state.
+				if consecutive_failures >= 3:
+					return
+				time.sleep(poll_interval)
+				continue
+			consecutive_failures = 0
+			if idle:
+				# Re-check _cleaned_up right before firing: _session_idle_hint()
+				# can block for a couple of seconds (two busctl calls), long
+				# enough for the main thread to have independently finished a
+				# successful/failed exit via cleanup() in the meantime. Do not
+				# signal a process that has already decided its own exit code
+				# -- _signal_exit() is the authoritative backstop for the
+				# remaining (much narrower) race, but avoiding the signal
+				# entirely here is strictly better.
+				if seen_not_idle and not _cleaned_up:
+					os.kill(os.getpid(), signal.SIGTERM)
+					return
+				# Already idle when this attempt started -- not a
+				# transition, so not our signal to abort. Keep watching for
+				# an actual False -> True transition instead.
+			else:
+				seen_not_idle = True
+			time.sleep(poll_interval)
+	except Exception:
+		pass
+
+def cleanup():
+	"""Release the camera and terminate the auth UI if still running"""
+	global video_capture, gtk_proc, _cleaned_up
+
+	if _cleaned_up:
+		return
+	_cleaned_up = True
+
+	# Release the camera if we opened one (safe if missing/already released)
+	if video_capture is not None:
+		try:
+			video_capture.release()
+		except Exception:
+			pass
+		video_capture = None
+		# Brief settle so the next PAM attempt can reopen the V4L device.
+		try:
+			time.sleep(0.35)
+		except Exception:
+			pass
 
 	# Exit the auth ui process if there is one
 	if "gtk_proc" in globals() and gtk_proc is not None:
 		try:
-			# Try to close stdin to signal EOF to the GTK process
-			gtk_proc.stdin.close()
-			# Give it a moment to exit gracefully
-			gtk_proc.wait(timeout=0.5)
-		except:
-			# Force kill if it doesn't exit gracefully
-			gtk_proc.kill()
-			gtk_proc.wait()
+			gtk_proc.terminate()
+			try:
+				gtk_proc.wait(timeout=1)
+			except subprocess.TimeoutExpired:
+				gtk_proc.kill()
+				gtk_proc.wait(timeout=1)
+		except Exception:
+			pass
+
+def exit(code=None):
+	"""Exit while releasing the camera and closing howdy-gtk properly"""
+	cleanup()
 
 	# Exit compare
 	if code is not None:
 		if isinstance(code, CompareResult):
 			sys.exit(code.value)
 		sys.exit(code)
+
+
+def _signal_exit(signum, frame):
+	"""Handle SIGTERM/SIGINT: same cleanup as exit, then abort with code 12.
+
+	If cleanup() has already run -- e.g. the main thread already completed
+	its own successful/failed exit, or another signal got here first -- this
+	is a no-op instead of forcing os._exit(12). Overriding an
+	already-decided exit code (e.g. turning a successful 0 into an abort
+	12) would be worse than not aborting. This is also the backstop against
+	the idle watcher's SIGTERM racing a concurrent natural exit: the
+	watcher's own _cleaned_up re-check narrows the window, but this check
+	is what makes the remainder of that race harmless.
+	"""
+	if _cleaned_up:
+		return
+	cleanup()
+	sys.exit(CompareResult.Error)
 
 def init_detector(lock):
 	"""Start face detector, encoder and predictor in a new thread"""
@@ -162,6 +306,8 @@ def send_to_ui(type, message):
 			pass
 
 
+install_parent_death_signal()
+
 # Make sure we were given an username to test against and a parent pid
 if len(sys.argv) < 3:
 	exit(CompareResult.Abort)
@@ -184,6 +330,12 @@ frames = 0
 snapframes = []
 # Tracks the lowest certainty value in the loop
 lowest_certainty = 10
+# Frames whose best match already fell inside the threshold. One frame under
+# the bar is a weak signal: a scan produces dozens of independent looks, so
+# the frame that decides authentication is the *minimum* of many draws, and a
+# single blurred or oddly lit outlier can carry a stranger through. Demanding
+# several agreeing frames removes that outlier without moving the threshold.
+confirmations_seen = 0
 # Face recognition/detection instances
 face_detector = None
 pose_predictor = None
@@ -211,6 +363,10 @@ use_cnn = config.getboolean("face_authentication", "use_cnn", fallback=False)
 timeout = str_to_seconds(config.get("face_authentication", "timeout", fallback="4s"))
 dark_threshold = config.getfloat("video", "dark_threshold", fallback=50.0)
 video_certainty = config.getfloat("video", "certainty", fallback=3.5) / 10
+# Separate frames that must agree before a match is trusted. 1 is the
+# historical single-frame behaviour and stays the fallback for configs
+# written before this key existed; the Secure level ships 3.
+video_confirmations = max(1, config.getint("video", "confirmations", fallback=1))
 end_report = config.getboolean("debug", "end_report", fallback=False)
 save_failed = config.getboolean("snapshots", "save_failed", fallback=False)
 save_successful = config.getboolean("snapshots", "save_successful", fallback=False)
@@ -232,6 +388,17 @@ try:
 	atexit.register(exit)
 except FileNotFoundError:
 	pass
+
+signal.signal(signal.SIGTERM, _signal_exit)
+signal.signal(signal.SIGINT, _signal_exit)
+
+# Abort if the greeter/lock session goes idle mid-scan (e.g. Esc falling
+# back to screensaver) -- see AGENTS.md lifecycle notes: this watches our
+# own session's state and decides to bail out on its own, it does not
+# touch PAM-level password watching or the workaround= hard rule.
+if config.getboolean("core", "abort_on_session_idle", fallback=True):
+	import threading
+	threading.Thread(target=_watch_session_idle, daemon=True).start()
 
 # Write to the stdin to redraw ui
 send_to_ui("M", _("Starting up..."))
@@ -391,6 +558,13 @@ while process_exists(parent_pid):
 
 		# Check if a match that's confident enough
 		if 0 < match < video_certainty:
+			confirmations_seen += 1
+			if confirmations_seen < video_confirmations:
+				# Keep scanning until enough separate frames agree. The break
+				# leaves the per-face loop so one frame can only ever count
+				# once, however many faces it happens to contain.
+				break
+
 			timings["tt"] = time.time() - timings["st"]
 			timings["fl"] = time.time() - timings["fr"]
 
