@@ -1041,6 +1041,7 @@ inline int identify(
 
 	signal_task.stop(true);
 
+	/*
 	kill(-child_pid, SIGTERM);
 	if (child_task.wait(DEFAULT_ENTER_TIMEOUT) == std::future_status::timeout) {
 		syslog(LOG_WARNING,
@@ -1048,6 +1049,8 @@ inline int identify(
 			child_pid);
 		kill(-child_pid, SIGKILL);
 	}
+	*/
+	kill(-child_pid, SIGKILL);
 	fingerprint_authenticator->cancel();
 
 	switch (confirmation_type) {
