@@ -1,8 +1,34 @@
 import os
 import sys
+
+# 1. Intel GPU Treiber-Cache umleiten
+os.environ["CL_CACHE_DIR"] = "/tmp/cl_cache"
+os.environ["INTEL_OCL_CACHE_DIR"] = "/tmp/intel_ocl"
+
+os.environ["OPENVINO_TELEMETRY_ENABLE"] = "0"
+
+# =====================================================================
+# NEU: TELEMETRIE-IMPORT KOMPLETT FAKEN
+# =====================================================================
+class DummyTelemetry:
+    def __init__(self, *args, **kwargs): pass
+    def init(self, *args, **kwargs): pass
+    def send_event(self, *args, **kwargs): pass
+    def start_session(self, *args, **kwargs): pass
+    def end_session(self, *args, **kwargs): pass
+    def force_shutdown(self, *args, **kwargs): pass
+
+# Wir injizieren ein leeres Modul in Pythons Modul-Speicher
+import types
+dummy_mod = types.ModuleType("openvino_telemetry")
+dummy_mod.Telemetry = DummyTelemetry
+
+sys.modules["openvino_telemetry"] = dummy_mod
+# =====================================================================
+
+
 import cv2
 import dlib
-import syslog
 import numpy as np
 
 MODEL_DIR = "/usr/share/howdy/openvino-models"
@@ -20,7 +46,6 @@ _core = None
 def _get_core():
     global _core
     if _core is None:
-        os.environ["OPENVINO_TELEMETRY_ENABLE"] = "0"
         for p in _EXTRA_PATHS:
             if p not in sys.path and os.path.isdir(p):
                 sys.path.insert(0, p)

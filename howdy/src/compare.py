@@ -179,6 +179,7 @@ def init_detector(lock):
 				face_encoder = openvino_face.FaceEncoder("GPU")
 		except Exception as e:
 			use_openvino = False
+			print(f"OpenVINO not available ({e}), using dlib")
 			syslog.syslog(
 				syslog.LOG_ERR,
 				f"OpenVINO init failed: {e!r}"
@@ -340,7 +341,6 @@ try:
 	models = json.load(open(paths_factory.user_model_path(user)))
 	encoding_size = 256 if use_openvino else 128
 	encodings, model_owner = enroll_capture.flatten_models(models, encoding_size)
-
 except FileNotFoundError:
 	exit(CompareResult.NoFaceModel)
 

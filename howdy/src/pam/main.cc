@@ -111,6 +111,10 @@ inline void howdy_error(int status) {
 
 		switch (status) {
 		case CompareResult::NoFaceModel:
+			if (verbose) {
+				conv_function(PAM_TEXT_INFO, "");
+			}
+			conv_function(PAM_ERROR_MSG, S(std::format("No face model known for {}", username).c_str()));
 			syslog(LOG_NOTICE, "Failure: no face model known");
 			break;
 		case CompareResult::TimeoutReached:
@@ -405,6 +409,7 @@ inline int identify(
 
 	face_unlock = config.GetBoolean("face_authentication", "enable", true);
 	max_face_auth_tries = (unsigned) config.GetInteger("face_authentication", "max_tries", 1);
+	bool debug_to_console = config.GetBoolean("face_authentication", "debug_to_console", false);
 
 
 	fingerprint = config.GetBoolean("fingerprint", "enable", false);
@@ -490,6 +495,11 @@ inline int identify(
 			init_message = true;
 		} else if (arg.starts_with("init-message=")) {
 			init_message = str_to_bool(arg.substr(13, arg.length()));
+		}
+		else if (arg =="face-auth:debug-to-console") {
+			debug_to_console = true;
+		} else if (arg.starts_with("face-auth:debug-to-console=")) {
+			debug_to_console = str_to_bool(arg.substr(27, arg.length()));
 		}
 		else if (arg.starts_with("global-timeout=")) {
 			global_timeout = str_to_seconds(arg.substr(15, arg.length()));
@@ -701,7 +711,7 @@ inline int identify(
 	 * Howdy Python process
 	 * ---------------------------------------------------------------
 	 */
-	pid_t child_pid;
+	pid_t child_pid = -1;
 	const char *const args[] = {
 			PYTHON_EXECUTABLE_PATH,
 			"-E",
@@ -722,8 +732,10 @@ inline int identify(
 	 */
 	posix_spawn_file_actions_t actions;
 	posix_spawn_file_actions_init(&actions);
-	//posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
-	//posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+	if (!debug_to_console){
+		posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+		posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+	}
 
 	/**
 	 * Put compare (and its GTK child) in a new process group so cancel can
@@ -1052,7 +1064,9 @@ inline int identify(
 		kill(-child_pid, SIGKILL);
 	}
 	*/
-	kill(-child_pid, SIGKILL);
+	if (child_pid > 0) {
+		kill(-child_pid, SIGKILL);
+	}
 	fingerprint_authenticator->cancel();
 	posix_spawn_file_actions_destroy(&actions);
 

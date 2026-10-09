@@ -129,6 +129,7 @@ def capture_guided_samples(read_frame, detect_faces, encode_face, emit, first_sa
 					  samples_per_step, clock() + step_seconds, max_samples,
 					  lambda: emit(progress_line(len(samples), total)))
 
+	# TODO video output für enrollment hier iwie um den dreh
 	return samples
 
 
