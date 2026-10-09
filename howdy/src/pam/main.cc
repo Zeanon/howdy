@@ -144,7 +144,7 @@ inline void howdy_error(int status) {
 			}
 			conv_function(
 				PAM_ERROR_MSG,
-				std::string(S("Unknown error: ") + status).c_str()
+				std::string(S(" Unknown error: ") + status).c_str()
 			);
 			syslog(LOG_ERR, "Failure: unknown error %d", status);
 		}
@@ -712,18 +712,23 @@ inline int identify(
 			face_auth_timeout.value_or(nullptr),
 			nullptr,
 	};
-	// When stdout or stderr is a socket, it is a protocol channel rather than a
-	// terminal or a log: polkit's socket-activated agent helper
-	// (polkit-agent-helper@.service, StandardOutput=socket) talks to the
-	// authentication agent over it. Anything the python process prints there
-	// corrupts that protocol, and the agent fails the whole session instead of
-	// falling back to the next PAM module. Send that output to /dev/null.
+	/**
+	 * When stdout or stderr is a socket, it is a protocol channel rather than a
+	 * terminal or a log: polkit's socket-activated agent helper
+	 * (polkit-agent-helper@.service, StandardOutput=socket) talks to the
+	 * authentication agent over it. Anything the python process prints there
+	 * corrupts that protocol, and the agent fails the whole session instead of
+	 * falling back to the next PAM module. Send that output to /dev/null.
+	 */
 	posix_spawn_file_actions_t actions;
 	posix_spawn_file_actions_init(&actions);
-	posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
-	posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
-	// Put compare (and its GTK child) in a new process group so cancel can
-	// signal the whole tree without leaving orphan overlays or open cameras.
+	//posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+	//posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+
+	/**
+	 * Put compare (and its GTK child) in a new process group so cancel can
+	 * signal the whole tree without leaving orphan overlays or open cameras.
+	 */
 	posix_spawnattr_t spawn_attr;
 	posix_spawnattr_init(&spawn_attr);
 	posix_spawnattr_setflags(&spawn_attr, POSIX_SPAWN_SETPGROUP);
@@ -817,8 +822,6 @@ inline int identify(
 		while (retries < max_password_tries && retry) {
 			orig_authtok = pamh->authtok;
 			rc = password_pam_sm(pamh, flags, password_args.size(), password_args.data());
-
-			syslog(LOG_ERR, std::to_string(rc).c_str());	
 
 			success = (rc == PAM_SUCCESS);
 			retry = (!success && !terminate && confirmation_type == ConfirmationType::Unset);
@@ -916,7 +919,6 @@ inline int identify(
 				&& WEXITSTATUS(rc) <= CompareResult::Rubberstamp
 				&& confirmation_type == ConfirmationType::Unset);
 
-			syslog(LOG_ERR, std::to_string(rc).c_str());
 			if (retry) {
 				int spawn_result = posix_spawnp(
 					&child_pid,

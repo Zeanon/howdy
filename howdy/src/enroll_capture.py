@@ -137,7 +137,7 @@ def _np():
 	return numpy
 
 
-def flatten_models(models):
+def flatten_models(models, data_size):
 	"""(encodings, owners): every stored descriptor plus the index of the model it came from.
 
 	Models now hold several descriptors each, so the argmin over the flat
@@ -147,6 +147,7 @@ def flatten_models(models):
 	owners = []
 	for index, model in enumerate(models):
 		data = model.get("data", [])
-		encodings.extend(data)
-		owners.extend([index] * len(data))
+		if all(len(dat) == data_size for dat in data):
+			encodings.extend(data)
+			owners.extend([index] * len(data))
 	return encodings, owners

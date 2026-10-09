@@ -1,3 +1,12 @@
+# Guard against multiprocessing.forkserver re-importing this module.
+# OpenVINO GPU runtime spawns worker processes via forkserver, which
+# re-executes the main module. Without this guard, workers re-run the
+# camera setup, hit EBUSY on /dev/video*, and break the parent process
+# with "Failed to read camera" errors and PAM timeouts.
+import sys as _sys
+if __name__ != "__main__":
+	_sys.exit(0)
+
 # Compare incoming video with known faces
 # Running in a local python instance to get around PATH issues
 
@@ -14,11 +23,11 @@ timings = {
 # Import required modules
 import os
 import sys
+import syslog
 import json
 import configparser
 import dlib
 import cv2
-import re
 from datetime import timezone, datetime
 import atexit
 import subprocess
@@ -26,9 +35,12 @@ import snapshot
 import numpy as np
 import _thread as thread
 import paths_factory
+import enroll_capture
 from recorders.video_capture import VideoCapture
 from i18n import _
 from exit_codes import CompareResult
+import traceback
+
 
 # Force singlethreaded BLAS. dlib's OpenBLAS/OpenMP matmuls can livelock when raced against this scri>
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
@@ -96,98 +108,6 @@ def str_to_seconds(timestring):
         return timeout * 60
     return timeout
 
-def _session_idle_hint():
-	"""Return True/False for the current login1 session's IdleHint, or None
-	if it can't be determined (busctl missing, no session, DBus error, ...).
-	"""
-	try:
-		session_path = subprocess.run(
-			[BUSCTL_PATH, "--system", "--", "call", "org.freedesktop.login1", "/org/freedesktop/login1",
-			 "org.freedesktop.login1.Manager", "GetSessionByPID", "u", str(os.getpid())],
-			capture_output=True, text=True, timeout=2,
-		)
-		if session_path.returncode != 0:
-			return None
-		# Output looks like: o "/org/freedesktop/login1/session/_31"
-		parts = session_path.stdout.strip().split(None, 1)
-		if len(parts) != 2 or parts[0] != "o":
-			return None
-		path = parts[1].strip().strip('"')
-
-		idle_hint = subprocess.run(
-			[BUSCTL_PATH, "--system", "--", "get-property", "org.freedesktop.login1", path,
-			 "org.freedesktop.login1.Session", "IdleHint"],
-			capture_output=True, text=True, timeout=2,
-		)
-		if idle_hint.returncode != 0:
-			return None
-		# Output must be exactly "b true" or "b false" -- anything else
-		# (malformed output, an unexpected D-Bus type signature like "s true")
-		# is treated as undetermined rather than guessed, since a false
-		# positive here would abort a legitimate scan.
-		parts = idle_hint.stdout.strip().split()
-		if len(parts) != 2 or parts[0] != "b" or parts[1] not in ("true", "false"):
-			return None
-		return parts[1] == "true"
-	except Exception:
-		return None
-
-def _watch_session_idle(poll_interval=0.5):
-	"""Abort the scan if our login1 session goes idle (Esc at a greeter/lock
-	screen falling back to screensaver/idle). Runs on its own daemon thread;
-	any failure here (busctl missing, DBus unavailable, parsing error) just
-	means this watcher does nothing -- it must never block or interfere with
-	the normal auth flow.
-
-	Edge-triggered, not level-triggered: waking a lock screen commonly starts
-	a new auth attempt *while* IdleHint is still true from before (it's only
-	cleared on successful unlock), so aborting on the first poll would reject
-	the normal case. This only aborts on an observed False -> True transition
-	during this attempt, requiring at least one "not idle" reading first.
-
-	Also does not touch the camera/GTK subprocess directly: cleanup() runs on
-	the main thread, which may concurrently be reading from video_capture or
-	writing to gtk_proc's stdin. Instead this sends the process SIGTERM,
-	which Python always delivers to the main thread's registered handler
-	(_signal_exit), so cleanup happens exactly like an external cancel.
-	"""
-	consecutive_failures = 0
-	seen_not_idle = False
-	try:
-		while not _cleaned_up:
-			idle = _session_idle_hint()
-			if idle is None:
-				consecutive_failures += 1
-				# Give up after a few consecutive failures rather than a
-				# single one (avoid bailing out on a transient DBus hiccup),
-				# but still stop eventually if this greeter/login manager or
-				# platform genuinely doesn't expose session idle state.
-				if consecutive_failures >= 3:
-					return
-				time.sleep(poll_interval)
-				continue
-			consecutive_failures = 0
-			if idle:
-				# Re-check _cleaned_up right before firing: _session_idle_hint()
-				# can block for a couple of seconds (two busctl calls), long
-				# enough for the main thread to have independently finished a
-				# successful/failed exit via cleanup() in the meantime. Do not
-				# signal a process that has already decided its own exit code
-				# -- _signal_exit() is the authoritative backstop for the
-				# remaining (much narrower) race, but avoiding the signal
-				# entirely here is strictly better.
-				if seen_not_idle and not _cleaned_up:
-					os.kill(os.getpid(), signal.SIGTERM)
-					return
-				# Already idle when this attempt started -- not a
-				# transition, so not our signal to abort. Keep watching for
-				# an actual False -> True transition instead.
-			else:
-				seen_not_idle = True
-			time.sleep(poll_interval)
-	except Exception:
-		pass
-
 def cleanup():
 	"""Release the camera and terminate the auth UI if still running"""
 	global video_capture, gtk_proc, _cleaned_up
@@ -226,7 +146,6 @@ def exit(code=None):
 	"""Exit while releasing the camera and closing howdy-gtk properly"""
 	cleanup()
 
-	print("TEST")
 	# Exit compare
 	if code is not None:
 		if isinstance(code, CompareResult):
@@ -235,17 +154,6 @@ def exit(code=None):
 
 
 def _signal_exit(signum, frame):
-	"""Handle SIGTERM/SIGINT: same cleanup as exit, then abort with code 12.
-
-	If cleanup() has already run -- e.g. the main thread already completed
-	its own successful/failed exit, or another signal got here first -- this
-	is a no-op instead of forcing os._exit(12). Overriding an
-	already-decided exit code (e.g. turning a successful 0 into an abort
-	12) would be worse than not aborting. This is also the backstop against
-	the idle watcher's SIGTERM racing a concurrent natural exit: the
-	watcher's own _cleaned_up re-check narrows the window, but this check
-	is what makes the remainder of that race harmless.
-	"""
 	if _cleaned_up:
 		return
 	cleanup()
@@ -253,7 +161,7 @@ def _signal_exit(signum, frame):
 
 def init_detector(lock):
 	"""Start face detector, encoder and predictor in a new thread"""
-	global face_detector, pose_predictor, face_encoder
+	global face_detector, face_encoder, pose_predictor, use_openvino
 
 	# Test if at lest 1 of the data files is there and abort if it's not
 	if not os.path.isfile(paths_factory.shape_predictor_5_face_landmarks_path()):
@@ -263,15 +171,29 @@ def init_detector(lock):
 		lock.release()
 		exit(CompareResult.Error)
 
-	# Use the CNN detector if enabled
-	if use_cnn:
-		face_detector = dlib.cnn_face_detection_model_v1(paths_factory.mmod_human_face_detector_path())
-	else:
-		face_detector = dlib.get_frontal_face_detector()
-
-	# Start the others regardless
-	pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
-	face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
+	if use_openvino:
+		try:
+			import openvino_face
+			if openvino_face.is_available():
+				face_detector = openvino_face.FaceDetector("GPU")
+				face_encoder = openvino_face.FaceEncoder("GPU")
+		except Exception as e:
+			use_openvino = False
+			syslog.syslog(
+				syslog.LOG_ERR,
+				f"OpenVINO init failed: {e!r}"
+			)
+			syslog.syslog(
+				syslog.LOG_ERR,
+				traceback.format_exc()
+			)
+	if not use_openvino:
+		if use_cnn:
+			face_detector = dlib.cnn_face_detection_model_v1(paths_factory.mmod_human_face_detector_path())
+		else:
+			face_detector = dlib.get_frontal_face_detector()
+		pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
+		face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
 
 	# Note the time it took to initialize detectors
 	timings["ll"] = time.time() - timings["ll"]
@@ -342,19 +264,7 @@ confirmations_seen = 0
 face_detector = None
 pose_predictor = None
 face_encoder = None
-
-# Try to load the face model from the models folder
-try:
-	models = json.load(open(paths_factory.user_model_path(user)))
-
-	for model in models:
-		encodings += model["data"]
-except FileNotFoundError:
-	exit(CompareResult.NoFaceModel)
-
-# Check if the file contains a model
-if len(models) < 1:
-	exit(CompareResult.NoFaceModel)
+use_openvino = False
 
 # Read config from disk
 config = configparser.ConfigParser()
@@ -362,6 +272,7 @@ config.read(paths_factory.config_file_path())
 
 # Get all config values needed
 use_cnn = config.getboolean("face_authentication", "use_cnn", fallback=False)
+use_openvino = config.getboolean("face_authentication", "use_openvino", fallback=False)
 timeout = str_to_seconds(config.get("face_authentication", "timeout", fallback="4s"))
 dark_threshold = config.getfloat("video", "dark_threshold", fallback=50.0)
 video_certainty = config.getfloat("video", "certainty", fallback=3.5) / 10
@@ -394,14 +305,6 @@ except FileNotFoundError:
 signal.signal(signal.SIGTERM, _signal_exit)
 signal.signal(signal.SIGINT, _signal_exit)
 
-# Abort if the greeter/lock session goes idle mid-scan (e.g. Esc falling
-# back to screensaver) -- see AGENTS.md lifecycle notes: this watches our
-# own session's state and decides to bail out on its own, it does not
-# touch PAM-level password watching or the workaround= hard rule.
-if config.getboolean("core", "abort_on_session_idle", fallback=True):
-	import threading
-	threading.Thread(target=_watch_session_idle, daemon=True).start()
-
 # Write to the stdin to redraw ui
 send_to_ui("M", _("Starting up..."))
 
@@ -431,6 +334,19 @@ timings["ic"] = time.time() - timings["ic"]
 lock.acquire()
 lock.release()
 del lock
+
+# Try to load the face model from the models folder
+try:
+	models = json.load(open(paths_factory.user_model_path(user)))
+	encoding_size = 256 if use_openvino else 128
+	encodings, model_owner = enroll_capture.flatten_models(models, encoding_size)
+
+except FileNotFoundError:
+	exit(CompareResult.NoFaceModel)
+
+# Check if the file contains a model
+if len(encodings) < 1:
+	exit(CompareResult.NoFaceModel)
 
 # Fetch the max frame height
 max_height = config.getfloat("video", "max_height", fallback=320.0)
@@ -540,15 +456,19 @@ while process_exists(parent_pid):
 	face_locations = face_detector(gsframe, 1)
 	# Loop through each face
 	for fl in face_locations:
-		if use_cnn:
+		if use_cnn and not use_openvino:
 			fl = fl.rect
 
 		# Fetch the faces in the image
-		face_landmark = pose_predictor(frame, fl)
-		face_encoding = np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1))
-
-		# Match this found face against a known face
-		matches = np.linalg.norm(encodings - face_encoding, axis=1)
+		if use_openvino:
+			face_encoding = face_encoder.encode(frame, fl)
+			if face_encoding is None:
+				continue
+			matches = 1.0 - np.dot(np.array(encodings), face_encoding)
+		else:
+			face_landmark = pose_predictor(frame, fl)
+			face_encoding = np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1))
+			matches = np.linalg.norm(encodings - face_encoding, axis=1)
 
 		# Get best match
 		match_index = np.argmin(matches)

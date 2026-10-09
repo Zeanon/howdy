@@ -3,9 +3,12 @@
 
 # Import required modules
 import configparser
+import numpy as np
 import cv2
 import os
 import sys
+from exit_codes import CompareResult
+
 
 from i18n import _
 
@@ -37,7 +40,7 @@ class VideoCapture:
 				print(_("Howdy could not find a camera device at the path specified in the config file."))
 				print(_("It is very likely that the path is not configured correctly, please edit the 'device_path' config value by running:"))
 				print("\n\tsudo howdy config\n")
-			sys.exit(14)
+			sys.exit(CompareResult.InvalidDevice.value)
 
 		# Create reader
 		# The internal video recorder
@@ -83,7 +86,14 @@ class VideoCapture:
 		ret, frame = self.internal.read()
 		if not ret:
 			print(_("Failed to read camera specified in the 'device_path' config option, aborting"))
-			sys.exit(14)
+			sys.exit(CompareResult.InvalidDevice.value)
+
+		# Single channel frames come from grayscale or raw formats, see the
+		# pixel_format option. Deeper than 8 bits gets scaled down first.
+		if frame.ndim == 2:
+			if frame.dtype != np.uint8:
+				frame = self._scale_raw(frame)
+			return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR), frame
 
 		try:
 			# Convert from color to grayscale
@@ -95,6 +105,18 @@ class VideoCapture:
 			print("\nAn error occurred in OpenCV\n")
 			raise
 		return frame, gsframe
+
+	def _scale_raw(self, frame):
+		"""
+		Scales a raw 10 to 16 bit grayscale frame down to 8 bits. The black
+		level is removed and the brightest 0.5% of pixels are clipped, so a
+		dim IR image still uses the full range.
+		"""
+		black = self.config.getint("video", "raw_black_level", fallback=0)
+		f = np.clip(frame.astype(np.float32) - black, 0, None)
+		top = max(float(np.percentile(f, 99.5)), 1.0)
+		return np.clip(f * (255.0 / top), 0, 255).astype(np.uint8)
+
 
 	def _create_reader(self):
 		"""
@@ -120,10 +142,13 @@ class VideoCapture:
 
 		else:
 			# Start video capture on the IR camera through OpenCV
-			self.internal = cv2.VideoCapture(
-				self.config.get("video", "device_path"),
-				cv2.CAP_V4L
-			)
+			device_path = self.config.get("video", "device_path")
+			self.internal = cv2.VideoCapture(device_path, cv2.CAP_V4L)
+			if not self.internal.isOpened():
+				import re
+				m = re.search(r"(\d+)$", device_path)
+				if m:
+					self.internal = cv2.VideoCapture(int(m.group(1)))
 			# Set the capture frame rate
 			# Without this the first detected (and possibly lower) frame rate is used, -1 seems to select the highest
 			# Use 0 as a fallback to avoid breaking an existing setup, new installs should default to -1
@@ -135,6 +160,15 @@ class VideoCapture:
 		if self.config.getboolean("video", "force_mjpeg", fallback=False):
 			# Set a magic number, will enable MJPEG but is badly documentated
 			self.internal.set(cv2.CAP_PROP_FOURCC, 1196444237)
+
+			# Request a specific pixel format, for IR sensors that only offer raw
+		# formats OpenCV does not choose on its own (Y10 for example)
+		pixel_format = self.config.get("video", "pixel_format", fallback="").strip()
+		if pixel_format:
+			self.internal.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*pixel_format.ljust(4)[:4]))
+			# Keep the raw samples, read_frame() scales them down itself
+			self.internal.set(cv2.CAP_PROP_CONVERT_RGB, 0)
+
 
 		# Set the frame width and height if requested
 		self.fw = self.config.getint("video", "frame_width", fallback=-1)

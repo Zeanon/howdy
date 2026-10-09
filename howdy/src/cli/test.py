@@ -3,7 +3,6 @@
 # Import required modules
 import configparser
 import builtins
-import os
 import json
 import sys
 import time
@@ -11,6 +10,7 @@ import dlib
 import cv2
 import numpy as np
 import paths_factory
+import enroll_capture
 
 from i18n import _
 from recorders.video_capture import VideoCapture
@@ -53,17 +53,27 @@ def print_text(line_number, text):
 	cv2.putText(overlay, text, (10, height - 10 - (10 * line_number)), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 255, 0), 0, cv2.LINE_AA)
 
 
-use_cnn = config.getboolean('core', 'use_cnn', fallback=False)
+use_cnn = config.getboolean("face_authentication", "use_cnn", fallback=False)
+use_openvino = config.getboolean("face_authentication", "use_openvino", fallback=False)
 
-if use_cnn:
-	face_detector = dlib.cnn_face_detection_model_v1(
-		paths_factory.mmod_human_face_detector_path()
-	)
-else:
-	face_detector = dlib.get_frontal_face_detector()
+if use_openvino:
+	try:
+		import openvino_face
+		if openvino_face.is_available():
+			face_detector = openvino_face.FaceDetector("GPU")
+			face_encoder = openvino_face.FaceEncoder("GPU")
+			print("Using OpenVINO GPU for face detection and encoding")
+	except Exception as e:
+		use_openvino = False
+		print(f"OpenVINO not available ({e}), using dlib")
 
-pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
-face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
+if not use_openvino:
+	if use_cnn:
+		face_detector = dlib.cnn_face_detection_model_v1(paths_factory.mmod_human_face_detector_path())
+	else:
+		face_detector = dlib.get_frontal_face_detector()
+	pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
+	face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
 
 encodings = []
 models = None
@@ -71,9 +81,8 @@ models = None
 try:
 	user = builtins.howdy_user
 	models = json.load(open(paths_factory.user_model_path(user)))
-
-	for model in models:
-		encodings += model["data"]
+	encoding_size = 256 if use_openvino else 128
+	encodings, model_owner = enroll_capture.flatten_models(models, encoding_size)
 except FileNotFoundError:
 	pass
 
@@ -173,7 +182,7 @@ try:
 
 			# Loop though all faces and paint a circle around them
 			for loc in face_locations:
-				if use_cnn:
+				if use_cnn and not use_openvino:
 					loc = loc.rect
 
 				# By default the circle around the face is red for no match
@@ -190,12 +199,16 @@ try:
 
 				# If we have models defined for the current user
 				if models:
-					# Get the encoding of the face in the frame
-					face_landmark = pose_predictor(orig_frame, loc)
-					face_encoding = np.array(face_encoder.compute_face_descriptor(orig_frame, face_landmark, 1))
-
-					# Match this found face against a known face
-					matches = np.linalg.norm(encodings - face_encoding, axis=1)
+					if use_openvino:
+						face_encoding = face_encoder.encode(orig_frame, loc)
+						if face_encoding is not None:
+							matches = 1.0 - np.dot(np.array(encodings), face_encoding)
+						else:
+							continue
+					else:
+						face_landmark = pose_predictor(orig_frame, loc)
+						face_encoding = np.array(face_encoder.compute_face_descriptor(orig_frame, face_landmark, 1))
+						matches = np.linalg.norm(encodings - face_encoding, axis=1)
 
 					# Get best match
 					match_index = np.argmin(matches)
@@ -207,11 +220,11 @@ try:
 						color = (0, 230, 0)
 
 						# Print the name of the model next to the circle
-						circle_text = "{} (certainty: {})".format(models[match_index]["label"], round(match * 10, 3))
+						circle_text = "{} (certainty: {})".format(models[model_owner[match_index]]["label"], round(match * 10, 3))
 						cv2.putText(overlay, circle_text, (int(x + r / 3), y - r), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 255, 0), 0, cv2.LINE_AA)
 					# If no approved matches, show red text
 					else:
-						cv2.putText(overlay, "no match", (int(x + r / 3), y - r), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 0, 255), 0, cv2.LINE_AA)
+						cv2.putText(overlay, "no match ({:.3f})".format(match * 10), (int(x + r / 3), y - r), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 0, 255), 0, cv2.LINE_AA)
 
 				# Draw the Circle in green
 				cv2.circle(overlay, (x, y), r, color, 2)
@@ -240,7 +253,7 @@ try:
 			# are captured and even after a delay it does not
 			# always work. Setting exposure at every frame is
 			# reliable though.
-			video_capture.internal.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1.0)  # 1 = Manual
+			video_capture.internal.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1.0)
 			video_capture.internal.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
 
 # On ctrl+C

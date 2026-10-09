@@ -1,3 +1,12 @@
+# Guard against multiprocessing.forkserver re-importing this module.
+# OpenVINO GPU runtime spawns worker processes via forkserver, which
+# re-executes the main module (cli.py when running any `howdy <cmd>`).
+# Without this guard, workers re-run the CLI dispatch and break the
+# parent process with camera EBUSY errors and argparse side effects.
+import sys as _sys
+if __name__ != "__main__":
+	_sys.exit(0)
+
 # CLI directly called by running the howdy command
 
 # Import required modules

@@ -39,14 +39,27 @@ if not os.path.isfile(paths_factory.shape_predictor_5_face_landmarks_path()):
 config = configparser.ConfigParser()
 config.read(paths_factory.config_file_path())
 
-use_cnn = config.getboolean("core", "use_cnn", fallback=False)
-if use_cnn:
-	face_detector = dlib.cnn_face_detection_model_v1(paths_factory.mmod_human_face_detector_path())
-else:
-	face_detector = dlib.get_frontal_face_detector()
+use_cnn = config.getboolean("face_authentication", "use_cnn", fallback=False)
+use_openvino = config.getboolean("face_authentication", "use_openvino", fallback=False)
 
-pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
-face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
+if use_openvino:
+	try:
+		import openvino_face
+		if openvino_face.is_available():
+			face_detector = openvino_face.FaceDetector("GPU")
+			face_encoder_ov = openvino_face.FaceEncoder("GPU")
+			print("Using OpenVINO GPU for face detection and encoding")
+	except Exception as e:
+		use_openvino = False
+		print(f"OpenVINO not available ({e}), using dlib")
+
+if not use_openvino:
+	if use_cnn:
+		face_detector = dlib.cnn_face_detection_model_v1(paths_factory.mmod_human_face_detector_path())
+	else:
+		face_detector = dlib.get_frontal_face_detector()
+	pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
+	face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
 
 user = builtins.howdy_user
 # The permanent file to store the encoded model in
@@ -198,8 +211,15 @@ def face_rect(face_location):
 
 
 def encode(frame, face_location):
-	face_landmark = pose_predictor(frame, face_rect(face_location))
-	return np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1)).tolist()
+	if use_openvino:
+		face_encoding = face_encoder_ov.encode(frame, face_location)
+		if face_encoding is None:
+			print("Failed to encode face, aborting")
+			sys.exit(1)
+		return face_encoding.tolist()
+	else:
+		face_landmark = pose_predictor(frame, face_rect(face_location))
+		return np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1)).tolist()
 
 
 # Loop through frames till we hit a timeout
