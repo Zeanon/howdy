@@ -911,6 +911,7 @@ inline int identify(
 				++retries < max_face_auth_tries
 				&& !success
 				&& !terminated
+				&& WIFEXITED(rc)
 				&& WEXITSTATUS(rc) >= CompareResult::TooDark
 				&& WEXITSTATUS(rc) <= CompareResult::Rubberstamp
 				&& confirmation_type == ConfirmationType::Unset);
