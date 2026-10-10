@@ -409,7 +409,8 @@ inline int identify(
 
 	face_unlock = config.GetBoolean("face_authentication", "enable", true);
 	max_face_auth_tries = (unsigned) config.GetInteger("face_authentication", "max_tries", 1);
-	bool debug_to_console = config.GetBoolean("face_authentication", "debug_to_console", false);
+	bool debug_to_console = config.GetBoolean("face_authentication", "debug_to_console", true);
+	bool show_auth_popup = config.GetBoolean("face_authenication", "show_auth_popup", false);
 
 
 	fingerprint = config.GetBoolean("fingerprint", "enable", false);
@@ -500,6 +501,11 @@ inline int identify(
 			debug_to_console = true;
 		} else if (arg.starts_with("face-auth:debug-to-console=")) {
 			debug_to_console = str_to_bool(arg.substr(27, arg.length()));
+		}
+		else if (arg =="face-auth:show-auth-popup") {
+			show_auth_popup = true;
+		} else if (arg.starts_with("face-auth:show-auth-popup=")) {
+			show_auth_popup = str_to_bool(arg.substr(26, arg.length()));
 		}
 		else if (arg.starts_with("global-timeout=")) {
 			global_timeout = str_to_seconds(arg.substr(15, arg.length()));
@@ -719,9 +725,11 @@ inline int identify(
 			COMPARE_PROCESS_PATH,
 			username,
 			std::to_string(getpid()).c_str(),
+			std::to_string(show_auth_popup).c_str(),
 			face_auth_timeout.value_or(nullptr),
 			nullptr,
 	};
+	conv_function(PAM_TEXT_INFO, COMPARE_PROCESS_PATH);
 	/**
 	 * When stdout or stderr is a socket, it is a protocol channel rather than a
 	 * terminal or a log: polkit's socket-activated agent helper

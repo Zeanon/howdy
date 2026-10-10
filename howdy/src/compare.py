@@ -30,16 +30,18 @@ import dlib
 import cv2
 from datetime import timezone, datetime
 import atexit
+import pwd
 import subprocess
 import snapshot
 import numpy as np
 import _thread as thread
 import paths_factory
-import enroll_capture
+import traceback
+
+from enroll_capture import flatten_models
 from recorders.video_capture import VideoCapture
 from i18n import _
 from exit_codes import CompareResult
-import traceback
 
 
 # Force singlethreaded BLAS. dlib's OpenBLAS/OpenMP matmuls can livelock when raced against this scri>
@@ -230,17 +232,137 @@ def send_to_ui(type, message):
 		except IOError:
 			pass
 
+def get_graphical_session_env():
+    sessions = subprocess.run(
+        ["loginctl", "list-sessions", "--no-legend", "--no-pager"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+
+    candidates = []
+
+    for line in sessions:
+        fields = line.split()
+        if not fields:
+            continue
+
+        session_id = fields[0]
+
+        result = subprocess.run(
+            [
+                "loginctl", "show-session", session_id,
+                "--property=Name",
+                "--property=User",
+                "--property=Type",
+                "--property=Class",
+                "--property=Active",
+                "--property=Remote",
+                "--property=State",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        props = dict(
+            entry.split("=", 1)
+            for entry in result.stdout.splitlines()
+            if "=" in entry
+        )
+
+        if (
+            props.get("Active") == "yes"
+            and props.get("Remote") == "no"
+            and props.get("Class") == "user"
+            and props.get("Type") in ("wayland", "x11")
+        ):
+            candidates.append((session_id, props))
+
+    if not candidates:
+        raise RuntimeError("Keine aktive lokale grafische Sitzung gefunden")
+
+    # Bevorzuge den Prozess der Plasma-Sitzung, um deren tatsächliche
+    # Display-Variablen statt angenommener Standardwerte zu verwenden.
+    for session_id, props in candidates:
+        uid = int(props["User"])
+        runtime_dir = f"/run/user/{uid}"
+
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+
+            try:
+                if os.stat(f"/proc/{pid}").st_uid != uid:
+                    continue
+
+                with open(f"/proc/{pid}/comm") as f:
+                    comm = f.read().strip()
+
+                if comm not in ("plasmashell", "kwin_wayland", "kwin_x11"):
+                    continue
+
+                with open(f"/proc/{pid}/environ", "rb") as f:
+                    entries = f.read().split(b"\0")
+
+                proc_env = {}
+                for entry in entries:
+                    if b"=" in entry:
+                        key, value = entry.split(b"=", 1)
+                        proc_env[key.decode()] = value.decode(
+                            errors="replace"
+                        )
+
+                # Nur Prozesse aus der passenden grafischen Sitzung.
+                if proc_env.get("XDG_SESSION_ID") not in (
+                    None, session_id
+                ):
+                    continue
+
+                env = {
+                    "HOME": pwd.getpwuid(uid).pw_dir,
+                    "USER": pwd.getpwuid(uid).pw_name,
+                    "LOGNAME": pwd.getpwuid(uid).pw_name,
+                    "XDG_RUNTIME_DIR": runtime_dir,
+                    "DBUS_SESSION_BUS_ADDRESS":
+                        f"unix:path={runtime_dir}/bus",
+                }
+
+                for key in (
+                    "DISPLAY",
+                    "WAYLAND_DISPLAY",
+                    "XAUTHORITY",
+                ):
+                    if proc_env.get(key):
+                        env[key] = proc_env[key]
+
+                if (
+                    env.get("WAYLAND_DISPLAY")
+                    or env.get("DISPLAY")
+                ):
+                    return env
+
+            except (OSError, ValueError, KeyError):
+                continue
+
+    raise RuntimeError(
+        "Display-Umgebung der aktiven Plasma-Sitzung nicht gefunden"
+    )
+
+
 
 install_parent_death_signal()
 
 # Make sure we were given an username to test against and a parent pid
-if len(sys.argv) < 3:
+if len(sys.argv) < 4:
 	exit(CompareResult.Abort)
 
 # The username of the user being authenticated
 user = sys.argv[1]
 # The pid of the process calling us
 parent_pid = int(sys.argv[2])
+# Whether we should show the auth popup
+auth_popup = int(sys.argv[3])
 # The model file contents
 models = []
 # Encoded face models
@@ -287,8 +409,8 @@ save_successful = config.getboolean("snapshots", "save_successful", fallback=Fal
 gtk_stdout = config.getboolean("debug", "gtk_stdout", fallback=False)
 rotate = config.getint("video", "rotate", fallback=0)
 
-if len(sys.argv) > 3:
-	timeout = str_to_seconds(sys.argv[3])
+if len(sys.argv) > 4:
+	timeout = str_to_seconds(sys.argv[4])
 
 if timeout < 1:
 	timeout = sys.maxsize;
@@ -296,12 +418,15 @@ if timeout < 1:
 # Send the gtk output to the terminal if enabled in the config
 gtk_pipe = sys.stdout if gtk_stdout else subprocess.DEVNULL
 
-# Start the auth ui, register it to be always be closed on exit
-try:
-	gtk_proc = subprocess.Popen(["howdy-gtk", "--start-auth-ui"], stdin=subprocess.PIPE, stdout=gtk_pipe, stderr=gtk_pipe)
-	atexit.register(exit)
-except FileNotFoundError:
-	pass
+if auth_popup:
+	# Start the auth ui, register it to be always be closed on exit
+	try:
+		gtk_env = os.environ.copy()
+		gtk_env.update(get_graphical_session_env())
+		gtk_proc = subprocess.Popen(["/usr/local/bin/howdy-gtk", "--start-auth-ui"], stdin=subprocess.PIPE, stdout=gtk_pipe, stderr=gtk_pipe, env=gtk_env)
+		atexit.register(exit)
+	except FileNotFoundError:
+		pass
 
 signal.signal(signal.SIGTERM, _signal_exit)
 signal.signal(signal.SIGINT, _signal_exit)
@@ -340,7 +465,7 @@ del lock
 try:
 	models = json.load(open(paths_factory.user_model_path(user)))
 	encoding_size = 256 if use_openvino else 128
-	encodings, model_owner = enroll_capture.flatten_models(models, encoding_size)
+	encodings, model_owner = flatten_models(models, encoding_size)
 except FileNotFoundError:
 	exit(CompareResult.NoFaceModel)
 

@@ -9,7 +9,11 @@
 # dlib work is passed in as callables so the sequencing is unit-testable.
 
 import time
-
+import gi
+import cv2
+import queue
+import threading
+import time
 
 def N_(text):
 	"""gettext marker: extracted by xgettext, translated by add.py at print time."""
@@ -65,77 +69,222 @@ def progress_line(count, total):
 	return "@progress %d/%d" % (count, total)
 
 
-def _settle(read_frame, clock, sleep, settle_seconds):
-	"""Let the user move into position, keeping the camera pipeline flowing."""
-	settle_until = clock() + settle_seconds
-	while clock() < settle_until:
-		read_frame()
-		if sleep is not None:
-			sleep(0.01)
+def capture_guided_samples(
+	read_frame,
+	detect_faces,
+	encode_face,
+	emit,
+	first_sample,
+	clock=time.monotonic,
+	sleep=None,
+	steps=GUIDE_STEPS,
+	settle_seconds=SETTLE_SECONDS,
+	step_seconds=STEP_SECONDS,
+	samples_per_step=SAMPLES_PER_STEP,
+	max_samples=MAX_SAMPLES,
+):
+	gi.require_version("Gtk", "3.0")
+	from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 
+	dialog_width = 500
+	dialog_height = 545
+	
+	"""Same public API; capture runs in a worker while GTK stays responsive."""
 
-def _capture_step(read_frame, detect_faces, encode_face, samples, clock,
-				  wanted, deadline, max_samples, on_sample):
-	"""Append up to *wanted* new descriptors to *samples* before *deadline*.
-
-	Calls *on_sample* as each one lands so progress stays live during the step.
-	Duplicates and frames without exactly one face are skipped.
-	"""
-	got = 0
-	while got < wanted and len(samples) < max_samples and clock() < deadline:
-		frame, gsframe = read_frame()
-		if gsframe is None:
-			continue
-		faces = detect_faces(gsframe)
-		if len(faces) != 1:
-			continue
-		descriptor = list(encode_face(frame, faces[0]))
-		if is_duplicate(descriptor, samples, _np()):
-			continue
-		samples.append(descriptor)
-		got += 1
-		on_sample()
-
-
-def capture_guided_samples(read_frame, detect_faces, encode_face, emit, first_sample,
-                           clock=time.monotonic, sleep=None, steps=GUIDE_STEPS,
-                           settle_seconds=SETTLE_SECONDS, step_seconds=STEP_SECONDS,
-                           samples_per_step=SAMPLES_PER_STEP, max_samples=MAX_SAMPLES):
-	"""Walk the user through `steps`, collecting face descriptors.
-
-	read_frame()             -> (frame, gsframe_or_None); gsframe None = skip (dark/black)
-	detect_faces(gsframe)    -> list of face locations
-	encode_face(frame, loc)  -> descriptor as a python list
-	emit(line)               -> prints one protocol/prompt line
-	first_sample             -> descriptor already captured for the initial frontal frame
-
-	Returns the list of descriptors (first_sample first). A step that yields no
-	usable frame before its deadline is skipped; enrollment still succeeds
-	with whatever was captured, the caller decides on the minimum.
-	"""
 	samples = [list(first_sample)]
 	total = min(max_samples, 1 + len(steps) * samples_per_step)
-	emit(progress_line(len(samples), total))
 
-	for key, prompt in steps:
-		if len(samples) >= max_samples:
-			break
-		emit(guide_line(key))
-		emit(prompt)
+	builder = Gtk.Builder()
+	window = builder.get_object("mainwindow")
 
-		_settle(read_frame, clock, sleep, settle_seconds)
+	dialog = Gtk.Dialog(
+		title="Howdy – Facial Authentication",
+		parent=window,
+		flags=Gtk.DialogFlags.MODAL
+	)
+	dialog.set_default_size(dialog_width, dialog_height)
+	dialog.set_keep_above(True)
+	dialog.set_resizable(False)
+	dialog.set_can_focus(False)
+	dialog.set_focus(None)
+	dialog.set_modal(True)
+	dialog.set_decorated(False)
+	
+	screen = Gdk.Screen.get_default()
+	dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
 
-		_capture_step(read_frame, detect_faces, encode_face, samples, clock,
-					  samples_per_step, clock() + step_seconds, max_samples,
-					  lambda: emit(progress_line(len(samples), total)))
+	content = dialog.get_content_area()
+	box = Gtk.Box(
+		orientation=Gtk.Orientation.VERTICAL,
+		spacing=8
+	)
+	# box.set_border_width(12)
+	content.add(box)
 
-	# TODO video output für enrollment hier iwie um den dreh
-	return samples
+	inner_box = Gtk.Box(
+		orientation=Gtk.Orientation.VERTICAL,
+		spacing=8
+	)
+	prompt_label = Gtk.Label()
+	prompt_label.set_line_wrap(True)
+	inner_box.pack_start(prompt_label, False, False, 0)
 
+	progress_label = Gtk.Label()
+	inner_box.pack_start(progress_label, False, False, 0)
 
-def _np():
-	import numpy
-	return numpy
+	box.pack_start(inner_box, False, False, 30)
+
+	image = Gtk.Image()
+	image.set_hexpand(True)
+	# image.set_vexpand(True)
+	box.pack_start(image, True, True, 0)
+
+	events = queue.Queue()
+	cancel = threading.Event()
+	finished = threading.Event()
+	latest_frame = [None]
+	frame_lock = threading.Lock()
+	result = {"samples": None, "error": None}
+
+	def worker():
+		import cv2
+		import numpy as np
+
+		def publish_frame(gsframe):
+			if gsframe is None:
+				return
+
+			gsframe = cv2.flip(gsframe, 1)
+			if gsframe.ndim == 2:
+				rgb = cv2.cvtColor(gsframe, cv2.COLOR_GRAY2RGB)
+			else:
+				rgb = cv2.cvtColor(gsframe, cv2.COLOR_BGR2RGB)
+
+			height, width, _ = rgb.shape
+			data = GLib.Bytes.new(rgb.tobytes())
+
+			with frame_lock:
+				latest_frame[0] = (data, width, height)
+
+		try:
+			events.put(("progress", len(samples), total))
+
+			for key, prompt in steps:
+				if cancel.is_set() or len(samples) >= max_samples:
+					break
+
+				events.put(("emit", guide_line(key)))
+				events.put(("emit", prompt))
+				events.put(("prompt", prompt))
+
+				settle_until = clock() + settle_seconds
+				while not cancel.is_set() and clock() < settle_until:
+					_, gsframe = read_frame()
+					publish_frame(gsframe)
+					if sleep:
+						sleep(0.01)
+
+				deadline = clock() + step_seconds
+				got = 0
+
+				while (
+					not cancel.is_set()
+					and got < samples_per_step
+					and len(samples) < max_samples
+					and clock() < deadline
+				):
+					frame, gsframe = read_frame()
+					if gsframe is None:
+						continue
+
+					publish_frame(gsframe)
+
+					faces = detect_faces(gsframe)
+					if len(faces) != 1:
+						continue
+
+					descriptor = list(encode_face(frame, faces[0]))
+					if is_duplicate(descriptor, samples, np):
+						continue
+
+					samples.append(descriptor)
+					got += 1
+					events.put(("progress", len(samples), total))
+
+			result["samples"] = samples
+
+		except Exception as exc:
+			result["error"] = exc
+
+		finally:
+			finished.set()
+			events.put(("finished",))
+
+	def update_ui():
+		with frame_lock:
+			current = latest_frame[0]
+			latest_frame[0] = None
+
+		if current is not None:
+			data, width, height = current
+			pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+				data,
+				GdkPixbuf.Colorspace.RGB,
+				False,
+				8,
+				width,
+				height,
+				width * 3,
+			)
+			image.set_from_pixbuf(pixbuf)
+
+		while True:
+			try:
+				event = events.get_nowait()
+			except queue.Empty:
+				break
+
+			kind = event[0]
+
+			if kind == "emit":
+				emit(event[1])
+			elif kind == "prompt":
+				prompt_label.set_markup(f"<big><span foreground='#2aaae5'><b> {event[1]} </b></span></big>")
+			elif kind == "progress":
+				_, count, maximum = event
+				progress_label.set_markup(f"<span foreground='#2aaae5'><b>Samples: {count}/{maximum}</b></span>")
+				emit(progress_line(count, maximum))
+
+		if finished.is_set():
+			loop.quit()
+			return GLib.SOURCE_REMOVE
+
+		return GLib.SOURCE_CONTINUE
+
+	dialog.show_all()
+
+	loop = GLib.MainLoop()
+	GLib.timeout_add(33, update_ui)
+
+	thread = threading.Thread(
+		target=worker,
+		name="howdy-guided-capture",
+		daemon=True,
+	)
+	thread.start()
+
+	dialog.connect("response", lambda *_: cancel.set())
+
+	try:
+		loop.run()
+	finally:
+		cancel.set()
+		dialog.destroy()
+
+	if result["error"] is not None:
+		raise result["error"]
+
+	return result["samples"]
 
 
 def flatten_models(models, data_size):

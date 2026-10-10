@@ -10,9 +10,9 @@ import dlib
 import cv2
 import numpy as np
 import paths_factory
-import enroll_capture
 
 from i18n import _
+from enroll_capture import flatten_models
 from recorders.video_capture import VideoCapture
 
 # Read config from disk
@@ -82,7 +82,7 @@ try:
 	user = builtins.howdy_user
 	models = json.load(open(paths_factory.user_model_path(user)))
 	encoding_size = 256 if use_openvino else 128
-	encodings, model_owner = enroll_capture.flatten_models(models, encoding_size)
+	encodings, model_owner = flatten_models(models, encoding_size)
 except FileNotFoundError:
 	pass
 
