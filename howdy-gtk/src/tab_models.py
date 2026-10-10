@@ -105,6 +105,9 @@ def on_model_add(self, button):
 	dialog.destroy()
 
 	if response == gtk.ResponseType.OK:
+		dialog_width = 500
+		dialog_height = 545
+
 		# GTK 3 replacement for gtk4compat.PromptWindow
 		dialog = gtk.Dialog(
 			title=_("Creating Model"),
@@ -112,10 +115,13 @@ def on_model_add(self, button):
 			flags=gtk.DialogFlags.MODAL
 		)
 
-		dialog_width = 500
-
+		dialog.set_default_size(dialog_width, dialog_height)
+		dialog.set_keep_above(True)
 		dialog.set_resizable(False)
-		dialog.set_default_size(dialog_width, -1)
+		dialog.set_can_focus(False)
+		dialog.set_focus(None)
+		dialog.set_modal(True)
+		dialog.set_decorated(False)
 		
 		screen = gdk.Screen.get_default()
 		dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
@@ -125,36 +131,42 @@ def on_model_add(self, button):
 		# Main content
 		box = gtk.Box(
 			orientation=gtk.Orientation.VERTICAL,
-			spacing=10
+			spacing=8
 		)
 		box.set_margin_top(20)
 		box.set_margin_bottom(20)
 		box.set_margin_start(20)
 		box.set_margin_end(20)
 
-		content_area.pack_start(box, True, True, 0)
+		content_area.add(box)
 
-		info_label = gtk.Label(
-			label=_(
-				"Keep your face inside the camera view and follow "
-				"the prompts; this takes about a minute."
-			)
+		inner_box = gtk.Box(
+			orientation=gtk.Orientation.VERTICAL,
+			spacing=0
 		)
-		info_label.set_line_wrap(True)
-		info_label.set_max_width_chars(48)
-		info_label.set_xalign(0.0)
 
-		box.pack_start(info_label, False, False, 0)
+		info_label1 = gtk.Label()
+		info_label1.set_xalign(0.0)
+		info_label1.set_line_wrap(True)
+		info_label1.set_max_width_chars(48)
+		info_label1.set_markup(_("Keep your face inside the camera "
+								 "view and follow the prompts."))
+		inner_box.pack_start(info_label1, False, False, 0)
 
-		guide_label = gtk.Label(
-			label=_("Look straight at the camera")
-		)
-		guide_label.set_xalign(0.0)
+		info_label2 = gtk.Label()
+		info_label2.set_xalign(0.0)
+		info_label2.set_line_wrap(True)
+		info_label2.set_max_width_chars(48)
+		info_label2.set_markup(_("This takes about a minute."))
+		inner_box.pack_start(info_label2, False, False, 0)
 
+		box.pack_start(inner_box, True, True, 0)
+
+		guide_label = gtk.Label()
 		# GTK 3 replacement for add_css_class("heading")
 		guide_label.get_style_context().add_class("heading")
-
-		box.pack_start(guide_label, False, False, 0)
+		guide_label.set_markup(_(f"<big><span foreground='#2aaae5'><b>Look straight at the camera</b></span></big>"))
+		box.pack_start(guide_label, False, False, 25)
 
 		progress_label = gtk.Label(label="")
 		progress_label.set_xalign(0.0)
@@ -194,7 +206,7 @@ def execute_add(
 		text = enroll.guide_text(key)
 
 		if guide_label is not None and text:
-			guide_label.set_markup(text)
+			guide_label.set_markup(f"<big><span foreground='#2aaae5'><b>{text}</b></span></big>")
 
 		return False
 

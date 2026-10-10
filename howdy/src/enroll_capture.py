@@ -98,7 +98,7 @@ def capture_guided_samples(
 	window = builder.get_object("mainwindow")
 
 	dialog = Gtk.Dialog(
-		title="Howdy – Facial Authentication",
+		title="Howdy – Create Model",
 		parent=window,
 		flags=Gtk.DialogFlags.MODAL
 	)
@@ -249,7 +249,7 @@ def capture_guided_samples(
 			if kind == "emit":
 				emit(event[1])
 			elif kind == "prompt":
-				prompt_label.set_markup(f"<big><span foreground='#2aaae5'><b> {event[1]} </b></span></big>")
+				prompt_label.set_markup(f"<big><span foreground='#2aaae5'><b>{event[1]}</b></span></big>")
 			elif kind == "progress":
 				_, count, maximum = event
 				progress_label.set_markup(f"<span foreground='#2aaae5'><b>Samples: {count}/{maximum}</b></span>")
