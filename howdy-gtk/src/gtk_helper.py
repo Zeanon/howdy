@@ -445,12 +445,3 @@ def dropdown(widget, on_changed=None, min_width=0):
         adapter._on_changed = on_changed
 
     return adapter
-
-
-def pixbuf_to_texture(pixbuf):
-    """GTK 3 equivalent of the GTK 4 pixbuf-to-texture helper.
-
-    GTK 3 image widgets consume GdkPixbuf directly, so no conversion is
-    necessary.
-    """
-    return pixbuf

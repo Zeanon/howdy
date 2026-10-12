@@ -11,9 +11,6 @@ import paths_factory
 
 # Make sure we have the libs we need
 gi.require_version("Gtk", "3.0")
-gi.require_version("Gdk", "3.0")
-
-# Import them
 from gi.repository import Gtk as gtk
 
 

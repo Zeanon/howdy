@@ -5,8 +5,8 @@ import paths_factory
 
 from gi.repository import Gtk as gtk
 from gi.repository import Gdk as gdk
-from gi.repository import GdkPixbuf as pixbuf
-from gi.repository import GObject as gobject
+from gi.repository import GdkPixbuf as gdkPixbuf
+from gi.repository import GObject as gObject
 
 MAX_HEIGHT = 300
 MAX_WIDTH = 300
@@ -54,7 +54,7 @@ def on_page_switch(self, notebook, page, page_num):
 		self.builder.get_object("videoresused").set_text(str(int(width * config_scaling)) + "x" + str(int(height * config_scaling)))
 		self.builder.get_object("videorecorder").set_text(self.config.get("video", "recording_plugin", fallback=_("Unknown")))
 
-		gobject.timeout_add(10, self.capture_frame)
+		gObject.timeout_add(10, self.capture_frame)
 
 	elif self.capture is not None:
 		self.capture.release()
@@ -65,17 +65,17 @@ def capture_frame(self):
 	if self.capture is None:
 		return
 
-	ret, frame = self.capture.read()
+	_, frame = self.capture.read()
 
 	frame = self.cv2.resize(frame, None, fx=self.scaling_factor, fy=self.scaling_factor, interpolation=self.cv2.INTER_AREA)
 
-	retval, buffer = self.cv2.imencode(".png", frame)
+	_, buffer = self.cv2.imencode(".png", frame)
 
-	loader = pixbuf.PixbufLoader()
+	loader = gdkPixbuf.PixbufLoader()
 	loader.write(buffer)
 	loader.close()
 	buffer = loader.get_pixbuf()
 
 	self.opencvimage.set_from_pixbuf(buffer)
 
-	gobject.timeout_add(20, self.capture_frame)
+	gObject.timeout_add(20, self.capture_frame)

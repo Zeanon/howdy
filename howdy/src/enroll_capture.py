@@ -14,6 +14,12 @@ import queue
 import builtins
 import threading
 import time
+import cairo
+import math
+import os
+
+
+os.environ["GDK_BACKEND"] = "x11"
 
 
 def N_(text):
@@ -93,7 +99,10 @@ def capture_guided_samples(
 	import numpy as np
 
 	gi.require_version("Gtk", "3.0")
-	from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
+	from gi.repository import Gtk as gtk
+	from gi.repository import Gdk as gdk
+	from gi.repository import GLib as glib
+	from gi.repository import GdkPixbuf as gdkPixbuf
 
 	dialog_width = 500
 	dialog_height = 545
@@ -112,48 +121,71 @@ def capture_guided_samples(
 	clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 	
 	"""Same public API; capture runs in a worker while GTK stays responsive."""
-	builder = Gtk.Builder()
+	builder = gtk.Builder()
 	window = builder.get_object("mainwindow")
 
-	dialog = Gtk.Dialog(
+	css = gtk.CssProvider()
+	css.load_from_data(b"""
+		.dialog-bg {
+			background-color: transparent;
+		}
+	""")
+
+	dialog = gtk.Dialog(
 		title="Howdy – Create Model",
 		parent=window,
-		flags=Gtk.DialogFlags.MODAL
+		flags=gtk.DialogFlags.MODAL
 	)
+	dialog.get_style_context().add_provider(
+		css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+	)
+	dialog.connect(
+		"draw",
+		lambda widget, ctx: draw_background(widget, ctx)
+	)
+
 	dialog.set_default_size(dialog_width, dialog_height)
 	dialog.set_focus_on_map(builtins.howdy_args.gui)
+	dialog.set_app_paintable(True)
 	dialog.set_keep_above(True)
 	dialog.set_resizable(False)
 	dialog.set_can_focus(False)
 	dialog.set_decorated(False)
 	dialog.set_modal(True)
+
+	# css = gtk.CssProvider()
+	# css.load_from_data(b"dialog { background-color: #000000; }")
+	# dialog.get_style_context().add_provider(
+	# 	css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+	# )
 	
-	screen = Gdk.Screen.get_default()
+	screen = gdk.Screen.get_default()
+	dialog.set_visual(screen.get_rgba_visual())
 	dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
 
 	content = dialog.get_content_area()
-	box = Gtk.Box(
-		orientation=Gtk.Orientation.VERTICAL,
+	box = gtk.Box(
+		orientation=gtk.Orientation.VERTICAL,
 		spacing=8
 	)
 	# box.set_border_width(12)
 	content.add(box)
 
-	inner_box = Gtk.Box(
-		orientation=Gtk.Orientation.VERTICAL,
+	inner_box = gtk.Box(
+		orientation=gtk.Orientation.VERTICAL,
 		spacing=8
 	)
-	prompt_label = Gtk.Label()
+	prompt_label = gtk.Label()
 	prompt_label.set_line_wrap(True)
 	inner_box.pack_start(prompt_label, False, False, 0)
 
-	progress_label = Gtk.Label()
+	progress_label = gtk.Label()
 	progress_label.get_style_context().add_class("dim-label")
 	inner_box.pack_start(progress_label, False, False, 0)
 
 	box.pack_start(inner_box, False, False, 30)
 
-	image = Gtk.Image()
+	image = gtk.Image()
 	image.set_hexpand(True)
 	# image.set_vexpand(True)
 	box.pack_start(image, True, True, 0)
@@ -165,6 +197,60 @@ def capture_guided_samples(
 	frame_lock = threading.Lock()
 	result = {"samples": None, "error": None}
 
+
+	def draw_background(widget, ctx):
+		radius = 18
+		border = 2
+		half = border / 2
+
+		# Fensterfläche transparent löschen
+		ctx.set_operator(cairo.OPERATOR_SOURCE)
+		ctx.set_source_rgba(0, 0, 0, 0)
+		ctx.paint()
+		ctx.set_operator(cairo.OPERATOR_OVER)
+
+		ctx.new_path()
+
+		# Linke Kante, ohne obere Kante
+		ctx.move_to(half, 0)
+		ctx.line_to(half, dialog_height - radius - half)
+
+		# Linke untere Rundung
+		ctx.arc_negative(
+			radius + half,
+			dialog_height - radius - half,
+			radius,
+			math.pi,
+			math.pi / 2
+		)
+
+		# Untere Kante
+		ctx.line_to(dialog_width - radius - half, dialog_height - half)
+
+		# Rechte untere Rundung
+		ctx.arc_negative(
+			dialog_width - radius - half,
+			dialog_height - radius - half,
+			radius,
+			math.pi / 2,
+			0
+		)
+
+		# Rechte Kante, ohne obere Kante
+		ctx.line_to(dialog_width - half, 0)
+
+		# Schwarze Fläche
+		style = widget.get_style_context()
+		bg_color = style.get_background_color(gtk.StateFlags.NORMAL)
+		ctx.set_source_rgba(bg_color.red, bg_color.green, bg_color.blue, bg_color.alpha)
+		# ctx.set_source_rgb(0, 0, 0)
+		ctx.fill_preserve()
+
+		ctx.set_line_width(border)
+		ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+		ctx.set_source_rgb(RING_COLOR[0]/255, RING_COLOR[1]/255, RING_COLOR[2]/255)
+
+		ctx.stroke()
 
 	def encode(frame, face_location):
 		if use_openvino:
@@ -229,7 +315,7 @@ def capture_guided_samples(
 
 		gsframe = cv2.flip(gsframe, 1)
 		height, width = gsframe.shape[:2]
-		data = GLib.Bytes.new(gsframe.tobytes())
+		data = glib.Bytes.new(gsframe.tobytes())
 
 		with frame_lock:
 			latest_frame[0] = (data, width, height)
@@ -353,9 +439,9 @@ def capture_guided_samples(
 
 		if current is not None:
 			data, width, height = current
-			pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+			pixbuf = gdkPixbuf.Pixbuf.new_from_bytes(
 				data,
-				GdkPixbuf.Colorspace.RGB,
+				gdkPixbuf.Colorspace.RGB,
 				False,
 				8,
 				width,
@@ -380,14 +466,14 @@ def capture_guided_samples(
 
 		if finished.is_set():
 			loop.quit()
-			return GLib.SOURCE_REMOVE
+			return glib.SOURCE_REMOVE
 
-		return GLib.SOURCE_CONTINUE
+		return glib.SOURCE_CONTINUE
 
 	dialog.show_all()
 
-	loop = GLib.MainLoop()
-	GLib.timeout_add(33, update_ui)
+	loop = glib.MainLoop()
+	glib.timeout_add(33, update_ui)
 
 	thread = threading.Thread(
 		target=worker,

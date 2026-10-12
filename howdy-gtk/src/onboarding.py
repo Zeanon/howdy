@@ -9,7 +9,7 @@ from i18n import _
 
 from gi.repository import Gtk as gtk
 from gi.repository import Gdk as gdk
-from gi.repository import GObject as gobject
+from gi.repository import GObject as gObject
 from gi.repository import Pango as pango
 
 
@@ -60,7 +60,7 @@ class OnboardingWindow(gtk.Window):
 		if self.window.current_slide == 1:
 			self.execute_slide1()
 		elif self.window.current_slide == 2:
-			gobject.timeout_add(10, self.execute_slide2)
+			gObject.timeout_add(10, self.execute_slide2)
 		elif self.window.current_slide == 3:
 			self.execute_slide3()
 		elif self.window.current_slide == 4:
@@ -99,7 +99,7 @@ class OnboardingWindow(gtk.Window):
 		self.downloadoutputlabel.set_text(" ".join(self.download_lines))
 
 		if line:
-			gobject.timeout_add(10, self.read_download_line)
+			gObject.timeout_add(10, self.read_download_line)
 			return
 
 		# Wait for the process to finish and check the status code
@@ -255,7 +255,7 @@ class OnboardingWindow(gtk.Window):
 		self.dialog.show_all()
 
 		# Wait a bit to allow the user to read the dialog
-		gobject.timeout_add(600, self.run_add)
+		gObject.timeout_add(600, self.run_add)
 
 	def run_add(self):
 		status, output = subprocess.getstatusoutput(["howdy add -y"])
@@ -268,7 +268,7 @@ class OnboardingWindow(gtk.Window):
 		if status != 0:
 			self.show_error(_("Can't save face model"), output)
 
-		gobject.timeout_add(10, self.go_next_slide)
+		gObject.timeout_add(10, self.go_next_slide)
 
 	def execute_slide5(self):
 		self.enable_next()

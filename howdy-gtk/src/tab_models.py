@@ -1,11 +1,13 @@
 import subprocess
 import enroll
+import os
 
 from i18n import _
 from gi.repository import Gtk as gtk
 from gi.repository import Gdk as gdk
-from gi.repository import GObject as gobject
+from gi.repository import GObject as gObject
 
+os.environ["GDK_BACKEND"] = "x11"
 
 def on_user_change(self, select):
 	self.active_user = select.get_active_text()
@@ -115,6 +117,7 @@ def on_model_add(self, button):
 			flags=gtk.DialogFlags.MODAL
 		)
 
+		dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
 		dialog.set_default_size(dialog_width, dialog_height)
 		dialog.set_focus_on_map(False)
 		dialog.set_keep_above(True)
@@ -168,7 +171,7 @@ def on_model_add(self, button):
 		dialog.show_all()
 
 		# Wait a bit to allow the user to read the dialog
-		gobject.timeout_add(
+		gObject.timeout_add(
 			600,
 			lambda: execute_add(
 				self,

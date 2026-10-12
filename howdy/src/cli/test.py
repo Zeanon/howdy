@@ -235,6 +235,7 @@ try:
 		alpha = 0.65
 		frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 		cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+		frame = cv2.flip(frame, 1)
 
 		# Show the image in a window
 		cv2.imshow("Howdy Test", frame)
