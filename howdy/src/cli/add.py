@@ -42,12 +42,14 @@ config.read(paths_factory.config_file_path())
 use_cnn = config.getboolean("face_authentication", "use_cnn", fallback=False)
 use_openvino = config.getboolean("face_authentication", "use_openvino", fallback=False)
 
+pose_predictor = None
+
 if use_openvino:
 	try:
 		import openvino_face
 		if openvino_face.is_available():
 			face_detector = openvino_face.FaceDetector("GPU")
-			face_encoder_ov = openvino_face.FaceEncoder("GPU")
+			face_encoder = openvino_face.FaceEncoder("GPU")
 			print("Using OpenVINO GPU for face detection and encoding")
 	except Exception as e:
 		use_openvino = False
@@ -136,136 +138,21 @@ video_capture = VideoCapture(config)
 def say(line):
 	print(line, flush=True)
 
-
-# The same prompts go to a desktop notification card: the banner sits right
-# under the camera, where the user is looking during the scan.
-progress = {"count": 0, "total": 0, "prompt": ""}
-
-
-def emit(line):
-	"""Print one capture line; mirror prompts / progress onto the notification."""
-	if line.startswith("@progress "):
-		try:
-			count, total = line[len("@progress "):].split("/", 1)
-			progress["count"], progress["total"] = int(count), int(total)
-		except ValueError:
-			pass
-		if builtins.howdy_args.gui:
-			say(line)
-		return
-	if line.startswith("@"):
-		if builtins.howdy_args.gui:
-			say(line)
-		return
-	text = _(line)
-	say(text)
-
-
-emit("@guide center")
-emit(_("\nPlease look straight into the camera"))
-
-# Give the user time to read
-time.sleep(2)
-
-# Count the number of read frames
-frames = 0
-# Count the number of illuminated read frames
-valid_frames = 0
-# Count the number of illuminated frames that
-# were rejected for being too dark
-dark_tries = 0
-# Track the running darkness total
-dark_running_total = 0
-face_locations = None
-
 dark_threshold = config.getfloat("video", "dark_threshold", fallback=60)
-
-clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-
-
-def usable_frame():
-	"""Read one frame; returns (frame, gsframe) or (frame, None) when it is black / too dark."""
-	global valid_frames, dark_tries, dark_running_total
-	frame, gsframe = video_capture.read_frame()
-	gsframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-	gsframe = clahe.apply(gsframe)
-
-	# If the image is fully black due to a bad camera read, skip it
-	darkness = enroll_capture.frame_darkness(gsframe, np, cv2)
-	if darkness is None or darkness == 100:
-		return frame, None
-
-	# Include this frame in calculating our average session brightness
-	dark_running_total += darkness
-	valid_frames += 1
-
-	# If the image exceeds darkness threshold due to subject distance, skip it
-	if darkness > dark_threshold:
-		dark_tries += 1
-		return frame, None
-	return frame, gsframe
-
-
-def face_rect(face_location):
-	return face_location.rect if use_cnn else face_location
-
-
-def encode(frame, face_location):
-	if use_openvino:
-		face_encoding = face_encoder_ov.encode(frame, face_location)
-		if face_encoding is None:
-			print("Failed to encode face, aborting")
-			sys.exit(1)
-		return face_encoding.tolist()
-	else:
-		face_landmark = pose_predictor(frame, face_rect(face_location))
-		return np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1)).tolist()
-
-
-# Loop through frames till we hit a timeout
-while frames < 60:
-	frames += 1
-	frame, gsframe = usable_frame()
-	if gsframe is None:
-		continue
-
-	# Get all faces from that frame as encodings
-	face_locations = face_detector(gsframe, 1)
-
-	# If we've found at least one, we can continue
-	if face_locations:
-		break
-
-# If we've found no faces, try to determine why
-if not face_locations:
-	video_capture.release()
-	if valid_frames == 0:
-		reason = _("Camera saw only black frames - is IR emitter working?")
-	elif valid_frames == dark_tries:
-		reason = _("All frames were too dark, please check dark_threshold in config") + " " + \
-			_("Average darkness: {avg}, Threshold: {threshold}").format(avg=str(dark_running_total / valid_frames), threshold=str(dark_threshold))
-	else:
-		reason = _("No face detected, aborting")
-	print(reason)
-	sys.exit(1)
-
-# If more than 1 faces are detected we can't know which one belongs to the user
-elif len(face_locations) > 1:
-	video_capture.release()
-	print(_("Multiple faces detected, aborting"))
-	sys.exit(1)
 
 # First sample: the frontal frame that started the scan. Then guide the user
 # through small head movements and keep a few more descriptors per pose so
 # the model covers more than one snapshot (see enroll_capture.py).
 try:
-	first_sample = encode(frame, face_locations[0])
 	samples = enroll_capture.capture_guided_samples(
-		read_frame=usable_frame,
-		detect_faces=lambda gs: face_detector(gs, 1),
-		encode_face=encode,
-		emit=emit,
-		first_sample=first_sample,
+		say=say,
+		use_cnn=use_cnn,
+		use_openvino=use_openvino,
+		face_encoder=face_encoder,
+		face_detector=face_detector,
+		video_capture=video_capture,
+		pose_predictor=pose_predictor,
+		dark_threshold=dark_threshold
 	)
 finally:
 	# Release the camera on success and on any detection / encoding / read error

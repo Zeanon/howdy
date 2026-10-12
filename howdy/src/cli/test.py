@@ -180,22 +180,24 @@ try:
 			face_locations = face_detector(frame, 1)
 			rec_tm = time.time() - rec_tm
 
-			# Loop though all faces and paint a circle around them
+			# Loop though all faces and paint a ellipse around them
 			for loc in face_locations:
 				if use_cnn and not use_openvino:
 					loc = loc.rect
 
-				# By default the circle around the face is red for no match
+				# By default the ellipse around the face is red for no match
 				color = (0, 0, 230)
 
-				# Get the center X and Y from the rectangular points
-				x = int((loc.right() - loc.left()) / 2) + loc.left()
-				y = int((loc.bottom() - loc.top()) / 2) + loc.top()
+				half_width = (loc.right() - loc.left()) / 2
+				half_height = (loc.bottom() - loc.top()) / 2
 
-				# Get the raduis from the with of the square
-				r = (loc.right() - loc.left()) / 2
-				# Add 20% padding
-				r = int(r + (r * 0.2))
+				# Get the center X and Y from the rectangular points
+				x = int(half_width) + loc.left()
+				y = int(half_height) + loc.top()
+
+				# Get the radius from the with of the square
+				r_horizontal = int(half_width * 1.2)
+				r_vertical = int(half_height * 1.2)
 
 				# If we have models defined for the current user
 				if models:
@@ -216,18 +218,18 @@ try:
 
 					# If a model matches
 					if 0 < match < video_certainty:
-						# Turn the circle green
+						# Turn the ellipse green
 						color = (0, 230, 0)
 
-						# Print the name of the model next to the circle
-						circle_text = "{} (certainty: {})".format(models[model_owner[match_index]]["label"], round(match * 10, 3))
-						cv2.putText(overlay, circle_text, (int(x + r / 3), y - r), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 255, 0), 0, cv2.LINE_AA)
+						# Print the name of the model next to the ellipse
+						ellipse_text = "{} (certainty: {})".format(models[model_owner[match_index]]["label"], round(match * 10, 3))
+						cv2.putText(overlay, ellipse_text, (int(x + r_horizontal / 3), y - r_vertical), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 255, 0), 0, cv2.LINE_AA)
 					# If no approved matches, show red text
 					else:
-						cv2.putText(overlay, "no match ({:.3f})".format(match * 10), (int(x + r / 3), y - r), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 0, 255), 0, cv2.LINE_AA)
+						cv2.putText(overlay, "no match ({:.3f})".format(match * 10), (int(x + r_horizontal / 3), y - r_vertical), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 0, 255), 0, cv2.LINE_AA)
 
-				# Draw the Circle in green
-				cv2.circle(overlay, (x, y), r, color, 2)
+				# Draw the Ellipse
+				cv2.ellipse(overlay, (x, y), (r_horizontal, r_vertical), 0, 0, 360, color, 2)
 
 		# Add the overlay to the frame with some transparency
 		alpha = 0.65

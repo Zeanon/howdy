@@ -9,11 +9,12 @@
 # dlib work is passed in as callables so the sequencing is unit-testable.
 
 import time
-import gi
-import cv2
+import sys
 import queue
+import builtins
 import threading
 import time
+
 
 def N_(text):
 	"""gettext marker: extracted by xgettext, translated by add.py at print time."""
@@ -43,6 +44,7 @@ DUPLICATE_DISTANCE = 0.05
 # Safety cap on samples per model (auth cost is one norm per stored vector).
 MAX_SAMPLES = 1 + len(GUIDE_STEPS) * SAMPLES_PER_STEP
 
+RING_COLOR = (42, 170, 229) #2AAAE5
 
 def frame_darkness(gsframe, np, cv2):
 	"""Percentage of pixels in the darkest of 8 histogram bins, or None for an empty frame."""
@@ -70,30 +72,46 @@ def progress_line(count, total):
 
 
 def capture_guided_samples(
-	read_frame,
-	detect_faces,
-	encode_face,
-	emit,
-	first_sample,
+	say,
+	use_cnn,
+	use_openvino,
+	face_encoder,
+	face_detector,
+	video_capture,
+	pose_predictor,
+	dark_threshold,
 	clock=time.monotonic,
-	sleep=None,
 	steps=GUIDE_STEPS,
 	settle_seconds=SETTLE_SECONDS,
 	step_seconds=STEP_SECONDS,
 	samples_per_step=SAMPLES_PER_STEP,
 	max_samples=MAX_SAMPLES,
+	ring_color=RING_COLOR,
 ):
+	import gi
+	import cv2
+	import numpy as np
+
 	gi.require_version("Gtk", "3.0")
 	from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 
 	dialog_width = 500
 	dialog_height = 545
+
+
+	# Count the number of illuminated read frames
+	valid_frames = 0
+	# Count the number of illuminated frames that
+	# were rejected for being too dark
+	dark_tries = 0
+	# Track the running darkness total
+	dark_running_total = 0
+	# The same prompts go to a desktop notification card: the banner sits right
+	# under the camera, where the user is looking during the scan.
+	progress = {"count": 0, "total": 0, "prompt": ""}
+	clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 	
 	"""Same public API; capture runs in a worker while GTK stays responsive."""
-
-	samples = [list(first_sample)]
-	total = min(max_samples, 1 + len(steps) * samples_per_step)
-
 	builder = Gtk.Builder()
 	window = builder.get_object("mainwindow")
 
@@ -103,12 +121,12 @@ def capture_guided_samples(
 		flags=Gtk.DialogFlags.MODAL
 	)
 	dialog.set_default_size(dialog_width, dialog_height)
+	dialog.set_focus_on_map(builtins.howdy_args.gui)
 	dialog.set_keep_above(True)
 	dialog.set_resizable(False)
 	dialog.set_can_focus(False)
-	dialog.set_focus(None)
-	dialog.set_modal(True)
 	dialog.set_decorated(False)
+	dialog.set_modal(True)
 	
 	screen = Gdk.Screen.get_default()
 	dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
@@ -130,6 +148,7 @@ def capture_guided_samples(
 	inner_box.pack_start(prompt_label, False, False, 0)
 
 	progress_label = Gtk.Label()
+	progress_label.get_style_context().add_class("dim-label")
 	inner_box.pack_start(progress_label, False, False, 0)
 
 	box.pack_start(inner_box, False, False, 30)
@@ -146,25 +165,142 @@ def capture_guided_samples(
 	frame_lock = threading.Lock()
 	result = {"samples": None, "error": None}
 
+
+	def encode(frame, face_location):
+		if use_openvino:
+			face_encoding = face_encoder.encode(frame, face_location)
+			if face_encoding is None:
+				print("Failed to encode face, aborting")
+				sys.exit(1)
+			return face_encoding.tolist()
+		else:
+			face_landmark = pose_predictor(frame, face_location.rect if use_cnn else face_location)
+			return np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1)).tolist()
+
+
+	def compute_face_locations(overlay):
+		nonlocal valid_frames, dark_tries, dark_running_total
+
+		# If the image is fully black due to a bad camera read, skip it
+		darkness = frame_darkness(overlay, np, cv2)
+		if darkness is None or darkness == 100:
+			return [], None
+
+		# Include this frame in calculating our average session brightness
+		dark_running_total += darkness
+		valid_frames += 1
+
+		# If the image exceeds darkness threshold due to subject distance, skip it
+		if darkness > dark_threshold:
+			dark_tries += 1
+			return [], None
+
+		overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2RGB)
+
+		face_locations = face_detector(overlay, 1)
+		for loc in face_locations:
+			half_width = (loc.right() - loc.left()) / 2
+			half_height = (loc.bottom() - loc.top()) / 2
+
+			# Get the center X and Y from the rectangular points
+			x = int(half_width) + loc.left()
+			y = int(half_height) + loc.top()
+
+			# Get the radius from the with of the square
+			r_horizontal = int(half_width * 1.2)
+			r_vertical = int(half_height * 1.2)
+
+			cv2.ellipse(overlay, (x, y), (r_horizontal, r_vertical), 0, 0, 360, ring_color, 2)
+
+		return face_locations, overlay
+
+	def get_frame():
+		"""Read one frame; returns (frame, gsframe) or (frame, None) when it is black / too dark."""		
+		frame, gsframe = video_capture.read_frame()
+		gsframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+		gsframe = clahe.apply(gsframe)
+
+		face_locations, overlay = compute_face_locations(gsframe)
+
+		gsframe = cv2.cvtColor(gsframe, cv2.COLOR_GRAY2RGB)
+		if overlay is not None:
+			alpha = 0.65
+			cv2.addWeighted(overlay, alpha, gsframe, 1 - alpha, 0, gsframe)
+
+		gsframe = cv2.flip(gsframe, 1)
+		height, width = gsframe.shape[:2]
+		data = GLib.Bytes.new(gsframe.tobytes())
+
+		with frame_lock:
+			latest_frame[0] = (data, width, height)
+
+		return frame, face_locations
+
+
+	def emit(line):
+		nonlocal progress
+		"""Print one capture line; mirror prompts / progress onto the notification."""
+		if line.startswith("@progress "):
+			try:
+				count, total = line[len("@progress "):].split("/", 1)
+				progress["count"], progress["total"] = int(count), int(total)
+			except ValueError:
+				pass
+			progress_label.set_markup(f"<span foreground='#2AAAE5'><b>Samples: {count}/{total}</b></span>")
+			if builtins.howdy_args.gui:
+				say(line)
+			return
+		if line.startswith("@"):
+			if builtins.howdy_args.gui:
+				say(line)
+			return
+		prompt_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{N_(line)}</b></span></big>")
+		say(N_(line))
+
+
 	def worker():
-		import cv2
-		import numpy as np
+		nonlocal valid_frames, dark_tries, dark_running_total
 
-		def publish_frame(gsframe):
-			if gsframe is None:
-				return
+		emit("@guide center")
+		say(N_("\nPlease look straight into the camera"))
+		prompt_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{N_(GUIDE_STEPS[0][1])}</b></span></big>")
 
-			gsframe = cv2.flip(gsframe, 1)
-			if gsframe.ndim == 2:
-				rgb = cv2.cvtColor(gsframe, cv2.COLOR_GRAY2RGB)
+		# Give the user time to read
+		deadline = clock() + 2
+		while clock() < deadline:
+			get_frame()
+
+		# Loop through frames till we hit a timeout
+		for _ in range(60):
+			# Get all faces from that frame as encodings
+			frame, face_locations = get_frame()
+
+			# If we've found at least one, we can continue
+			if face_locations:
+				break
+
+		# If we've found no faces, try to determine why
+		if not face_locations:
+			video_capture.release()
+			if valid_frames == 0:
+				reason = N_("Camera saw only black frames - is IR emitter working?")
+			elif valid_frames == dark_tries:
+				reason = N_("All frames were too dark, please check dark_threshold in config") + " " + \
+					N_("Average darkness: {avg}, Threshold: {threshold}").format(avg=str(dark_running_total / valid_frames), threshold=str(dark_threshold))
 			else:
-				rgb = cv2.cvtColor(gsframe, cv2.COLOR_BGR2RGB)
+				reason = N_("No face detected, aborting")
+			print(reason)
+			sys.exit(1)
 
-			height, width, _ = rgb.shape
-			data = GLib.Bytes.new(rgb.tobytes())
+		# If more than 1 faces are detected we can't know which one belongs to the user
+		elif len(face_locations) > 1:
+			video_capture.release()
+			print(N_("Multiple faces detected, aborting"))
+			sys.exit(1)
 
-			with frame_lock:
-				latest_frame[0] = (data, width, height)
+		first_sample = encode(frame, face_locations[0])
+		samples = [list(first_sample)]
+		total = min(max_samples, 1 + len(steps) * samples_per_step)
 
 		try:
 			events.put(("progress", len(samples), total))
@@ -175,14 +311,10 @@ def capture_guided_samples(
 
 				events.put(("emit", guide_line(key)))
 				events.put(("emit", prompt))
-				events.put(("prompt", prompt))
 
 				settle_until = clock() + settle_seconds
 				while not cancel.is_set() and clock() < settle_until:
-					_, gsframe = read_frame()
-					publish_frame(gsframe)
-					if sleep:
-						sleep(0.01)
+					get_frame()
 
 				deadline = clock() + step_seconds
 				got = 0
@@ -193,17 +325,11 @@ def capture_guided_samples(
 					and len(samples) < max_samples
 					and clock() < deadline
 				):
-					frame, gsframe = read_frame()
-					if gsframe is None:
+					frame, face_locations = get_frame()
+					if len(face_locations) != 1:
 						continue
 
-					publish_frame(gsframe)
-
-					faces = detect_faces(gsframe)
-					if len(faces) != 1:
-						continue
-
-					descriptor = list(encode_face(frame, faces[0]))
+					descriptor = list(encode(frame, face_locations[0]))
 					if is_duplicate(descriptor, samples, np):
 						continue
 
@@ -248,11 +374,8 @@ def capture_guided_samples(
 
 			if kind == "emit":
 				emit(event[1])
-			elif kind == "prompt":
-				prompt_label.set_markup(f"<big><span foreground='#2aaae5'><b>{event[1]}</b></span></big>")
 			elif kind == "progress":
-				_, count, maximum = event
-				progress_label.set_markup(f"<span foreground='#2aaae5'><b>Samples: {count}/{maximum}</b></span>")
+				count, maximum = event[1:]
 				emit(progress_line(count, maximum))
 
 		if finished.is_set():

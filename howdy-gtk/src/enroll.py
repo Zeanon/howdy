@@ -36,7 +36,7 @@ def guide_text(key):
 
 
 def progress_text(count, total):
-	return _("Recording… {count} of {total}").format(count=count, total=total)
+	return _(f"<span foreground='#2AAAE5'><b>Recording… {count} of {total}</b></span>")
 
 
 def parse_line(line):
