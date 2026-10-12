@@ -24,6 +24,8 @@ from gi.repository import GObject as gObject
 window_width = 400
 window_height = 100
 
+HIGHLIGHT_COLOR = (42, 170, 229) #2AAAE5
+
 
 class StickyWindow(gtk.Window):
 	# Set default messages to show in the popup
@@ -94,7 +96,9 @@ class StickyWindow(gtk.Window):
 
 	def draw(self, widget, ctx):
 		"""Draw the UI"""
-		radius = 15
+		radius = 17
+		border = 2
+		half = border / 2
 
 		# Change cursor to the kill icon
 		self.get_window().set_cursor(gdk.Cursor(gdk.CursorType.PIRATE))
@@ -106,23 +110,45 @@ class StickyWindow(gtk.Window):
 		ctx.paint()
 		
 		ctx.set_operator(cairo.OPERATOR_OVER)
-		ctx.new_sub_path()
-		ctx.move_to(0, 0)
-		ctx.line_to(window_width, 0)
-		ctx.line_to(window_width, window_height - radius)
-		ctx.arc(
-			window_width - radius,
-			window_height - radius,
-			radius, 0, math.pi / 2
+		ctx.new_path()
+
+		# Linke Kante, ohne obere Kante
+		ctx.move_to(half, 0)
+		ctx.line_to(half, window_height - radius - half)
+
+		# Linke untere Rundung
+		ctx.arc_negative(
+			radius + half,
+			window_height - radius - half,
+			radius,
+			math.pi,
+			math.pi / 2
 		)
-		ctx.line_to(radius, window_height)
-		ctx.arc(
-			radius, window_height - radius,
-			radius, math.pi / 2, math.pi
+
+		# Untere Kante
+		ctx.line_to(window_width - radius - half, window_height - half)
+
+		# Rechte untere Rundung
+		ctx.arc_negative(
+			window_width - radius - half,
+			window_height - radius - half,
+			radius,
+			math.pi / 2,
+			0
 		)
-		ctx.close_path()
+
+		# Rechte Kante, ohne obere Kante
+		ctx.line_to(window_width - half, 0)
+
+		# Schwarze Fläche
 		ctx.set_source_rgb(0, 0, 0)
-		ctx.fill()
+		ctx.fill_preserve()
+
+		ctx.set_line_width(border)
+		ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+		ctx.set_source_rgb(HIGHLIGHT_COLOR[0]/255, HIGHLIGHT_COLOR[1]/255, HIGHLIGHT_COLOR[2]/255)
+
+		ctx.stroke()
 
 		# Position and draw the logo
 		ctx.translate(15, 10)

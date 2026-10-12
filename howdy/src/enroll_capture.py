@@ -50,7 +50,7 @@ DUPLICATE_DISTANCE = 0.05
 # Safety cap on samples per model (auth cost is one norm per stored vector).
 MAX_SAMPLES = 1 + len(GUIDE_STEPS) * SAMPLES_PER_STEP
 
-RING_COLOR = (42, 170, 229) #2AAAE5
+HIGHLIGHT_COLOR = (42, 170, 229) #2AAAE5
 
 def frame_darkness(gsframe, np, cv2):
 	"""Percentage of pixels in the darkest of 8 histogram bins, or None for an empty frame."""
@@ -92,7 +92,7 @@ def capture_guided_samples(
 	step_seconds=STEP_SECONDS,
 	samples_per_step=SAMPLES_PER_STEP,
 	max_samples=MAX_SAMPLES,
-	ring_color=RING_COLOR,
+	ring_color=HIGHLIGHT_COLOR,
 ):
 	import gi
 	import cv2
@@ -124,26 +124,17 @@ def capture_guided_samples(
 	builder = gtk.Builder()
 	window = builder.get_object("mainwindow")
 
-	css = gtk.CssProvider()
-	css.load_from_data(b"""
-		.dialog-bg {
-			background-color: transparent;
-		}
-	""")
-
 	dialog = gtk.Dialog(
 		title="Howdy – Create Model",
 		parent=window,
 		flags=gtk.DialogFlags.MODAL
-	)
-	dialog.get_style_context().add_provider(
-		css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
 	)
 	dialog.connect(
 		"draw",
 		lambda widget, ctx: draw_background(widget, ctx)
 	)
 
+	dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
 	dialog.set_default_size(dialog_width, dialog_height)
 	dialog.set_focus_on_map(builtins.howdy_args.gui)
 	dialog.set_app_paintable(True)
@@ -152,12 +143,6 @@ def capture_guided_samples(
 	dialog.set_can_focus(False)
 	dialog.set_decorated(False)
 	dialog.set_modal(True)
-
-	# css = gtk.CssProvider()
-	# css.load_from_data(b"dialog { background-color: #000000; }")
-	# dialog.get_style_context().add_provider(
-	# 	css, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-	# )
 	
 	screen = gdk.Screen.get_default()
 	dialog.set_visual(screen.get_rgba_visual())
@@ -207,8 +192,8 @@ def capture_guided_samples(
 		ctx.set_operator(cairo.OPERATOR_SOURCE)
 		ctx.set_source_rgba(0, 0, 0, 0)
 		ctx.paint()
-		ctx.set_operator(cairo.OPERATOR_OVER)
 
+		ctx.set_operator(cairo.OPERATOR_OVER)
 		ctx.new_path()
 
 		# Linke Kante, ohne obere Kante
@@ -239,16 +224,21 @@ def capture_guided_samples(
 		# Rechte Kante, ohne obere Kante
 		ctx.line_to(dialog_width - half, 0)
 
-		# Schwarze Fläche
+    	# Theme-Hintergrundfarbe auslesen
 		style = widget.get_style_context()
-		bg_color = style.get_background_color(gtk.StateFlags.NORMAL)
-		ctx.set_source_rgba(bg_color.red, bg_color.green, bg_color.blue, bg_color.alpha)
-		# ctx.set_source_rgb(0, 0, 0)
+		found, bg_color = style.lookup_color("theme_bg_color")
+		# bg_color = style.get_background_color(gtk.StateFlags.NORMAL)
+
+		if found:
+			ctx.set_source_rgba(bg_color.red, bg_color.green, bg_color.blue, bg_color.alpha)
+		else:
+			# Fallback, falls die Farbe nicht verfügbar ist
+			ctx.set_source_rgb(0, 0, 0)
 		ctx.fill_preserve()
 
 		ctx.set_line_width(border)
 		ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-		ctx.set_source_rgb(RING_COLOR[0]/255, RING_COLOR[1]/255, RING_COLOR[2]/255)
+		ctx.set_source_rgb(HIGHLIGHT_COLOR[0]/255, HIGHLIGHT_COLOR[1]/255, HIGHLIGHT_COLOR[2]/255)
 
 		ctx.stroke()
 

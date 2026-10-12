@@ -1,5 +1,7 @@
 import subprocess
 import enroll
+import cairo
+import math
 import os
 
 from i18n import _
@@ -8,6 +10,8 @@ from gi.repository import Gdk as gdk
 from gi.repository import GObject as gObject
 
 os.environ["GDK_BACKEND"] = "x11"
+
+HIGHLIGHT_COLOR = (42, 170, 229) #2AAAE5
 
 def on_user_change(self, select):
 	self.active_user = select.get_active_text()
@@ -116,9 +120,14 @@ def on_model_add(self, button):
 			parent=self.window,
 			flags=gtk.DialogFlags.MODAL
 		)
+		dialog.connect(
+			"draw",
+			lambda widget, ctx: draw_background(widget, ctx)
+		)
 
 		dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
 		dialog.set_default_size(dialog_width, dialog_height)
+		dialog.set_app_paintable(True)
 		dialog.set_focus_on_map(False)
 		dialog.set_keep_above(True)
 		dialog.set_resizable(False)
@@ -181,6 +190,65 @@ def on_model_add(self, button):
 				progress_label
 			)
 		)
+
+		def draw_background(widget, ctx):
+			radius = 18
+			border = 2
+			half = border / 2
+
+			# Fensterfläche transparent löschen
+			ctx.set_operator(cairo.OPERATOR_SOURCE)
+			ctx.set_source_rgba(0, 0, 0, 0)
+			ctx.paint()
+
+			ctx.set_operator(cairo.OPERATOR_OVER)
+			ctx.new_path()
+
+			# Linke Kante, ohne obere Kante
+			ctx.move_to(half, 0)
+			ctx.line_to(half, dialog_height - radius - half)
+
+			# Linke untere Rundung
+			ctx.arc_negative(
+				radius + half,
+				dialog_height - radius - half,
+				radius,
+				math.pi,
+				math.pi / 2
+			)
+
+			# Untere Kante
+			ctx.line_to(dialog_width - radius - half, dialog_height - half)
+
+			# Rechte untere Rundung
+			ctx.arc_negative(
+				dialog_width - radius - half,
+				dialog_height - radius - half,
+				radius,
+				math.pi / 2,
+				0
+			)
+
+			# Rechte Kante, ohne obere Kante
+			ctx.line_to(dialog_width - half, 0)
+
+			# Theme-Hintergrundfarbe auslesen
+			style = widget.get_style_context()
+			found, bg_color = style.lookup_color("theme_bg_color")
+			# bg_color = style.get_background_color(gtk.StateFlags.NORMAL)
+
+			if found:
+				ctx.set_source_rgba(bg_color.red, bg_color.green, bg_color.blue, bg_color.alpha)
+			else:
+				# Fallback, falls die Farbe nicht verfügbar ist
+				ctx.set_source_rgb(0, 0, 0)
+			ctx.fill_preserve()
+
+			ctx.set_line_width(border)
+			ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+			ctx.set_source_rgb(HIGHLIGHT_COLOR[0]/255, HIGHLIGHT_COLOR[1]/255, HIGHLIGHT_COLOR[2]/255)
+
+			ctx.stroke()
 
 
 def execute_add(
