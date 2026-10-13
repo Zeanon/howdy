@@ -124,20 +124,20 @@ try:
 			sec_frames = 0
 
 		# Grab a single frame of video
-		orig_frame, frame = video_capture.read_frame()
+		frame, gsframe = video_capture.read_frame()
 
-		frame = clahe.apply(frame)
+		gsframe = clahe.apply(gsframe)
+
 		# Make a frame to put overlays in
-		overlay = frame.copy()
-		overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2BGR)
+		overlay = cv2.flip(cv2.cvtColor(gsframe.copy(), cv2.COLOR_GRAY2BGR), 1)
 
 		# Fetch the frame height and width
-		height, width = frame.shape[:2]
+		height, width = gsframe.shape[:2]
 
 		# Create a histogram of the image with 8 values
 		# ravel because the returned shape differs across OpenCV versions:
 		# 4.x returns (8, 1), 5.x returns (8,)
-		hist = cv2.calcHist([frame], [0], None, [8], [0, 256]).ravel()
+		hist = cv2.calcHist([gsframe], [0], None, [8], [0, 256]).ravel()
 		# All values combined for percentage calculation
 		hist_total = int(hist.sum())
 		# Fill with the overall containing percentage
@@ -177,7 +177,7 @@ try:
 
 			# Get the locations of all faces and their locations
 			# Upsample it once
-			face_locations = face_detector(frame, 1)
+			face_locations = face_detector(gsframe, 1)
 			rec_tm = time.time() - rec_tm
 
 			# Loop though all faces and paint a ellipse around them
@@ -186,13 +186,13 @@ try:
 					loc = loc.rect
 
 				# By default the ellipse around the face is red for no match
-				color = (0, 0, 230)
+				color = (0, 0, 230) #BGR
 
 				half_width = (loc.right() - loc.left()) / 2
 				half_height = (loc.bottom() - loc.top()) / 2
 
 				# Get the center X and Y from the rectangular points
-				x = int(half_width) + loc.left()
+				x = width - (int(half_width) + loc.left())
 				y = int(half_height) + loc.top()
 
 				# Get the radius from the with of the square
@@ -202,14 +202,14 @@ try:
 				# If we have models defined for the current user
 				if models:
 					if use_openvino:
-						face_encoding = face_encoder.encode(orig_frame, loc)
+						face_encoding = face_encoder.encode(frame, loc)
 						if face_encoding is not None:
 							matches = 1.0 - np.dot(np.array(encodings), face_encoding)
 						else:
 							continue
 					else:
-						face_landmark = pose_predictor(orig_frame, loc)
-						face_encoding = np.array(face_encoder.compute_face_descriptor(orig_frame, face_landmark, 1))
+						face_landmark = pose_predictor(frame, loc)
+						face_encoding = np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1))
 						matches = np.linalg.norm(encodings - face_encoding, axis=1)
 
 					# Get best match
@@ -219,26 +219,25 @@ try:
 					# If a model matches
 					if 0 < match < video_certainty:
 						# Turn the ellipse green
-						color = (0, 230, 0)
+						color = (0, 230, 0) #BGR
 
 						# Print the name of the model next to the ellipse
-						ellipse_text = "{} (certainty: {})".format(models[model_owner[match_index]]["label"], round(match * 10, 3))
-						cv2.putText(overlay, ellipse_text, (int(x + r_horizontal / 3), y - r_vertical), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 255, 0), 0, cv2.LINE_AA)
+						ellipse_text = "{} ({:.3f})".format(models[model_owner[match_index]]["label"], round(match * 10, 3))
+						cv2.putText(overlay, ellipse_text, (int(x + r_horizontal / 3), y - r_vertical), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 					# If no approved matches, show red text
 					else:
-						cv2.putText(overlay, "no match ({:.3f})".format(match * 10), (int(x + r_horizontal / 3), y - r_vertical), cv2.FONT_HERSHEY_SIMPLEX, .3, (0, 0, 255), 0, cv2.LINE_AA)
+						cv2.putText(overlay, "no match ({:.3f})".format(match * 10), (int(x + r_horizontal / 3), y - r_vertical), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
 				# Draw the Ellipse
-				cv2.ellipse(overlay, (x, y), (r_horizontal, r_vertical), 0, 0, 360, color, 2)
+				cv2.ellipse(overlay, (x, y), (r_horizontal, r_vertical), 0, 0, 360, color, 3) #Thickness 2 or 3?
 
 		# Add the overlay to the frame with some transparency
 		alpha = 0.65
-		frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-		cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-		frame = cv2.flip(frame, 1)
+		gsframe = cv2.flip(cv2.cvtColor(gsframe, cv2.COLOR_GRAY2BGR), 1)
+		cv2.addWeighted(overlay, alpha, gsframe, 1 - alpha, 0, gsframe)
 
 		# Show the image in a window
-		cv2.imshow("Howdy Test", frame)
+		cv2.imshow("Howdy Test", gsframe)
 
 		# Quit on any keypress
 		if cv2.waitKey(1) != -1:

@@ -410,7 +410,7 @@ inline int identify(
 	face_unlock = config.GetBoolean("face_authentication", "enable", true);
 	max_face_auth_tries = (unsigned) config.GetInteger("face_authentication", "max_tries", 1);
 	bool debug_to_console = config.GetBoolean("face_authentication", "debug_to_console", true);
-	bool show_auth_popup = config.GetBoolean("face_authenication", "show_auth_popup", false);
+	bool show_auth_popup = config.GetBoolean("face_authentication", "show_auth_popup", false);
 
 
 	fingerprint = config.GetBoolean("fingerprint", "enable", false);
@@ -729,7 +729,6 @@ inline int identify(
 			face_auth_timeout.value_or(nullptr),
 			nullptr,
 	};
-	conv_function(PAM_TEXT_INFO, COMPARE_PROCESS_PATH);
 	/**
 	 * When stdout or stderr is a socket, it is a protocol channel rather than a
 	 * terminal or a log: polkit's socket-activated agent helper

@@ -134,7 +134,7 @@ def capture_guided_samples(
 		lambda widget, ctx: draw_background(widget, ctx)
 	)
 
-	dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
+	# dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
 	dialog.set_default_size(dialog_width, dialog_height)
 	dialog.set_focus_on_map(builtins.howdy_args.gui)
 	dialog.set_app_paintable(True)
@@ -187,6 +187,8 @@ def capture_guided_samples(
 		radius = 18
 		border = 2
 		half = border / 2
+
+		dialog.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
 
 		# Fensterfläche transparent löschen
 		ctx.set_operator(cairo.OPERATOR_SOURCE)
@@ -271,9 +273,8 @@ def capture_guided_samples(
 			dark_tries += 1
 			return [], None
 
-		overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2RGB)
-
 		face_locations = face_detector(overlay, 1)
+		overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2RGB)
 		for loc in face_locations:
 			half_width = (loc.right() - loc.left()) / 2
 			half_height = (loc.bottom() - loc.top()) / 2
@@ -286,15 +287,13 @@ def capture_guided_samples(
 			r_horizontal = int(half_width * 1.2)
 			r_vertical = int(half_height * 1.2)
 
-			cv2.ellipse(overlay, (x, y), (r_horizontal, r_vertical), 0, 0, 360, ring_color, 2)
+			cv2.ellipse(overlay, (x, y), (r_horizontal, r_vertical), 0, 0, 360, ring_color, 3) #Thickness 2 or 3?
 
 		return face_locations, overlay
 
 	def get_frame():
-		"""Read one frame; returns (frame, gsframe) or (frame, None) when it is black / too dark."""		
 		frame, gsframe = video_capture.read_frame()
-		gsframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-		gsframe = clahe.apply(gsframe)
+		gsframe = clahe.apply(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
 
 		face_locations, overlay = compute_face_locations(gsframe)
 

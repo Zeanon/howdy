@@ -501,7 +501,7 @@ while process_exists(parent_pid):
 
 	# Form a string to let the user know we're real busy
 	ui_subtext = "Scanned " + str(valid_frames - dark_tries) + " frames"
-	if (dark_tries > 1):
+	if dark_tries > 1:
 		ui_subtext += " (skipped " + str(dark_tries) + " dark frames)"
 	# Show it in the ui as subtext
 	send_to_ui("S", ui_subtext)
@@ -548,7 +548,7 @@ while process_exists(parent_pid):
 
 	# If the image exceeds darkness threshold due to subject distance,
 	# skip to the next frame
-	if (darkness > dark_threshold):
+	if darkness > dark_threshold:
 		dark_tries += 1
 		continue
 

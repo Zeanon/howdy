@@ -68,8 +68,8 @@ class StickyWindow(gtk.Window):
 		# Listen for a force close or click event and exit
 		self.connect("destroy", self.exit)
 		self.connect("delete_event", self.exit)
-		self.connect("button-press-event", self.exit)
-		self.connect("button-release-event", self.exit)
+		# self.connect("button-press-event", self.exit)
+		# self.connect("button-release-event", self.exit)
 
 		# Create a GDK drawing, restricts the window size
 		darea = gtk.DrawingArea()
@@ -101,7 +101,7 @@ class StickyWindow(gtk.Window):
 		half = border / 2
 
 		# Change cursor to the kill icon
-		self.get_window().set_cursor(gdk.Cursor(gdk.CursorType.PIRATE))
+		self.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
 
 		# Draw a semi transparent background
 		# ctx.set_source_rgba(0, 0, 0, .7)

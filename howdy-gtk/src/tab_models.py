@@ -114,7 +114,6 @@ def on_model_add(self, button):
 		dialog_width = 500
 		dialog_height = 545
 
-		# GTK 3 replacement for gtk4compat.PromptWindow
 		dialog = gtk.Dialog(
 			title=_("Creating Model"),
 			parent=self.window,
@@ -125,7 +124,7 @@ def on_model_add(self, button):
 			lambda widget, ctx: draw_background(widget, ctx)
 		)
 
-		dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
+		# dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
 		dialog.set_default_size(dialog_width, dialog_height)
 		dialog.set_app_paintable(True)
 		dialog.set_focus_on_map(False)
@@ -161,10 +160,7 @@ def on_model_add(self, button):
 								 "This takes about a minute."))
 		box.pack_start(info_label, False, False, 0)
 
-		# box.pack_start(inner_box, True, True, 0)
-
 		guide_label = gtk.Label()
-		# GTK 3 replacement for add_css_class("heading")
 		guide_label.get_style_context().add_class("heading")
 		guide_label.set_markup(_(f"<big><span foreground='#2AAAE5'><b>Look straight at the camera</b></span></big>"))
 		box.pack_start(guide_label, False, False, 25)
@@ -172,7 +168,6 @@ def on_model_add(self, button):
 		progress_label = gtk.Label(label="")
 		# progress_label.set_xalign(0.0)
 
-		# GTK 3 replacement for add_css_class("dim-label")
 		progress_label.get_style_context().add_class("dim-label")
 
 		box.pack_start(progress_label, False, False, 0)
