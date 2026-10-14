@@ -3,7 +3,7 @@ import os
 import re
 import time
 import subprocess
-import paths_factory
+import paths_factory_gui
 
 from i18n import _
 
@@ -20,7 +20,7 @@ class OnboardingWindow(gtk.Window):
 		gtk.Window.__init__(self)
 
 		self.builder = gtk.Builder()
-		self.builder.add_from_file(paths_factory.onboarding_wireframe_path())
+		self.builder.add_from_file(paths_factory_gui.onboarding_wireframe_path())
 		self.builder.connect_signals(self)
 
 		self.window = self.builder.get_object("onboardingwindow")
@@ -76,12 +76,12 @@ class OnboardingWindow(gtk.Window):
 		eventbox.modify_bg(gtk.StateType.NORMAL, gdk.Color(red=0, green=0, blue=0))
 
 		# TODO: Better way to do this?
-		if os.path.exists(paths_factory.dlib_data_dir_path() / "shape_predictor_5_face_landmarks.dat"):
+		if os.path.exists(paths_factory_gui.dlib_data_dir_path() / "shape_predictor_5_face_landmarks.dat"):
 			self.downloadoutputlabel.set_text(_("Datafiles have already been downloaded!\nClick Next to continue"))
 			self.enable_next()
 			return
 
-		self.proc = subprocess.Popen("./install.sh", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, cwd=paths_factory.dlib_data_dir_path())
+		self.proc = subprocess.Popen("./install.sh", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, cwd=paths_factory_gui.dlib_data_dir_path())
 
 		self.download_lines = []
 		self.read_download_line()

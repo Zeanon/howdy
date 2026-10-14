@@ -44,6 +44,7 @@ py_sources = [
     'rubberstamps/hotkey.py',
     'rubberstamps/nod.py',
     'snapshot.py',
+    'gui.py',
     py_paths,
 ]
 

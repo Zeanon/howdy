@@ -3,7 +3,7 @@ import cairo
 import gi
 import signal
 import sys
-import paths_factory
+import paths_factory_gui
 import os
 import math
 
@@ -38,7 +38,7 @@ class StickyWindow(gtk.Window):
 		gtk.Window.__init__(self)
 
 		# Get the absolute or relative path to the logo file
-		logo_path = paths_factory.logo_path()
+		logo_path = paths_factory_gui.logo_path()
 
 		# Create image and calculate scale size based on image size
 		self.logo_surface = cairo.ImageSurface.create_from_png(logo_path)

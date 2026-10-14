@@ -18,6 +18,8 @@ import cairo
 import math
 import os
 
+from i18n import _
+
 
 os.environ["GDK_BACKEND"] = "x11"
 
@@ -29,14 +31,14 @@ def N_(text):
 # Guidance steps: (key, translatable prompt). `key` is the machine-readable id
 # printed as `@guide <key>` for the GTK apps; the prompt is for the terminal.
 # The steps are small movements the frontal detector still handles.
-GUIDE_STEPS = (
-	("center", N_("Look straight at the camera")),
-	("left", N_("Turn your head slightly to the left")),
-	("right", N_("Turn your head slightly to the right")),
-	("up", N_("Tilt your chin up a little")),
-	("down", N_("Tilt your chin down a little")),
-	("center", N_("Look straight at the camera again")),
-)
+GUIDE_STEPS = [
+	N_("Look straight at the camera"),
+	N_("Turn your head slightly to the left"),
+	N_("Turn your head slightly to the right"),
+	N_("Tilt your chin up a little"),
+	N_("Tilt your chin down a little"),
+	N_("Look straight at the camera again"),
+]
 
 # Seconds the user gets to move after each prompt (frames are read and
 # discarded so the capture never sees a stale buffered frame).
@@ -69,12 +71,11 @@ def is_duplicate(descriptor, existing, np, tolerance=DUPLICATE_DISTANCE):
 	return bool(np.min(dists) < tolerance)
 
 
-def guide_line(key):
-	return "@guide " + key
-
-
 def progress_line(count, total):
 	return "@progress %d/%d" % (count, total)
+
+def guide_line(key):
+	return "@guide " + key
 
 
 def capture_guided_samples(
@@ -86,6 +87,7 @@ def capture_guided_samples(
 	video_capture,
 	pose_predictor,
 	dark_threshold,
+	dialog=None,
 	clock=time.monotonic,
 	steps=GUIDE_STEPS,
 	settle_seconds=SETTLE_SECONDS,
@@ -124,31 +126,35 @@ def capture_guided_samples(
 	builder = gtk.Builder()
 	window = builder.get_object("mainwindow")
 
-	dialog = gtk.Dialog(
-		title="Howdy – Create Model",
-		parent=window,
-		flags=gtk.DialogFlags.MODAL
-	)
-	dialog.connect(
-		"draw",
-		lambda widget, ctx: draw_background(widget, ctx)
-	)
+	if dialog is None:
+		dialog = gtk.Dialog(
+			title="Howdy – Create Model",
+			parent=window,
+			flags=gtk.DialogFlags.MODAL
+		)
+		dialog.connect(
+			"draw",
+			lambda widget, ctx: draw_background(widget, ctx)
+		)
 
-	# dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
-	dialog.set_default_size(dialog_width, dialog_height)
-	dialog.set_focus_on_map(builtins.howdy_args.gui)
-	dialog.set_app_paintable(True)
-	dialog.set_keep_above(True)
-	dialog.set_resizable(False)
-	dialog.set_can_focus(False)
-	dialog.set_decorated(False)
-	dialog.set_modal(True)
-	
-	screen = gdk.Screen.get_default()
-	dialog.set_visual(screen.get_rgba_visual())
-	dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
+		# dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
+		dialog.set_default_size(dialog_width, dialog_height)
+		dialog.set_focus_on_map(False)
+		dialog.set_app_paintable(True)
+		dialog.set_keep_above(True)
+		dialog.set_resizable(False)
+		dialog.set_can_focus(False)
+		dialog.set_decorated(False)
+		dialog.set_modal(True)
+		
+		screen = gdk.Screen.get_default()
+		dialog.set_visual(screen.get_rgba_visual())
+		dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
+		content = dialog.get_content_area()
+	else:
+		content = dialog.get_content_area()
+		content.foreach(lambda child: content.remove(child))
 
-	content = dialog.get_content_area()
 	box = gtk.Box(
 		orientation=gtk.Orientation.VERTICAL,
 		spacing=8
@@ -160,9 +166,9 @@ def capture_guided_samples(
 		orientation=gtk.Orientation.VERTICAL,
 		spacing=8
 	)
-	prompt_label = gtk.Label()
-	prompt_label.set_line_wrap(True)
-	inner_box.pack_start(prompt_label, False, False, 0)
+	guide_label = gtk.Label()
+	guide_label.set_line_wrap(True)
+	inner_box.pack_start(guide_label, False, False, 0)
 
 	progress_label = gtk.Label()
 	progress_label.get_style_context().add_class("dim-label")
@@ -177,6 +183,7 @@ def capture_guided_samples(
 
 	events = queue.Queue()
 	cancel = threading.Event()
+	aborted = threading.Event()
 	finished = threading.Event()
 	latest_frame = [None]
 	frame_lock = threading.Lock()
@@ -248,8 +255,9 @@ def capture_guided_samples(
 		if use_openvino:
 			face_encoding = face_encoder.encode(frame, face_location)
 			if face_encoding is None:
-				print("Failed to encode face, aborting")
-				sys.exit(1)
+				result["error"] = Exception(N_("Failed to encode face, aborting"))
+				aborted.set()
+				return
 			return face_encoding.tolist()
 		else:
 			face_landmark = pose_predictor(frame, face_location.rect if use_cnn else face_location)
@@ -322,23 +330,21 @@ def capture_guided_samples(
 			except ValueError:
 				pass
 			progress_label.set_markup(f"<span foreground='#2AAAE5'><b>Samples: {count}/{total}</b></span>")
-			if builtins.howdy_args.gui:
-				say(line)
 			return
-		if line.startswith("@"):
-			if builtins.howdy_args.gui:
-				say(line)
-			return
-		prompt_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{N_(line)}</b></span></big>")
-		say(N_(line))
+		if line.startswith("@guide "):
+			# if builtins.howdy_args.gui:
+			# 	say(line)
+			line = line[len("@guide "):]
+			guide_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{line}</b></span></big>")
+		if not builtins.howdy_args.gui:
+			say(N_(line))
 
 
 	def worker():
 		nonlocal valid_frames, dark_tries, dark_running_total
 
-		emit("@guide center")
-		say(N_("\nPlease look straight into the camera"))
-		prompt_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{N_(GUIDE_STEPS[0][1])}</b></span></big>")
+		emit(N_("\nPlease look straight into the camera"))
+		guide_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{GUIDE_STEPS[0]}</b></span></big>")
 
 		# Give the user time to read
 		deadline = clock() + 2
@@ -356,7 +362,7 @@ def capture_guided_samples(
 
 		# If we've found no faces, try to determine why
 		if not face_locations:
-			video_capture.release()
+			# video_capture.release()
 			if valid_frames == 0:
 				reason = N_("Camera saw only black frames - is IR emitter working?")
 			elif valid_frames == dark_tries:
@@ -364,14 +370,16 @@ def capture_guided_samples(
 					N_("Average darkness: {avg}, Threshold: {threshold}").format(avg=str(dark_running_total / valid_frames), threshold=str(dark_threshold))
 			else:
 				reason = N_("No face detected, aborting")
-			print(reason)
-			sys.exit(1)
+			result["error"] = Exception(reason)
+			aborted.set()
+			return
 
 		# If more than 1 faces are detected we can't know which one belongs to the user
 		elif len(face_locations) > 1:
-			video_capture.release()
-			print(N_("Multiple faces detected, aborting"))
-			sys.exit(1)
+			# video_capture.release()
+			result["error"] = Exception(N_("Multiple faces detected, aborting"))
+			aborted.set()
+			return
 
 		first_sample = encode(frame, face_locations[0])
 		samples = [list(first_sample)]
@@ -380,12 +388,11 @@ def capture_guided_samples(
 		try:
 			events.put(("progress", len(samples), total))
 
-			for key, prompt in steps:
+			for prompt in steps:
 				if cancel.is_set() or len(samples) >= max_samples:
 					break
 
-				events.put(("emit", guide_line(key)))
-				events.put(("emit", prompt))
+				events.put(("emit", guide_line(prompt)))
 
 				settle_until = clock() + settle_seconds
 				while not cancel.is_set() and clock() < settle_until:
@@ -418,8 +425,11 @@ def capture_guided_samples(
 			result["error"] = exc
 
 		finally:
-			finished.set()
 			events.put(("finished",))
+			deadline = clock() + 2
+			while clock() < deadline:
+				get_frame()
+			finished.set()
 
 	def update_ui():
 		with frame_lock:
@@ -452,8 +462,10 @@ def capture_guided_samples(
 			elif kind == "progress":
 				count, maximum = event[1:]
 				emit(progress_line(count, maximum))
+			elif kind == "finished":
+				progress_label.set_markup(f"<span foreground='#2AAAE5'><b>Captured {len(result["samples"])} face samples</b></span>")
 
-		if finished.is_set():
+		if finished.is_set() or aborted.is_set():
 			loop.quit()
 			return glib.SOURCE_REMOVE
 

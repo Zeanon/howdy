@@ -1,7 +1,7 @@
 import subprocess
-import enroll
 import cairo
 import math
+import time
 import os
 
 from i18n import _
@@ -135,11 +135,10 @@ def on_model_add(self, button):
 		dialog.set_modal(True)
 		
 		screen = gdk.Screen.get_default()
+		dialog.set_visual(screen.get_rgba_visual())
 		dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
 
-		content_area = dialog.get_content_area()
-
-		# Main content
+		content = dialog.get_content_area()
 		box = gtk.Box(
 			orientation=gtk.Orientation.VERTICAL,
 			spacing=8
@@ -149,7 +148,7 @@ def on_model_add(self, button):
 		box.set_margin_start(20)
 		box.set_margin_end(20)
 
-		content_area.add(box)
+		content.add(box)
 
 		info_label = gtk.Label()
 		info_label.set_xalign(0.0)
@@ -165,7 +164,7 @@ def on_model_add(self, button):
 		guide_label.set_markup(_(f"<big><span foreground='#2AAAE5'><b>Look straight at the camera</b></span></big>"))
 		box.pack_start(guide_label, False, False, 25)
 
-		progress_label = gtk.Label(label="")
+		progress_label = gtk.Label()
 		# progress_label.set_xalign(0.0)
 
 		progress_label.get_style_context().add_class("dim-label")
@@ -181,8 +180,6 @@ def on_model_add(self, button):
 				self,
 				dialog,
 				entered_name,
-				guide_label,
-				progress_label
 			)
 		)
 
@@ -247,70 +244,60 @@ def on_model_add(self, button):
 
 
 def execute_add(
-	box,
+	self,
 	dialog,
 	entered_name,
-	guide_label=None,
-	progress_label=None
 ):
 	"""Run `howdy add` on a worker thread; the dialog shows
 	the live guidance.
 	"""
 
-	def on_guide(key):
-		text = enroll.guide_text(key)
+	def on_error(error):
+		error_dialog = gtk.MessageDialog(
+			parent=self.window,
+			flags=gtk.DialogFlags.MODAL,
+			type=gtk.MessageType.ERROR,
+			buttons=gtk.ButtonsType.CLOSE
+		)
 
-		if guide_label is not None and text:
-			guide_label.set_markup(_(f"<big><span foreground='#2AAAE5'><b>{text}</b></span></big>"))
+		error_dialog.set_title(_("Howdy Error"))
+		error_dialog.set_markup(
+			_("Error while adding model:")
+		)
+		error_dialog.format_secondary_text(error)
 
-		return False
+		error_dialog.run()
+		error_dialog.destroy()
 
-	def on_progress(count, total):
-		if progress_label is not None:
-			progress_label.set_markup(
-				enroll.progress_text(count, total)
-			)
+	# enroll.run_add(
+	# 	[
+	# 		"howdy",
+	# 		"--gui",
+	# 		"-y",
+	# 		"-U",
+	# 		box.active_user,
+	# 		"add",
+	# 		entered_name
+	# 	],
+	# 	on_guide,
+	# 	on_progress,
+	# 	on_done
+	# )
+	import sys
+	import builtins
+	from collections import namedtuple
+	sys.path.append("/usr/local/lib/x86_64-linux-gnu/howdy")
+	args = namedtuple('args', ['y', 'gui', 'plain', 'user', 'arguments'])
+	builtins.howdy_args = args(True, True, False, self.active_user, [entered_name])
 
-		return False
-
-	def on_done(status, output):
+	try:
+		import gui
+		gui.run(dialog)
+	except Exception as exc:
+		on_error(str(exc))
+	finally:
 		dialog.destroy()
-
-		if status != 0:
-			error_dialog = gtk.MessageDialog(
-				parent=box.window,
-				flags=gtk.DialogFlags.MODAL,
-				type=gtk.MessageType.ERROR,
-				buttons=gtk.ButtonsType.CLOSE
-			)
-
-			error_dialog.set_title(_("Howdy Error"))
-			error_dialog.set_markup(
-				_("Error while adding model, error code {}:").format(status)
-			)
-			error_dialog.format_secondary_text(output)
-
-			error_dialog.run()
-			error_dialog.destroy()
-
-		box.load_model_list()
-		return False
-
-	enroll.run_add(
-		[
-			"howdy",
-			"--gui",
-			"-y",
-			"-U",
-			box.active_user,
-			"add",
-			entered_name
-		],
-		on_guide,
-		on_progress,
-		on_done
-	)
-
+		self.load_model_list()
 	return False
 
 

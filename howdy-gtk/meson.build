@@ -15,12 +15,11 @@ py_paths = configure_file(
 
 sources = files(
     'src/authsticky.py',
-    'src/enroll.py',
     'src/i18n.py',
     'src/init.py',
     'src/gtk_helper.py',
     'src/onboarding.py',
-    'src/paths_factory.py',
+    'src/paths_factory_gui.py',
     'src/tab_models.py',
     'src/tab_video.py',
     'src/window.py',

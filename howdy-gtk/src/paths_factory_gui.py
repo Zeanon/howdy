@@ -1,7 +1,6 @@
 from pathlib import PurePath
 import paths
 
-
 def config_file_path() -> str:
     """Return the path to the config file"""
     return str(paths.config_dir / "config.ini")

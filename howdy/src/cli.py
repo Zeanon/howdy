@@ -110,7 +110,8 @@ if args.user == "root":
 
 # Execute the right command
 if args.command == "add":
-	import cli.add
+	import cli.add as add
+	add.run()
 elif args.command == "clear":
 	import cli.clear
 elif args.command == "config":

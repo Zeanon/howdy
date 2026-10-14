@@ -7,7 +7,7 @@ import elevate
 import subprocess
 
 from i18n import _
-import paths_factory
+import paths_factory_gui
 
 # Make sure we have the libs we need
 gi.require_version("Gtk", "3.0")
@@ -21,7 +21,7 @@ class MainWindow(gtk.Window):
 		gtk.Window.__init__(self)
 
 		self.builder = gtk.Builder()
-		self.builder.add_from_file(paths_factory.main_window_wireframe_path())
+		self.builder.add_from_file(paths_factory_gui.main_window_wireframe_path())
 		self.builder.connect_signals(self)
 
 		self.window = self.builder.get_object("mainwindow")
@@ -47,7 +47,7 @@ class MainWindow(gtk.Window):
 		# Add the treeview
 		self.modellistbox.add(self.treeview)
 
-		filelist = os.listdir(paths_factory.user_models_dir_path())
+		filelist = os.listdir(paths_factory_gui.user_models_dir_path())
 		self.active_user = ""
 
 		self.userlist.items = 0
@@ -118,7 +118,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 elevate.elevate()
 
 # If no models have been created yet or when it is forced, start the onboarding
-if "--force-onboarding" in sys.argv or not os.path.exists(paths_factory.user_models_dir_path()):
+if "--force-onboarding" in sys.argv or not os.path.exists(paths_factory_gui.user_models_dir_path()):
 	import onboarding
 	onboarding.OnboardingWindow()
 
