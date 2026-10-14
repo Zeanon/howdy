@@ -51,6 +51,8 @@ SAMPLES_PER_STEP = 2
 DUPLICATE_DISTANCE = 0.05
 # Safety cap on samples per model (auth cost is one norm per stored vector).
 MAX_SAMPLES = 1 + len(GUIDE_STEPS) * SAMPLES_PER_STEP
+INIT_WAIT_SECONDS = 2
+END_WAIT_SECONDS = 1
 
 HIGHLIGHT_COLOR = (42, 170, 229) #2AAAE5
 
@@ -92,6 +94,8 @@ def capture_guided_samples(
 	steps=GUIDE_STEPS,
 	settle_seconds=SETTLE_SECONDS,
 	step_seconds=STEP_SECONDS,
+	init_wait_seconds=INIT_WAIT_SECONDS,
+	end_wait_seconds=END_WAIT_SECONDS,
 	samples_per_step=SAMPLES_PER_STEP,
 	max_samples=MAX_SAMPLES,
 	ring_color=HIGHLIGHT_COLOR,
@@ -102,12 +106,8 @@ def capture_guided_samples(
 
 	gi.require_version("Gtk", "3.0")
 	from gi.repository import Gtk as gtk
-	from gi.repository import Gdk as gdk
 	from gi.repository import GLib as glib
 	from gi.repository import GdkPixbuf as gdkPixbuf
-
-	dialog_width = 500
-	dialog_height = 605
 
 
 	# Count the number of illuminated read frames
@@ -170,95 +170,13 @@ def capture_guided_samples(
 	box.pack_start(button_box, False, False, 20)
 
 	if dialog is None:
-		dialog = gtk.Dialog(
-			title="Howdy – Create Model",
-			parent=window,
-			flags=gtk.DialogFlags.MODAL
-		)
-		dialog.connect(
-			"draw",
-			lambda widget, ctx: draw_background(widget, ctx)
-		)
-
-		dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
-		dialog.set_default_size(dialog_width, dialog_height)
-		dialog.set_app_paintable(True)
-		dialog.set_focus_on_map(False)
-		dialog.set_keep_above(True)
-		dialog.set_resizable(False)
-		dialog.set_can_focus(False)
-		dialog.set_decorated(False)
-		dialog.set_modal(True)
-		
-		screen = gdk.Screen.get_default()
-		dialog.set_visual(screen.get_rgba_visual())
-		dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
+		import gui
+		dialog = gui.create_enroll_dialog(parent=window)
 		content = dialog.get_content_area()
 	else:
 		content = dialog.get_content_area()
 		content.foreach(lambda child: content.remove(child))
 	content.add(box)
-
-	def draw_background(widget, ctx):
-		radius = 18
-		border = 2
-		half = border / 2
-
-		# dialog.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
-
-		# Fensterfläche transparent löschen
-		ctx.set_operator(cairo.OPERATOR_SOURCE)
-		ctx.set_source_rgba(0, 0, 0, 0)
-		ctx.paint()
-
-		ctx.set_operator(cairo.OPERATOR_OVER)
-		ctx.new_path()
-
-		# Linke Kante, ohne obere Kante
-		ctx.move_to(half, 0)
-		ctx.line_to(half, dialog_height - radius - half)
-
-		# Linke untere Rundung
-		ctx.arc_negative(
-			radius + half,
-			dialog_height - radius - half,
-			radius,
-			math.pi,
-			math.pi / 2
-		)
-
-		# Untere Kante
-		ctx.line_to(dialog_width - radius - half, dialog_height - half)
-
-		# Rechte untere Rundung
-		ctx.arc_negative(
-			dialog_width - radius - half,
-			dialog_height - radius - half,
-			radius,
-			math.pi / 2,
-			0
-		)
-
-		# Rechte Kante, ohne obere Kante
-		ctx.line_to(dialog_width - half, 0)
-
-    	# Theme-Hintergrundfarbe auslesen
-		style = widget.get_style_context()
-		found, bg_color = style.lookup_color("theme_bg_color")
-		# bg_color = style.get_background_color(gtk.StateFlags.NORMAL)
-
-		if found:
-			ctx.set_source_rgba(bg_color.red, bg_color.green, bg_color.blue, bg_color.alpha)
-		else:
-			# Fallback, falls die Farbe nicht verfügbar ist
-			ctx.set_source_rgb(0, 0, 0)
-		ctx.fill_preserve()
-
-		ctx.set_line_width(border)
-		ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-		ctx.set_source_rgb(HIGHLIGHT_COLOR[0]/255, HIGHLIGHT_COLOR[1]/255, HIGHLIGHT_COLOR[2]/255)
-
-		ctx.stroke()
 
 	def encode(frame, face_location):
 		if use_openvino:
@@ -356,7 +274,7 @@ def capture_guided_samples(
 		guide_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{GUIDE_STEPS[0]}</b></span></big>")
 
 		# Give the user time to read
-		deadline = clock() + 2
+		deadline = clock() + init_wait_seconds
 		while clock() < deadline:
 			get_frame()
 
@@ -435,9 +353,10 @@ def capture_guided_samples(
 
 		finally:
 			events.put(("finished",))
-			deadline = clock() + 2
+			deadline = clock() + end_wait_seconds
 			while clock() < deadline:
-				get_frame()
+				# get_frame()
+				pass
 			finished.set()
 
 	def update_ui():

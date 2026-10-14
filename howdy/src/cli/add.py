@@ -108,8 +108,9 @@ def run(dialog=None):
 
 	# Keep the default name if we can't ask questions (-y, or no TTY / closed stdin
 	# as when the setup wizard / Settings runs add with capture_output).
-	if builtins.howdy_args.y or not sys.stdin.isatty():
-		print(_('Using default label "%s" because of -y flag') % (label, ))
+	if (builtins.howdy_args.y or not sys.stdin.isatty()):
+		if not builtins.howdy_args.gui:
+			print(_('Using default label "%s" because of -y flag') % (label, ))
 	else:
 		# Ask the user for a custom label
 		try:

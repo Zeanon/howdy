@@ -91,7 +91,8 @@ inline int fingerprint_result_to_pam_result(const FprintdAuthenticator::Result &
 	}
 }
 
-inline bool str_to_bool(const std::string &str) {
+inline bool str_to_bool(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
 	return str == "true" || str == "yes" || str == "on" || str == "1";
 }
 

@@ -43,7 +43,7 @@ unsigned int max_fingerprint_tries;
 unsigned int max_enter_tries;
 
 bool quiet;
-bool verbose;
+bool blank_lines;
 bool timeout_notice;
 bool detection_notice;
 bool no_confirmation;
@@ -111,14 +111,14 @@ inline void howdy_error(int status) {
 
 		switch (status) {
 		case CompareResult::NoFaceModel:
-			if (verbose) {
+			if (blank_lines) {
 				conv_function(PAM_TEXT_INFO, "");
 			}
 			conv_function(PAM_ERROR_MSG, S(std::format("No face model known for {}", username).c_str()));
 			syslog(LOG_NOTICE, "Failure: no face model known");
 			break;
 		case CompareResult::TimeoutReached:
-			if (verbose) {
+			if (blank_lines) {
 				conv_function(PAM_TEXT_INFO, "");
 			}
 			if (timeout_notice) {
@@ -130,7 +130,7 @@ inline void howdy_error(int status) {
 			syslog(LOG_ERR, "Failure: general abort");
 			break;
 		case CompareResult::TooDark:
-			if (verbose) {
+			if (blank_lines) {
 				conv_function(PAM_TEXT_INFO, "");
 			}
 			conv_function(PAM_ERROR_MSG, S("Face detection image too dark"));
@@ -143,7 +143,7 @@ inline void howdy_error(int status) {
 			);
 			break;
 		default:
-			if (verbose) {
+			if (blank_lines) {
 				conv_function(PAM_TEXT_INFO, "");
 			}
 			conv_function(
@@ -180,7 +180,7 @@ inline int howdy_status(
 	syslog(LOG_INFO, "Authenticated with face authentication");
 	if (!no_confirmation) {
 		// Construct confirmation text from i18n string
-		if (verbose) {
+		if (blank_lines) {
 			conv_function(PAM_TEXT_INFO, "");
 		}
 		conv_function(PAM_TEXT_INFO, S(std::format("Face authenticated as {}", username).c_str()));
@@ -223,30 +223,30 @@ inline void do_auth() {
 	}
 
 	// small sleep to properly order the info messages in console
-	if (verbose) {
+	if (blank_lines) {
 		usleep(100000);
 	}
 
 	if (terminate || confirmation_type != ConfirmationType::Unset) {
 		return;
 	}
-	if (password && verbose) {
+	if (password && blank_lines) {
 		conv_function(PAM_TEXT_INFO, "");
 	}
 	if (detection_notice) {
-		if (password && verbose) {
+		if (password && blank_lines) {
 			conv_function(PAM_TEXT_INFO, "");
 		}
 		if (face_unlock) {
-			if (verbose) {
+			if (blank_lines) {
 				conv_function(PAM_TEXT_INFO, S("Facial authentication..."));
 			}
 			conv_function(PAM_TEXT_INFO, S("Please look directly into the camera"));
-			if (verbose) {
+			if (blank_lines) {
 				conv_function(PAM_TEXT_INFO, "");
 			}
 		}
-		if (fingerprint && verbose) {
+		if (fingerprint && blank_lines) {
 			conv_function(PAM_TEXT_INFO, S("Fingerprint authentication..."));
 		}
 	}
@@ -394,7 +394,7 @@ inline int identify(
 	bool abort_if_lid_closed = config.GetBoolean("core", "abort_if_lid_closed", true);
 
 	quiet = config.GetBoolean("core", "quiet", false);
-	verbose = config.GetBoolean("core", "verbose", true);
+	blank_lines = config.GetBoolean("core", "blank_lines", true);
 	timeout_notice = config.GetBoolean("core", "timeout_notice", true);
 	detection_notice = config.GetBoolean("core", "detection_notice", true);
 	no_confirmation = config.GetBoolean("core", "no_confirmation", false);
@@ -452,10 +452,10 @@ inline int identify(
 		} else if (arg.starts_with("quiet=")) {
 			quiet = str_to_bool(arg.substr(6, arg.length()));
 		}
-		else if (arg == "verbose") {
-			verbose = true;
-		} else if (arg.starts_with("verbose=")) {
-			verbose = str_to_bool(arg.substr(8, arg.length()));
+		else if (arg == "blank-lines") {
+			blank_lines = true;
+		} else if (arg.starts_with("blank-lines=")) {
+			blank_lines = str_to_bool(arg.substr(8, arg.length()));
 		}
 		else if (arg == "timeout-notice") {
 			timeout_notice = true;
@@ -561,7 +561,7 @@ inline int identify(
 		password_args.push_back("nodelay");
 	}
 	if (quiet) {
-		verbose = false;
+		blank_lines = false;
 	}
 	password_args.shrink_to_fit();
 	password = password && ask_auth_tok;
@@ -860,7 +860,7 @@ inline int identify(
 					retries,
 					max_face_auth_tries);
 
-				if (retries > 1 && verbose) {
+				if (retries > 1 && blank_lines) {
 					conv_function(PAM_TEXT_INFO, "");
 				}
 				if (retries < max_password_tries) {
@@ -1094,7 +1094,7 @@ inline int identify(
 
 			pam_res = fingerprint_task.get();
 			if (pam_res == PAM_SUCCESS) {
-				if (verbose) {
+				if (blank_lines) {
 					conv_function(PAM_TEXT_INFO, "");
 				}
 				conv_function(PAM_TEXT_INFO, S(std::format("Fingerprint authenticated as {}", username).c_str()));

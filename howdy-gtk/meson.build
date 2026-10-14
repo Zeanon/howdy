@@ -2,9 +2,21 @@ if meson.is_subproject()
 project('howdy-gtk', license: 'MIT', version: 'beta', meson_version: '>= 0.64.0')
 endif
 
+
+py = import('python').find_installation(paths_dict.get('python_path'))
+py.dependency()
+
+if get_option('install_in_site_packages')
+    pysourcesinstalldir = join_paths(py.get_install_dir(), 'howdy-gtk')
+else
+    pysourcesinstalldir = get_option('py_sources_dir') != '' ? get_option('py_sources_dir') / 'howdy-gtk' : join_paths(get_option('prefix'), get_option('libdir'), 'howdy-gtk')
+endif
+
+
 datadir = get_option('prefix') / get_option('datadir') / 'howdy-gtk'
 py_conf = configuration_data(paths_dict)
 py_conf.set('data_dir', datadir)
+py_conf.set('howdy_dir', join_paths(pysourcesinstalldir, '../howdy'))
 
 
 py_paths = configure_file(
@@ -24,15 +36,6 @@ sources = files(
     'src/tab_video.py',
     'src/window.py',
 )
-
-py = import('python').find_installation(paths_dict.get('python_path'))
-py.dependency()
-
-if get_option('install_in_site_packages')
-    pysourcesinstalldir = join_paths(py.get_install_dir(), 'howdy-gtk')
-else
-    pysourcesinstalldir = get_option('py_sources_dir') != '' ? get_option('py_sources_dir') / 'howdy-gtk' : join_paths(get_option('prefix'), get_option('libdir'), 'howdy-gtk')
-endif
 
 if get_option('install_in_site_packages')
     py.install_sources(

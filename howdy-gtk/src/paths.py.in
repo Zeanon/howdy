@@ -11,3 +11,6 @@ user_models_dir = PurePath("@user_models_dir@")
 
 # Define the absolute path to the Howdy data directory
 data_dir = PurePath("@data_dir@")
+
+# Define the absolute path to the Howdy directory
+howdy_dir = PurePath("@howdy_dir@")
