@@ -32,12 +32,12 @@ def N_(text):
 # printed as `@guide <key>` for the GTK apps; the prompt is for the terminal.
 # The steps are small movements the frontal detector still handles.
 GUIDE_STEPS = [
-	N_("Look straight at the camera"),
-	N_("Turn your head slightly to the left"),
-	N_("Turn your head slightly to the right"),
-	N_("Tilt your chin up a little"),
-	N_("Tilt your chin down a little"),
-	N_("Look straight at the camera again"),
+	"Look straight at the camera",
+	"Turn your head slightly to the left",
+	"Turn your head slightly to the right",
+	"Tilt your chin up a little",
+	"Tilt your chin down a little",
+	"Look straight at the camera again",
 ]
 
 # Seconds the user gets to move after each prompt (frames are read and
@@ -107,7 +107,7 @@ def capture_guided_samples(
 	from gi.repository import GdkPixbuf as gdkPixbuf
 
 	dialog_width = 500
-	dialog_height = 545
+	dialog_height = 605
 
 
 	# Count the number of illuminated read frames
@@ -120,47 +120,25 @@ def capture_guided_samples(
 	# The same prompts go to a desktop notification card: the banner sits right
 	# under the camera, where the user is looking during the scan.
 	progress = {"count": 0, "total": 0, "prompt": ""}
+	events = queue.Queue()
+	cancel = threading.Event()
+	aborted = threading.Event()
+	finished = threading.Event()
+	latest_frame = [None]
+	frame_lock = threading.Lock()
+	result = {"samples": None, "error": None}
+
 	clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-	
+
 	"""Same public API; capture runs in a worker while GTK stays responsive."""
 	builder = gtk.Builder()
 	window = builder.get_object("mainwindow")
-
-	if dialog is None:
-		dialog = gtk.Dialog(
-			title="Howdy – Create Model",
-			parent=window,
-			flags=gtk.DialogFlags.MODAL
-		)
-		dialog.connect(
-			"draw",
-			lambda widget, ctx: draw_background(widget, ctx)
-		)
-
-		# dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
-		dialog.set_default_size(dialog_width, dialog_height)
-		dialog.set_focus_on_map(False)
-		dialog.set_app_paintable(True)
-		dialog.set_keep_above(True)
-		dialog.set_resizable(False)
-		dialog.set_can_focus(False)
-		dialog.set_decorated(False)
-		dialog.set_modal(True)
-		
-		screen = gdk.Screen.get_default()
-		dialog.set_visual(screen.get_rgba_visual())
-		dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
-		content = dialog.get_content_area()
-	else:
-		content = dialog.get_content_area()
-		content.foreach(lambda child: content.remove(child))
 
 	box = gtk.Box(
 		orientation=gtk.Orientation.VERTICAL,
 		spacing=8
 	)
 	# box.set_border_width(12)
-	content.add(box)
 
 	inner_box = gtk.Box(
 		orientation=gtk.Orientation.VERTICAL,
@@ -181,21 +159,52 @@ def capture_guided_samples(
 	# image.set_vexpand(True)
 	box.pack_start(image, True, True, 0)
 
-	events = queue.Queue()
-	cancel = threading.Event()
-	aborted = threading.Event()
-	finished = threading.Event()
-	latest_frame = [None]
-	frame_lock = threading.Lock()
-	result = {"samples": None, "error": None}
+	abort_button = gtk.Button(label="Cancel")
+	abort_button.set_hexpand(False)
+	abort_button.connect("clicked", lambda _: (
+		result.__setitem__("error", Exception("Cancelled")),
+		aborted.set()
+	))
+	button_box = gtk.Box(orientation=gtk.Orientation.HORIZONTAL)
+	button_box.pack_start(abort_button, True, True, 75)
+	box.pack_start(button_box, False, False, 20)
 
+	if dialog is None:
+		dialog = gtk.Dialog(
+			title="Howdy – Create Model",
+			parent=window,
+			flags=gtk.DialogFlags.MODAL
+		)
+		dialog.connect(
+			"draw",
+			lambda widget, ctx: draw_background(widget, ctx)
+		)
+
+		dialog.set_type_hint(gdk.WindowTypeHint.NOTIFICATION)
+		dialog.set_default_size(dialog_width, dialog_height)
+		dialog.set_app_paintable(True)
+		dialog.set_focus_on_map(False)
+		dialog.set_keep_above(True)
+		dialog.set_resizable(False)
+		dialog.set_can_focus(False)
+		dialog.set_decorated(False)
+		dialog.set_modal(True)
+		
+		screen = gdk.Screen.get_default()
+		dialog.set_visual(screen.get_rgba_visual())
+		dialog.move((screen.get_width() / 2) - (dialog_width / 2), 0)
+		content = dialog.get_content_area()
+	else:
+		content = dialog.get_content_area()
+		content.foreach(lambda child: content.remove(child))
+	content.add(box)
 
 	def draw_background(widget, ctx):
 		radius = 18
 		border = 2
 		half = border / 2
 
-		dialog.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
+		# dialog.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
 
 		# Fensterfläche transparent löschen
 		ctx.set_operator(cairo.OPERATOR_SOURCE)
@@ -329,13 +338,13 @@ def capture_guided_samples(
 				progress["count"], progress["total"] = int(count), int(total)
 			except ValueError:
 				pass
-			progress_label.set_markup(f"<span foreground='#2AAAE5'><b>Samples: {count}/{total}</b></span>")
+			progress_label.set_markup(N_(f"<span foreground='#2AAAE5'><b>Samples: {count}/{total}</b></span>"))
 			return
 		if line.startswith("@guide "):
 			# if builtins.howdy_args.gui:
 			# 	say(line)
 			line = line[len("@guide "):]
-			guide_label.set_markup(f"<big><span foreground='#2AAAE5'><b>{line}</b></span></big>")
+			guide_label.set_markup(N_(f"<big><span foreground='#2AAAE5'><b>{line}</b></span></big>"))
 		if not builtins.howdy_args.gui:
 			say(N_(line))
 

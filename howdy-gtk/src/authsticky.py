@@ -101,7 +101,7 @@ class StickyWindow(gtk.Window):
 		half = border / 2
 
 		# Change cursor to the kill icon
-		self.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
+		# self.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
 
 		# Draw a semi transparent background
 		# ctx.set_source_rgba(0, 0, 0, .7)
@@ -141,7 +141,7 @@ class StickyWindow(gtk.Window):
 		ctx.line_to(window_width - half, 0)
 
 		# Schwarze Fläche
-		ctx.set_source_rgb(0, 0, 0)
+		ctx.set_source_rgba(0, 0, 0, 0.75)
 		ctx.fill_preserve()
 
 		ctx.set_line_width(border)
