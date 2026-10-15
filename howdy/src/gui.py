@@ -1,6 +1,3 @@
-import cli.add as cli_add
-
-
 def create_enroll_dialog(parent):
 	import os
 	import gi
@@ -107,7 +104,8 @@ def create_enroll_dialog(parent):
 
 
 def add(dialog=None):
-	return cli_add.run(dialog=dialog)
+	from cli import add
+	return add.run(dialog=dialog)
 
 def remove():
 	import cli.remove

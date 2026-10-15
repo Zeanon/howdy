@@ -11,6 +11,10 @@ os.environ["GDK_BACKEND"] = "x11"
 sys.path.append(paths_factory_gui.howdy_path())
 import gui
 
+import builtins
+from collections import namedtuple
+args = namedtuple('args', ['y', 'gui', 'plain', 'user', 'arguments'])
+
 
 def on_error(subtext, error, parent):
 	if error == "Cancelled":
@@ -198,10 +202,7 @@ def execute_add(
 	# 	on_progress,
 	# 	on_done
 	# )
-	import builtins
-	from collections import namedtuple
-	args = namedtuple('args', ['y', 'gui', 'plain', 'user', 'arguments'])
-	builtins.howdy_args = args(True, True, False, self.active_user, [entered_name])
+	builtins.howdy_args = args(y=True, gui=True, plain=False, user=self.active_user, arguments=[entered_name])
 
 	try:
 		gui.add(dialog)
@@ -236,10 +237,7 @@ def on_model_delete(self, button):
 		response = dialog.run()
 		dialog.destroy()
 
-		import builtins
-		from collections import namedtuple
-		args = namedtuple('args', ['y', 'gui', 'plain', 'user', 'arguments'])
-		builtins.howdy_args = args(True, True, False, self.active_user, [model_id])
+		builtins.howdy_args = args(y=True, gui=True, plain=False, user=self.active_user, arguments=[model_id])
 
 		if response == gtk.ResponseType.OK:
 			try:
