@@ -1,6 +1,5 @@
 from pathlib import PurePath
 import paths
-import os
 
 def config_file_path() -> str:
     """Return the path to the config file"""
@@ -31,6 +30,6 @@ def dlib_data_dir_path() -> PurePath:
     """Return the path to the dlib data directory"""
     return paths.dlib_data_dir
 
-def howdy_path() -> PurePath:
+def howdy_path() -> str:
     """Return the path to the howdy directory"""
-    return os.path.normpath(paths.howdy_dir)
+    return str(paths.howdy_dir)

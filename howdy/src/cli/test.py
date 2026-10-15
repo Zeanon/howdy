@@ -79,7 +79,7 @@ encodings = []
 models = None
 
 try:
-	user = builtins.howdy_user
+	user = builtins.howdy_args.user
 	models = json.load(open(paths_factory.user_model_path(user)))
 	encoding_size = 256 if use_openvino else 128
 	encodings, model_owner = flatten_models(models, encoding_size)

@@ -28,12 +28,12 @@ py_sources = [
     'cli/snap.py',
     'cli/test.py',
     'cli.py',
+    'gui.py',
     'compare.py',
-    'openvino_face.py',
-    'enroll_capture.py',
-    'config_edit.py',
     'exit_codes.py',
+    'enroll_capture.py',
     'i18n.py',
+    'openvino_face.py',
     'paths_factory.py',
     'recorders/__init__.py',
     'recorders/ffmpeg_reader.py',
@@ -44,16 +44,17 @@ py_sources = [
     'rubberstamps/hotkey.py',
     'rubberstamps/nod.py',
     'snapshot.py',
-    'gui.py',
     py_paths,
 ]
 
 # Include PAM module
 if get_option('install_in_site_packages')
-    pysourcesinstalldir = join_paths(py.get_install_dir(), 'howdy')
+    installdir = py.get_install_dir()
 else  
-    pysourcesinstalldir = get_option('py_sources_dir') != '' ? get_option('py_sources_dir') / 'howdy' : join_paths(get_option('prefix'), get_option('libdir'), 'howdy')
+    installdir = get_option('py_sources_dir') != '' ? get_option('py_sources_dir') : paths_dict.get('install_dir')
 endif
+
+pysourcesinstalldir = join_paths(installdir, 'howdy')
 
 pam_module_conf_data = configuration_data(paths_dict)
 pam_module_conf_data.set('compare_script_path', join_paths(pysourcesinstalldir, 'compare.py'))
@@ -117,13 +118,6 @@ endif
 
 install_data('dlib-data/install.sh', 'dlib-data/Readme.md', install_dir: dlibdatadir, install_mode: 'rwxr--r--')
 
-install_data(
-    'openvino-models/install.sh',
-    install_dir: datadir / 'openvino-models',
-    install_mode: 'rwxr-xr-x',
-    install_tag: 'openvino_models',
-)
-
 install_man('../howdy.1')
 
 # if get_option('fetch_dlib_data')
@@ -164,7 +158,7 @@ install_man('../howdy.1')
 
 #     install_data(
 #         model_files,
-#         install_dir: join_paths(get_option('prefix'), get_option('libdir'), 'dlib_models'),
+#         install_dir: join_paths(installdir, 'dlib_models'),
 #     )
 
 # endif

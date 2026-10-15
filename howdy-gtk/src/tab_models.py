@@ -12,6 +12,25 @@ sys.path.append(paths_factory_gui.howdy_path())
 import gui
 
 
+def on_error(subtext, error, parent):
+	if error == "Cancelled":
+		return
+
+	error_dialog = gtk.MessageDialog(
+		parent=parent,
+		flags=gtk.DialogFlags.MODAL,
+		type=gtk.MessageType.ERROR,
+		buttons=gtk.ButtonsType.CLOSE
+	)
+
+	error_dialog.set_title(_("Howdy Error"))
+	error_dialog.set_markup(subtext)
+	error_dialog.format_secondary_text(error)
+
+	error_dialog.run()
+	error_dialog.destroy()
+
+
 def on_user_change(self, select):
 	self.active_user = select.get_active_text()
 	self.load_model_list()
@@ -165,26 +184,6 @@ def execute_add(
 	the live guidance.
 	"""
 
-	def on_error(error):
-		if error == "Cancelled":
-			return
-
-		error_dialog = gtk.MessageDialog(
-			parent=self.window,
-			flags=gtk.DialogFlags.MODAL,
-			type=gtk.MessageType.ERROR,
-			buttons=gtk.ButtonsType.CLOSE
-		)
-
-		error_dialog.set_title(_("Howdy Error"))
-		error_dialog.set_markup(
-			_("Error while adding model:")
-		)
-		error_dialog.format_secondary_text(error)
-
-		error_dialog.run()
-		error_dialog.destroy()
-
 	# enroll.run_add(
 	# 	[
 	# 		"howdy",
@@ -205,9 +204,9 @@ def execute_add(
 	builtins.howdy_args = args(True, True, False, self.active_user, [entered_name])
 
 	try:
-		gui.run(dialog)
+		gui.add(dialog)
 	except Exception as exc:
-		on_error(str(exc))
+		on_error(_("Error while adding model:"), str(exc), self.window)
 	finally:
 		dialog.destroy()
 		self.load_model_list()
@@ -231,37 +230,21 @@ def on_model_delete(self, button):
 		)
 		dialog.set_title(_("Confirm Model Deletion"))
 		dialog.set_markup(
-			_("Are you sure you want to delete model {id} ({name})?")
-			.format(id=model_id, name=name)
+			_(f"Are you sure you want to delete model {model_id} ({name})?")
 		)
 
 		response = dialog.run()
 		dialog.destroy()
 
+		import builtins
+		from collections import namedtuple
+		args = namedtuple('args', ['y', 'gui', 'plain', 'user', 'arguments'])
+		builtins.howdy_args = args(True, True, False, self.active_user, [model_id])
+
 		if response == gtk.ResponseType.OK:
-			status, output = subprocess.getstatusoutput(
-				"howdy remove {} -y -U {}".format(
-					model_id,
-					self.active_user
-				)
-			)
-
-			if status != 0:
-				error_dialog = gtk.MessageDialog(
-					parent=self,
-					flags=gtk.DialogFlags.MODAL,
-					type=gtk.MessageType.ERROR,
-					buttons=gtk.ButtonsType.CLOSE
-				)
-
-				error_dialog.set_title(_("Howdy Error"))
-				error_dialog.set_markup(
-					_("Error while deleting model, error code {}:")
-					.format(status)
-				)
-				error_dialog.format_secondary_text(output)
-
-				error_dialog.run()
-				error_dialog.destroy()
-
-			self.load_model_list()
+			try:
+				gui.remove()
+			except Exception as exc:
+				on_error(_("Error while deleting model"), str(exc), self.window)
+			finally:
+				self.load_model_list()

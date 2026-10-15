@@ -1,4 +1,4 @@
-import cli.add as add 
+import cli.add as cli_add
 
 
 def create_enroll_dialog(parent):
@@ -106,5 +106,8 @@ def create_enroll_dialog(parent):
 	return dialog
 
 
-def run(dialog=None):
-	return add.run(dialog=dialog)
+def add(dialog=None):
+	return cli_add.run(dialog=dialog)
+
+def remove():
+	import cli.remove

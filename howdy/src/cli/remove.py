@@ -9,21 +9,27 @@ import paths_factory
 
 from i18n import _
 
-user = builtins.howdy_user
+user = builtins.howdy_args.user
 
 # Check if enough arguments have been passed
 if not builtins.howdy_args.arguments:
-	print(_("Please add the ID of the model you want to remove as an argument"))
-	print(_("For example:"))
-	print("\n\thowdy remove 0\n")
-	print(_("You can find the IDs by running:"))
-	print("\n\thowdy list\n")
+	reason = _("Please add the ID of the model you want to remove as an argument\n")
+	reason += _("For example:\n")
+	reason += "\thowdy remove 0\n"
+	reason += _("You can find the IDs by running:\n")
+	reason += "\thowdy list"
+	if builtins.howdy_args.gui:
+		raise Exception(reason)
+	print(reason)
 	sys.exit(1)
 
 # Check if the models file has been created yet
 if not os.path.exists(paths_factory.user_models_dir_path()):
-	print(_("Face models have not been initialized yet, please run:"))
-	print("\n\thowdy add\n")
+	reason = _("Face models have not been initialized yet, please run:\n")
+	reason += "\thowdy add"
+	if builtins.howdy_args.gui:
+		raise Exception(reason)
+	print(reason)
 	sys.exit(1)
 
 # Path to the models file
@@ -33,8 +39,11 @@ enc_file = paths_factory.user_model_path(user)
 try:
 	encodings = json.load(open(enc_file))
 except FileNotFoundError:
-	print(_("No face model known for the user {}, please run:").format(user))
-	print("\n\thowdy add\n")
+	reason = _(f"No face model known for the user {user}, please run:\n")
+	reason += "\thowdy add"
+	if builtins.howdy_args.gui:
+		raise Exception(reason)
+	print(reason)
 	sys.exit(1)
 
 # Tracks if a encoding with that id has been found
@@ -49,7 +58,7 @@ for enc in encodings:
 		# Only ask the user if there's no -y flag
 		if not builtins.howdy_args.y:
 			# Double check with the user
-			print(_('This will remove the model called "{label}" for {user}').format(label=enc["label"], user=user))
+			print(_(f'This will remove the model called "{enc["label"]}" for {user}'))
 			ans = input(_("Do you want to continue [y/N]: "))
 
 			# Abort if the answer isn't yes
@@ -66,7 +75,10 @@ for enc in encodings:
 
 # Abort if no matching id was found
 if not found:
-	print(_("No model with ID {id} exists for {user}").format(id=id, user=user))
+	reason = _(f"No model with ID {id} exists for {user}")
+	if builtins.howdy_args.gui:
+		raise Exception(reason)
+	print(reason)
 	sys.exit(1)
 
 # Remove the entire file if this encoding is the only one

@@ -10,7 +10,7 @@ import paths_factory
 
 from i18n import _
 
-user = builtins.howdy_user
+user = builtins.howdy_args.user
 
 # Check if the models file has been created yet
 if not os.path.exists(paths_factory.user_models_dir_path()):

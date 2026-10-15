@@ -9,7 +9,7 @@ import paths_factory
 from i18n import _
 
 # Get the passed user
-user = builtins.howdy_user
+user = builtins.howdy_args.user
 
 # Check if the models folder is there
 if not os.path.exists(paths_factory.user_models_dir_path()):

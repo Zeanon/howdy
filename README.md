@@ -95,6 +95,7 @@ cd /path/to/project/
 # Create venv under folder named .venv/ inside project
 # directory that can access system-managed python packages
 
+########## Im install folder generieren, wenn nicht überschrieben: /usr/local/lib/x86_64-linux-gnu/Howdy
 python3 -m venv .venv
 
 # Then activate it and install meson in it

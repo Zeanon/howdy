@@ -7,7 +7,6 @@ import sys
 import json
 import configparser
 import builtins
-import numpy as np
 import paths_factory
 import enroll_capture
 
@@ -22,9 +21,9 @@ def run(dialog=None):
 	except ImportError as err:
 		reason = str(err)
 		reason += _("\nCan't import the dlib module, check the output of")
-		reason += "pip3 show dlib"
+		reason += "\npip3 show dlib"
 		if builtins.howdy_args.gui:
-			return 1, reason
+			raise ImportError(reason)
 		print(reason)
 		sys.exit(1)
 
@@ -32,9 +31,9 @@ def run(dialog=None):
 	if not os.path.isfile(paths_factory.shape_predictor_5_face_landmarks_path()):
 		reason = _("Data files have not been downloaded, please run the following commands:")
 		reason += "\n\tcd " + paths_factory.dlib_data_dir_path()
-		reason += "\tsudo ./install.sh\n"
+		reason += "\n\tsudo ./install.sh"
 		if builtins.howdy_args.gui:
-			return 1, reason
+			raise Exception(reason)
 		print(reason)
 		sys.exit(1)
 
@@ -164,16 +163,18 @@ def run(dialog=None):
 		if builtins.howdy_args.gui:
 			raise e
 		print(e)
-		return
+		sys.exit(1)
 	finally:
 		# Release the camera on success and on any detection / encoding / read error
 		# (the wizard's live preview reopens the device right after add exits).
 		video_capture.release()
 
 	if not samples:
+		reason = _("No samples captured, aborting")
 		if builtins.howdy_args.gui:
-			raise Exception(_("No samples captured, aborting"))
-		return
+			raise Exception(reason)
+		print(reason)
+		sys.exit(1)
 
 	insert_model["data"].extend(samples)
 	say(_(f"Captured {len(samples)} face samples"))

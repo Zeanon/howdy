@@ -94,7 +94,6 @@ args = parser.parse_args()
 
 # Save the args and user as builtins which can be accessed by the imports
 builtins.howdy_args = args
-builtins.howdy_user = args.user
 
 # Check if we have rootish rights
 # This is this far down the file so running the command for help is always possible

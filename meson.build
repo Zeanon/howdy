@@ -4,7 +4,8 @@ dlibdatadir = get_option('dlib_data_dir') != '' ? get_option('dlib_data_dir') : 
 confdir = get_option('config_dir') != '' ? get_option('config_dir') : join_paths(get_option('prefix'), get_option('sysconfdir'), 'howdy')
 usermodelsdir = get_option('user_models_dir') != '' ? get_option('user_models_dir') : join_paths(confdir, 'models')
 logpath = get_option('log_path')
-pythonpath = get_option('python_path')
+installdir = get_option('install_dir') != '' ? get_option('install_dir') : join_paths(get_option('prefix'), get_option('libdir'), 'Howdy')
+pythonpath = get_option('python_path') != '' ? get_option('python_path') : join_paths(installdir, '.venv/bin/python3')
 
 config_path = join_paths(confdir, 'config.ini')
 
@@ -13,7 +14,8 @@ paths_dict = {
     'dlib_data_dir': dlibdatadir,
     'user_models_dir': usermodelsdir,
     'log_path': logpath,
-    'python_path': pythonpath
+    'python_path': pythonpath,
+	'install_dir': installdir
 }
 
 # We need to keep this order beause howdy-gtk defines the gtk script path which is used later in howdy
