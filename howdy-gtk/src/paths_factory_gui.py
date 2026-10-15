@@ -32,4 +32,4 @@ def dlib_data_dir_path() -> PurePath:
 
 def howdy_path() -> str:
     """Return the path to the howdy directory"""
-    return str(paths.howdy_dir)
+    return str(paths.install_dir / "howdy")

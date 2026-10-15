@@ -17,7 +17,7 @@ pysourcesinstalldir = join_paths(installdir, 'howdy-gtk')
 datadir = get_option('prefix') / get_option('datadir') / 'howdy-gtk'
 py_conf = configuration_data(paths_dict)
 py_conf.set('data_dir', datadir)
-py_conf.set('howdy_dir', join_paths(installdir, 'howdy'))
+py_conf.set('install_dir', installdir)
 
 
 py_paths = configure_file(
