@@ -3,9 +3,9 @@
 # re-executes the main module. Without this guard, workers re-run the
 # camera setup, hit EBUSY on /dev/video*, and break the parent process
 # with "Failed to read camera" errors and PAM timeouts.
-import sys as _sys
+import sys
 if __name__ != "__main__":
-	_sys.exit(0)
+	sys.exit(0)
 
 # Compare incoming video with known faces
 # Running in a local python instance to get around PATH issues
@@ -22,26 +22,26 @@ timings = {
 
 # Import required modules
 import os
-import sys
-import syslog
-import json
-import configparser
-import dlib
 import cv2
-from datetime import timezone, datetime
-import atexit
 import pwd
-import subprocess
+import json
+import dlib
+import atexit
+import syslog
 import snapshot
+import traceback
+import subprocess
+import configparser
+import paths_factory
+
 import numpy as np
 import _thread as thread
-import paths_factory
-import traceback
 
-from enroll_capture import flatten_models
-from recorders.video_capture import VideoCapture
 from i18n import _
 from exit_codes import CompareResult
+from datetime import timezone, datetime
+from enroll_capture import flatten_models
+from recorders.video_capture import VideoCapture
 
 
 # Force singlethreaded BLAS. dlib's OpenBLAS/OpenMP matmuls can livelock when raced against this scri>
@@ -232,6 +232,7 @@ def send_to_ui(type, message):
 		except IOError:
 			pass
 
+
 def get_graphical_session_env():
     sessions = subprocess.run(
         ["loginctl", "list-sessions", "--no-legend", "--no-pager"],
@@ -280,10 +281,8 @@ def get_graphical_session_env():
             candidates.append((session_id, props))
 
     if not candidates:
-        raise RuntimeError("Keine aktive lokale grafische Sitzung gefunden")
+        raise RuntimeError("No active local graphical sessions found")
 
-    # Bevorzuge den Prozess der Plasma-Sitzung, um deren tatsächliche
-    # Display-Variablen statt angenommener Standardwerte zu verwenden.
     for session_id, props in candidates:
         uid = int(props["User"])
         runtime_dir = f"/run/user/{uid}"
@@ -346,7 +345,7 @@ def get_graphical_session_env():
                 continue
 
     raise RuntimeError(
-        "Display-Umgebung der aktiven Plasma-Sitzung nicht gefunden"
+		"Could not find display-environment of the active Plasma-Session"
     )
 
 
@@ -428,8 +427,8 @@ if auth_popup:
 	except FileNotFoundError:
 		pass
 
-signal.signal(signal.SIGTERM, _signal_exit)
 signal.signal(signal.SIGINT, _signal_exit)
+signal.signal(signal.SIGTERM, _signal_exit)
 
 # Write to the stdin to redraw ui
 send_to_ui("M", _("Starting up..."))
@@ -492,8 +491,8 @@ send_to_ui("M", _("Identifying you..."))
 # Start the read loop
 frames = 0
 valid_frames = 0
-timings["fr"] = time.time()
 dark_running_total = 0
+timings["fr"] = time.time()
 
 while process_exists(parent_pid):
 	# Increment the frame count every loop

@@ -8,7 +8,7 @@ from gi.repository import GObject as gObject
 
 os.environ["GDK_BACKEND"] = "x11"
 sys.path.append(paths_factory_gui.howdy_path())
-import gui
+import gui # type: ignore
 
 import builtins
 from collections import namedtuple

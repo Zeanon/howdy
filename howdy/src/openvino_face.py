@@ -8,7 +8,7 @@ os.environ["INTEL_OCL_CACHE_DIR"] = "/tmp/intel_ocl"
 os.environ["OPENVINO_TELEMETRY_ENABLE"] = "0"
 
 # =====================================================================
-# NEU: TELEMETRIE-IMPORT KOMPLETT FAKEN
+# Fake the telemetry import to remove telemetry
 # =====================================================================
 class DummyTelemetry:
     def __init__(self, *args, **kwargs): pass
@@ -18,7 +18,7 @@ class DummyTelemetry:
     def end_session(self, *args, **kwargs): pass
     def force_shutdown(self, *args, **kwargs): pass
 
-# Wir injizieren ein leeres Modul in Pythons Modul-Speicher
+# Inject an empty module
 import types
 dummy_mod = types.ModuleType("openvino_telemetry")
 dummy_mod.Telemetry = DummyTelemetry

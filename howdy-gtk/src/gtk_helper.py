@@ -327,7 +327,7 @@ def builder(scope, path, domain):
 
 def apply_text_direction(language_code):
     """Mirror the UI for right-to-left languages."""
-    import languages
+    import languages # type: ignore
 
     rtl = languages.is_rtl(language_code)
     gtk.Widget.set_default_direction(

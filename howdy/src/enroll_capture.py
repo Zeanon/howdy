@@ -8,15 +8,11 @@
 # through small head movements; this module does the same. All the camera /
 # dlib work is passed in as callables so the sequencing is unit-testable.
 
+import os
 import time
-import sys
 import queue
 import builtins
 import threading
-import time
-import cairo
-import math
-import os
 
 from i18n import _
 

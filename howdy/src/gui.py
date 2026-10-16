@@ -22,7 +22,7 @@ def create_enroll_dialog(parent):
 
 		# dialog.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
 
-		# Fensterfläche transparent löschen
+		# Make window transparent
 		ctx.set_operator(cairo.OPERATOR_SOURCE)
 		ctx.set_source_rgba(0, 0, 0, 0)
 		ctx.paint()
@@ -30,11 +30,11 @@ def create_enroll_dialog(parent):
 		ctx.set_operator(cairo.OPERATOR_OVER)
 		ctx.new_path()
 
-		# Linke Kante, ohne obere Kante
+		# left edge
 		ctx.move_to(half, 0)
 		ctx.line_to(half, dialog_height - radius - half)
 
-		# Linke untere Rundung
+		# lower left corner
 		ctx.arc_negative(
 			radius + half,
 			dialog_height - radius - half,
@@ -43,10 +43,10 @@ def create_enroll_dialog(parent):
 			math.pi / 2
 		)
 
-		# Untere Kante
+		# lower edge
 		ctx.line_to(dialog_width - radius - half, dialog_height - half)
 
-		# Rechte untere Rundung
+		# lower right corner
 		ctx.arc_negative(
 			dialog_width - radius - half,
 			dialog_height - radius - half,
@@ -55,10 +55,10 @@ def create_enroll_dialog(parent):
 			0
 		)
 
-		# Rechte Kante, ohne obere Kante
+		# right edge
 		ctx.line_to(dialog_width - half, 0)
 
-    	# Theme-Hintergrundfarbe auslesen
+    	# get the themes background color
 		style = widget.get_style_context()
 		found, bg_color = style.lookup_color("theme_bg_color")
 		# bg_color = style.get_background_color(gtk.StateFlags.NORMAL)
@@ -66,7 +66,7 @@ def create_enroll_dialog(parent):
 		if found:
 			ctx.set_source_rgba(bg_color.red, bg_color.green, bg_color.blue, bg_color.alpha)
 		else:
-			# Fallback, falls die Farbe nicht verfügbar ist
+			# Fallback
 			ctx.set_source_rgb(0, 0, 0)
 		ctx.fill_preserve()
 

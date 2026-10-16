@@ -103,8 +103,6 @@ class StickyWindow(gtk.Window):
 		# Change cursor to the kill icon
 		# self.get_window().set_cursor(gdk.Cursor(gdk.CursorType.TARGET)) #TODO change?
 
-		# Draw a semi transparent background
-		# ctx.set_source_rgba(0, 0, 0, .7)
 		ctx.set_operator(cairo.OPERATOR_SOURCE)
 		ctx.set_source_rgba(0, 0, 0, 0)
 		ctx.paint()
@@ -112,11 +110,11 @@ class StickyWindow(gtk.Window):
 		ctx.set_operator(cairo.OPERATOR_OVER)
 		ctx.new_path()
 
-		# Linke Kante, ohne obere Kante
+		# left edge
 		ctx.move_to(half, 0)
 		ctx.line_to(half, window_height - radius - half)
 
-		# Linke untere Rundung
+		# lower left corner
 		ctx.arc_negative(
 			radius + half,
 			window_height - radius - half,
@@ -125,10 +123,10 @@ class StickyWindow(gtk.Window):
 			math.pi / 2
 		)
 
-		# Untere Kante
+		# lower edge
 		ctx.line_to(window_width - radius - half, window_height - half)
 
-		# Rechte untere Rundung
+		# lower right corner
 		ctx.arc_negative(
 			window_width - radius - half,
 			window_height - radius - half,
@@ -137,10 +135,10 @@ class StickyWindow(gtk.Window):
 			0
 		)
 
-		# Rechte Kante, ohne obere Kante
+		# right edge
 		ctx.line_to(window_width - half, 0)
 
-		# Schwarze Fläche
+		# semi transparent background
 		ctx.set_source_rgba(0, 0, 0, 0.75)
 		ctx.fill_preserve()
 
