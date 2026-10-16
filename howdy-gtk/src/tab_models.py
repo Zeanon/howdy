@@ -152,8 +152,8 @@ def on_model_add(self, button):
 		info_label.set_line_wrap(True)
 		info_label.set_max_width_chars(48)
 		info_label.set_markup(_("Keep your face inside the camera "
-								 "view and follow the prompts.\n" \
-								 "This takes about a minute."))
+								"view and follow the prompts.\n" \
+								"This takes about a minute."))
 		box.pack_start(info_label, False, False, 0)
 
 		guide_label = gtk.Label()
@@ -188,20 +188,6 @@ def execute_add(
 	the live guidance.
 	"""
 
-	# enroll.run_add(
-	# 	[
-	# 		"howdy",
-	# 		"--gui",
-	# 		"-y",
-	# 		"-U",
-	# 		box.active_user,
-	# 		"add",
-	# 		entered_name
-	# 	],
-	# 	on_guide,
-	# 	on_progress,
-	# 	on_done
-	# )
 	builtins.howdy_args = args(y=True, gui=True, plain=False, user=self.active_user, arguments=[entered_name])
 
 	try:

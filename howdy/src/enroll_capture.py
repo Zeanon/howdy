@@ -163,7 +163,7 @@ def capture_guided_samples(
 	abort_button.set_hexpand(False)
 	abort_button.connect("clicked", lambda _: (
 		result.__setitem__("error", Exception("Cancelled")),
-		aborted.set()
+		finished.set()
 	))
 	button_box = gtk.Box(orientation=gtk.Orientation.HORIZONTAL)
 	button_box.pack_start(abort_button, True, True, 75)
@@ -178,12 +178,13 @@ def capture_guided_samples(
 		content.foreach(lambda child: content.remove(child))
 	content.add(box)
 
+
 	def encode(frame, face_location):
 		if use_openvino:
 			face_encoding = face_encoder.encode(frame, face_location)
 			if face_encoding is None:
 				result["error"] = Exception(N_("Failed to encode face, aborting"))
-				aborted.set()
+				finished.set()
 				return
 			return face_encoding.tolist()
 		else:
@@ -227,9 +228,6 @@ def capture_guided_samples(
 		return face_locations, overlay
 
 	def get_frame():
-		if aborted.is_set() or finished.is_set() or cancel.is_set():
-			sys.exit()
-
 		frame, gsframe = video_capture.read_frame()
 		gsframe = clahe.apply(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
 
@@ -301,14 +299,14 @@ def capture_guided_samples(
 			else:
 				reason = N_("No face detected, aborting")
 			result["error"] = Exception(reason)
-			aborted.set()
+			finished.set()
 			return
 
 		# If more than 1 faces are detected we can't know which one belongs to the user
 		elif len(face_locations) > 1:
 			# video_capture.release()
 			result["error"] = Exception(N_("Multiple faces detected, aborting"))
-			aborted.set()
+			finished.set()
 			return
 
 		first_sample = encode(frame, face_locations[0])
@@ -362,6 +360,7 @@ def capture_guided_samples(
 				pass
 			finished.set()
 
+
 	def update_ui():
 		with frame_lock:
 			current = latest_frame[0]
@@ -396,11 +395,11 @@ def capture_guided_samples(
 			elif kind == "finished":
 				progress_label.set_markup(f"<span foreground='#2AAAE5'><b>Captured {len(result["samples"])} face samples</b></span>")
 
-		if finished.is_set() or aborted.is_set():
+		if finished.is_set():
 			loop.quit()
 			return glib.SOURCE_REMOVE
-
 		return glib.SOURCE_CONTINUE
+
 
 	dialog.show_all()
 
