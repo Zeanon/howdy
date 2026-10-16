@@ -5,8 +5,8 @@ import paths_factory_gui
 
 from gi.repository import Gtk as gtk
 from gi.repository import Gdk as gdk
-from gi.repository import GdkPixbuf as gdkPixbuf
 from gi.repository import GObject as gObject
+from gi.repository import GdkPixbuf as gdkPixbuf
 
 MAX_HEIGHT = 300
 MAX_WIDTH = 300
@@ -67,6 +67,7 @@ def capture_frame(self):
 
 	_, frame = self.capture.read()
 
+	frame = self.cv2.flip(frame, 1)
 	frame = self.cv2.resize(frame, None, fx=self.scaling_factor, fy=self.scaling_factor, interpolation=self.cv2.INTER_AREA)
 
 	_, buffer = self.cv2.imencode(".png", frame)

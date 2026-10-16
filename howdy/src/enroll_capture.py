@@ -124,7 +124,7 @@ def capture_guided_samples(
 	cancel = threading.Event()
 	aborted = threading.Event()
 	finished = threading.Event()
-	latest_frame = [None]
+	latest_frame = None
 	frame_lock = threading.Lock()
 	result = {"samples": None, "error": None}
 
@@ -228,6 +228,8 @@ def capture_guided_samples(
 		return face_locations, overlay
 
 	def get_frame():
+		nonlocal latest_frame
+
 		frame, gsframe = video_capture.read_frame()
 		gsframe = clahe.apply(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
 
@@ -243,7 +245,7 @@ def capture_guided_samples(
 		data = glib.Bytes.new(gsframe.tobytes())
 
 		with frame_lock:
-			latest_frame[0] = (data, width, height)
+			latest_frame = (data, width, height)
 
 		return frame, face_locations
 
@@ -362,9 +364,11 @@ def capture_guided_samples(
 
 
 	def update_ui():
+		nonlocal latest_frame
+
 		with frame_lock:
-			current = latest_frame[0]
-			latest_frame[0] = None
+			current = latest_frame
+			latest_frame = None
 
 		if current is not None:
 			data, width, height = current

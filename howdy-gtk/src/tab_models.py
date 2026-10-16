@@ -1,6 +1,5 @@
 import os
 import sys
-import subprocess
 import paths_factory_gui
 
 from i18n import _
