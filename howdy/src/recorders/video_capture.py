@@ -61,7 +61,7 @@ class VideoCapture:
 		if self is not None:
 			try:
 				self.internal.release()
-			except AttributeError as err:
+			except AttributeError:
 				pass
 
 	def release(self):

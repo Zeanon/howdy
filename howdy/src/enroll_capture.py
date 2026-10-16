@@ -227,6 +227,9 @@ def capture_guided_samples(
 		return face_locations, overlay
 
 	def get_frame():
+		if aborted.is_set() or finished.is_set() or cancel.is_set():
+			sys.exit()
+
 		frame, gsframe = video_capture.read_frame()
 		gsframe = clahe.apply(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
 
