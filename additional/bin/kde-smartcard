@@ -1,5 +1,0 @@
-#%PAM-1.0
-
-auth	[success=1 default=ignore]  /usr/local/lib/x86_64-linux-gnu/security/pam_howdy.so workaround=off
-auth	requisite                   pam_deny.so
-auth	required                    pam_permit.so

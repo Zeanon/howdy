@@ -1,3 +1,8 @@
 #%PAM-1.0
 
+auth	sufficient                  /usr/local/lib/x86_64-linux-gnu/security/pam_howdy.so workaround=native blank-lines=false verbose=false face-auth:debug-to-console=false
 @include common-auth
+@include common-account
+@include common-password
+session	required					pam_env.so readenv=1 user_readenv=0
+@include common-session-noninteractive

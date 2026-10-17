@@ -30,12 +30,12 @@ sources = files(
     'src/authsticky.py',
     'src/i18n.py',
     'src/init.py',
-    'src/gtk_helper.py',
     'src/onboarding.py',
     'src/paths_factory_gui.py',
     'src/tab_models.py',
     'src/tab_video.py',
     'src/window.py',
+    'src/logo.png'
 )
 
 if get_option('install_in_site_packages')
@@ -81,6 +81,19 @@ install_data(
   install_mode: 'rwxr-xr-x',
   install_dir: get_option('prefix') / get_option('bindir'),
   install_tag: 'bin',
+)
+
+desktop_conf = configuration_data({ 'icon_path': join_paths(pysourcesinstalldir, 'logo.png') })
+desktop_file = configure_file(
+    input: 'bin/howdy.desktop.in',
+    output: 'Howdy.desktop',
+    configuration: desktop_conf,
+)
+
+install_data(
+    desktop_file,
+    install_dir: get_option('prefix') / get_option('datadir') / 'applications',
+    install_tag: 'desktop',
 )
 
 if get_option('with_polkit')

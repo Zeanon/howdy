@@ -3,14 +3,13 @@
 # re-executes the main module (cli.py when running any `howdy <cmd>`).
 # Without this guard, workers re-run the CLI dispatch and break the
 # parent process with camera EBUSY errors and argparse side effects.
-import sys as _sys
+import sys
 if __name__ != "__main__":
-	_sys.exit(0)
+	sys.exit(0)
 
 # CLI directly called by running the howdy command
 
 # Import required modules
-import sys
 import os
 import pwd
 import getpass

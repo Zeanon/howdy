@@ -118,7 +118,6 @@ def capture_guided_samples(
 	progress = {"count": 0, "total": 0, "prompt": ""}
 	events = queue.Queue()
 	cancel = threading.Event()
-	aborted = threading.Event()
 	finished = threading.Event()
 	latest_frame = None
 	frame_lock = threading.Lock()
@@ -408,7 +407,7 @@ def capture_guided_samples(
 
 	thread = threading.Thread(
 		target=worker,
-		name="howdy-guided-capture",
+		name="howdy-enroll",
 		daemon=True,
 	)
 	thread.start()

@@ -1,6 +1,5 @@
 from enum import Enum
 
-
 class CompareResult(Enum):
 	Success = 0,
 	Error = 1,

@@ -1,12 +1,13 @@
 # Create and save snapshots of auth attempts
 
 # Import modules
-import cv2
 import os
-from datetime import timezone, datetime
-import numpy as np
+import cv2
 import paths_factory
 
+import numpy as np
+
+from datetime import timezone, datetime
 
 def generate(frames, text_lines):
 	"""Generate a snapshot from given frames"""

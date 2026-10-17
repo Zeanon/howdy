@@ -1,5 +1,5 @@
 #%PAM-1.0
 
-auth	[success=1 default=ignore]  pam_fprintd.so max-tries=5 timeout=5
+auth	[success=1 default=ignore]  /usr/local/lib/x86_64-linux-gnu/security/pam_howdy.so fingerprint:timeout=-1 password=false face-auth:show-auth-popup=false quiet
 auth	requisite                   pam_deny.so
 auth	required                    pam_permit.so
