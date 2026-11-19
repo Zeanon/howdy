@@ -9,5 +9,8 @@ Vcs-Git: https://github.com/boltgolt/howdy
 Package: howdy-gtk
 Homepage: https://github.com/boltgolt/howdy
 Architecture: all
-Depends: ${misc:Depends}, howdy, python3, python3-pip, python3-gi, python3-gi-cairo, python3-cairo, gir1.2-gtk-3.0
+# The window is part of the howdy program: howdy gui. This package has its data, the desktop entry and
+# the howdy-gtk command, a link to it.
+Depends: ${misc:Depends}, howdy
+Recommends: pkexec | policykit-1
 Description: Optional UI package for Howdy, written in Gtk

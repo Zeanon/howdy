@@ -2,7 +2,8 @@ Source: howdy
 Section: misc
 Priority: optional
 Standards-Version: 3.9.7
-Build-Depends: git, debhelper, fakeroot, python3, python3-pip, python3-setuptools, python3-wheel, ninja-build, meson, libpam0g-dev, pkg-config, libevdev-dev, libinih-dev
+Build-Depends: git, debhelper, fakeroot, python3, python3-pip, python3-setuptools, python3-wheel, ninja-build, meson, libpam0g-dev, pkg-config, libevdev-dev, libinih-dev, libsystemd-dev,
+ libgtk-3-dev, libopencv-dev, libdlib-dev, libblas-dev, liblapack-dev, nlohmann-json3-dev
 Maintainer: boltgolt <boltgolt@gmail.com>
 Vcs-Git: https://github.com/boltgolt/howdy
 
