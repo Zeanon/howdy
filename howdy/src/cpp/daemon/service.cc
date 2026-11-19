@@ -235,7 +235,8 @@ void AuthenticationService::purge_finished() {
 	const auto now = Clock::now();
 	const std::lock_guard<std::mutex> lock(mutex_);
 	for (auto it = requests_.begin(); it != requests_.end();) {
-		if (it->second->finished.has_value() && now - *it->second->finished >= CLEANUP_AFTER) {
+		const auto& finished = it->second->finished;
+		if (finished.has_value() && now - *finished >= CLEANUP_AFTER) {
 			it = requests_.erase(it);
 		} else {
 			++it;
@@ -276,7 +277,7 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		args.emplace_back(*s);
 		std::free(*s); // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
 	}
-	std::free(static_cast<void*>(strv)); // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+	std::free(static_cast<void*>(strv)); // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory,bugprone-multi-level-implicit-pointer-conversion)
 
 	if (!lookup_uid(username).has_value()) {
 		return sd_bus_error_set(ret_error, "org.howdy.Authentication.InvalidUser", "Unknown user");

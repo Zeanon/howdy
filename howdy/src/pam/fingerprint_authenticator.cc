@@ -148,7 +148,7 @@ bool FprintdAuthenticator::get_scan_type() {
 		return sd_bus_error_set_errno(&error, r);
 	}
 
-	r = sd_bus_message_read_basic(reply, 's', static_cast<void*>(&s));
+	r = sd_bus_message_read(reply, "s", &s);
 	if (r < 0) {
 		return sd_bus_error_set_errno(&error, r);
 	}
