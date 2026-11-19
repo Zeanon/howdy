@@ -7,9 +7,6 @@ datadir = get_option('prefix') / get_option('datadir') / 'howdy'
 py_conf = configuration_data(paths_dict)
 py_conf.set('data_dir', datadir)
 
-py = import('python').find_installation(paths_dict.get('python_path'))
-py.dependency()
-
 howdy_version = '3.0.1'
 
 # Which Python components are installed. Only the Python files that these
@@ -21,20 +18,37 @@ need_py_popup = get_option('popup_service') == 'python'
 need_py_cli = get_option('cli') == 'python' or get_option('gtk_app') == 'python'
 need_py = need_py_auth or need_py_management or need_py_popup or need_py_cli
 
+# The configured interpreter (by default the venv of the installation) only
+# exists after it was created. The Python components need it, without them the
+# Python that runs meson is used and the configured path is only passed on.
+configured_python = paths_dict.get('python_path')
+use_configured_python = need_py or import('fs').exists(configured_python)
+if need_py and not import('fs').exists(configured_python)
+    error('The Python components need the interpreter @0@, which does not exist. Create the venv before "meson setup" or set -Dpython_path.'.format(configured_python))
+endif
+if use_configured_python
+    py = import('python').find_installation(configured_python)
+    py_exec = py.full_path()
+else
+    py = import('python').find_installation()
+    py_exec = configured_python
+endif
+py.dependency()
+
 if need_py_auth
-    authentication_exec = '"' + py.full_path() + '" -I -m howdy.howdy_authentication_daemon'
+    authentication_exec = '"' + py_exec + '" -I -m howdy.howdy_authentication_daemon'
 else
     authentication_exec = '"' + (installdir / 'howdy-authentication-daemon') + '"'
 endif
 
 if need_py_management
-    management_exec = '"' + py.full_path() + '" -I -m howdy.howdy_management_daemon'
+    management_exec = '"' + py_exec + '" -I -m howdy.howdy_management_daemon'
 else
     management_exec = '"' + (installdir / 'howdy-management-daemon') + '"'
 endif
 
 if need_py_popup
-    popup_exec = '"' + py.full_path() + '" -I -m howdy.howdy_popup_service'
+    popup_exec = '"' + py_exec + '" -I -m howdy.howdy_popup_service'
 else
     popup_exec = '"' + (installdir / 'howdy-auth-popup') + '"'
 endif
@@ -43,7 +57,7 @@ service_conf_data = configuration_data({
     'authentication_exec': authentication_exec,
     'management_exec': management_exec,
     'popup_exec': popup_exec,
-    'python_path': py.full_path(),
+    'python_path': py_exec,
     'openvino_cache_dir': openvinocachedir,
     'user_models_dir': usermodelsdir,
     'howdy_authentication_service_name': howdy_authentication_service_name,
@@ -267,7 +281,7 @@ if build_auth_daemon or build_cli
         endif
 
         if get_option('openvino').enabled() and not openvino.found()
-            error('OpenVINO was requested but neither a system installation nor the openvino Python wheel in @0@ was found'.format(py.full_path()))
+            error('OpenVINO was requested but neither a system installation nor the openvino Python wheel in @0@ was found'.format(py_exec))
         endif
     endif
 
