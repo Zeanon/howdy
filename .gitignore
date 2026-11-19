@@ -128,3 +128,5 @@ debian/howdy
 
 # Meson
 subprojects/
+
+/additional
