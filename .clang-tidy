@@ -1,0 +1,7 @@
+Checks: 'clang-diagnostic-*,clang-analyser-*,-clang-diagnostic-unused-command-line-argument,google-*,bugprone-*,modernize-*,performance-*,portability-*,readability-*,-bugprone-easily-swappable-*,-readability-magic-numbers,-modernize-use-trailing-return-type,-readability-identifier-length,-bugprone-casting-through-void,-google-runtime-int,-modernize-use-designated-initializers,-modernize-use-ranges,-modernize-use-scoped-lock,-bugprone-forward-declaration-namespace,-readability-implicit-bool-conversion,-google-build-using-namespace,-modernize-avoid-c-arrays,-readability-avoid-nested-conditional-operator,-modernize-return-braced-init-list,-google-readability-todo'
+WarningsAsErrors: 'clang-diagnostic-*,clang-analyser-*,-clang-diagnostic-unused-command-line-argument,google-*,bugprone-*,modernize-*,performance-*,portability-*,readability-*,-bugprone-easily-swappable-*,-readability-magic-numbers,-google-readability-todo,-modernize-use-trailing-return-type,-readability-identifier-length,-bugprone-casting-through-void,-google-runtime-int,-modernize-use-designated-initializers,-modernize-use-ranges,-modernize-use-scoped-lock,-bugprone-forward-declaration-namespace,-readability-implicit-bool-conversion,-google-build-using-namespace,-modernize-avoid-c-arrays,-readability-avoid-nested-conditional-operator,-modernize-return-braced-init-list'
+CheckOptions:
+  - key:             readability-function-cognitive-complexity.Threshold
+    value:           '50'
+
+# vim:syntax=yaml

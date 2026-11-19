@@ -1,0 +1,15 @@
+# Derived from the existing code: tabs, attached braces, left aligned pointers.
+BasedOnStyle: LLVM
+UseTab: Always
+IndentWidth: 4
+TabWidth: 4
+ContinuationIndentWidth: 4
+ColumnLimit: 160
+PointerAlignment: Left
+AlignAfterOpenBracket: AlwaysBreak
+AllowShortFunctionsOnASingleLine: None
+AllowShortCaseLabelsOnASingleLine: true
+IndentCaseLabels: true
+BreakStringLiterals: false
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
