@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 #include <syslog.h>

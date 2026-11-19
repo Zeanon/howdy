@@ -1,6 +1,7 @@
 #include "face_setup.hh"
 
 #include <filesystem>
+#include <stdexcept>
 
 #include "paths.hh"
 #include "util.hh"

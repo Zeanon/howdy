@@ -9,6 +9,7 @@
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <tuple>
 

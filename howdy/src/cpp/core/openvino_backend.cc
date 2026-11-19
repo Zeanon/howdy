@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <mutex>
 #include <numeric>
+#include <stdexcept>
 
 #include <opencv2/imgproc.hpp>
 

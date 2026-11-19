@@ -1,6 +1,7 @@
 #include "enter_device.hh"
 
 #include <cstring>
+#include <stdexcept>
 
 EnterDevice::EnterDevice() : raw_device(libevdev_new(), &libevdev_free), raw_uinput_device(nullptr, &libevdev_uinput_destroy) {
 	auto* dev_ptr = raw_device.get();

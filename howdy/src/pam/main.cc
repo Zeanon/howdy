@@ -9,6 +9,7 @@
 #include <glob.h>
 #include <libintl.h>
 #include <spawn.h>
+#include <stdexcept>
 #include <termios.h>
 
 #include <vars.hh>
@@ -387,7 +388,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 	password = config.GetBoolean("password", "enable", false);
 	max_password_tries = static_cast<unsigned>(config.GetInteger("password", "max_tries", 3));
-	max_enter_tries = static_cast<unsigned>(config.GetInteger64("password", "max_enter_tries", 5));
+	max_enter_tries = static_cast<unsigned>(config.GetInteger("password", "max_enter_tries", 5));
 	bool password_nodelay = config.GetBoolean("password", "nodelay", false);
 	std::chrono::seconds password_delay = str_to_seconds(config.GetString("password", "delay", "2s"));
 	Workaround workaround = get_workaround(config.GetString("core", "workaround", "off"));
