@@ -1,34 +1,100 @@
-#ifndef MAIN_H_
-#define MAIN_H_
+#pragma once
 
-#include <cstring>
+#include "face_authenticator.hh"
+#include "fingerprint_authenticator.hh"
+
+#include <chrono>
+#include <set>
 #include <string>
-#include <unistd.h>
-#include <cstdint>
 
-enum class ConfirmationType : std::uint8_t { Unset, Howdy, Pam };
-enum class Workaround : std::uint8_t { Off, Input, Native };
+static inline bool str_equal(const char* a, const char* b) {
+	if (a == nullptr && b == nullptr) {
+		return true;
+	}
+	if (a == nullptr || b == nullptr) {
+		return false;
+	}
+	return strcmp(a, b) == 0;
+}
+
+enum class ConfirmationType { Unset, Terminated, Howdy, Fingerprint, Password };
+
+enum class Workaround { Off, Input, Native };
 
 // Exit status codes returned by the compare process
-enum CompareError : std::uint8_t {
-  NO_FACE_MODEL = 10,
-  TIMEOUT_REACHED = 11,
-  ABORT = 12,
-  TOO_DARK = 13,
-  INVALID_DEVICE = 14,
-  RUBBERSTAMP = 15
+enum CompareResult : std::uint_fast8_t {
+	Abort = 10,
+	Terminated = 11,
+	NoFaceModel = 12,
+	InvalidDevice = 13,
+	TooDark = 14,
+	TimeoutReached = 15,
+	Rubberstamp = 20,
 };
 
-inline auto get_workaround(const std::string &workaround) -> Workaround {
-  if (workaround == "input") {
-    return Workaround::Input;
-  }
+// Part of the definition of pam_handle so we can access the authtok to reset it for password auth
+struct pam_handle {
+	char* authtok;
+};
 
-  if (workaround == "native") {
-    return Workaround::Native;
-  }
+// Parse string to Workaround enum
+inline Workaround get_workaround(const std::string& workaround) {
+	if (workaround == "input") {
+		return Workaround::Input;
+	}
 
-  return Workaround::Off;
+	if (workaround == "native") {
+		return Workaround::Native;
+	}
+
+	return Workaround::Off;
+}
+
+inline std::set<std::string> split_string(const std::string& str, const char& delimiter) {
+	std::set<std::string> tokens;
+	if (str == "") {
+		return tokens;
+	}
+	size_t start = 0;
+	size_t end = str.find(delimiter);
+
+	while (end != std::string::npos) {
+		tokens.insert(str.substr(start, end - start));
+		start = end + 1;
+		end = str.find(delimiter, start);
+	}
+
+	tokens.insert(str.substr(start));
+	return tokens;
+}
+
+inline bool str_to_bool(std::string str) {
+	std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+	return str == "true" || str == "yes" || str == "on" || str == "y" || str == "1";
+}
+
+inline std::chrono::seconds str_to_seconds(const std::string_view& str) {
+	int value = 0;
+
+	const auto* first = str.data();
+	const auto* last = first + str.size();
+
+	const auto [ptr, ec] = std::from_chars(first, last, value);
+
+	if (ec != std::errc{}) {
+		return std::chrono::seconds{0};
+	}
+
+	if (ptr == last) {
+		return std::chrono::seconds{static_cast<unsigned>(value)};
+	}
+
+	switch (*ptr) {
+		case 'd': return std::chrono::hours{static_cast<unsigned>(value) * 24};
+		case 'h': return std::chrono::hours{static_cast<unsigned>(value)};
+		case 'm': return std::chrono::minutes{static_cast<unsigned>(value)};
+		default: return std::chrono::seconds{static_cast<unsigned>(value)};
+	}
 }
 
 /**
@@ -40,69 +106,18 @@ inline auto get_workaround(const std::string &workaround) -> Workaround {
  * @note This function was created because `getenv` wasn't working properly in
  * some contexts (like sudo).
  */
-auto checkenv(const char *name) -> bool {
-  if (std::getenv(name) != nullptr) {
-    return true;
-  }
+inline bool checkenv(const char* name) {
+	if (std::getenv(name) != nullptr) {
+		return true;
+	}
 
-  auto len = strlen(name);
+	auto len = strlen(name);
 
-  for (char **env = environ; *env != nullptr; env++) {
-    if (strncmp(*env, name, len) == 0) {
-      return true;
-    }
-  }
+	for (char** env = environ; *env != nullptr; env++) {
+		if (strncmp(*env, name, len) == 0) {
+			return true;
+		}
+	}
 
-  return false;
+	return false;
 }
-
-/**
- * Get the value of an environment variable either using getenv or from the
- * environ array.
- * @param name The name of the environment variable.
- * @return The value of the environment variable or nullptr if it doesn't exist.
- * @note The environ array is searched for the same reason as in checkenv.
- */
-auto getenv_value(const char *name) -> const char * {
-  const char *value = std::getenv(name);
-  if (value != nullptr) {
-    return value;
-  }
-
-  auto len = strlen(name);
-
-  for (char **env = environ; *env != nullptr; env++) {
-    // Only match the full name, directly followed by the equals sign
-    if (strncmp(*env, name, len) == 0 && (*env)[len] == '=') {
-      return *env + len + 1;
-    }
-  }
-
-  return nullptr;
-}
-
-/**
- * Check if a locale environment variable is safe to pass to the root python
- * subprocess.
- * @param value The value of the environment variable.
- * @return True if the value only looks like locale names.
- */
-auto is_safe_locale(const char *value) -> bool {
-  if (*value == '\0' || strstr(value, "..") != nullptr) {
-    return false;
-  }
-
-  for (const char *chr = value; *chr != '\0'; chr++) {
-    bool allowed = (*chr >= 'a' && *chr <= 'z') ||
-                   (*chr >= 'A' && *chr <= 'Z') ||
-                   (*chr >= '0' && *chr <= '9') || *chr == '_' ||
-                   *chr == '.' || *chr == '@' || *chr == ':' || *chr == '-';
-    if (!allowed) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-#endif // MAIN_H_
