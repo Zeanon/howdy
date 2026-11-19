@@ -1,0 +1,103 @@
+#!/bin/bash
+# Download OpenVINO face detection and re-identification models for Howdy
+# These models run on Intel iGPU via OpenVINO for fast face unlock
+
+if [[ "$EUID" != 0 ]]; then
+    echo "This script needs to be run as root."
+    exit 1
+fi
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CACHE_DIR="@openvino_cache_dir@"
+
+OPENZOO_URL="https://storage.openvinotoolkit.org/repositories/open_model_zoo"
+BASE_URL="$OPENZOO_URL/2023.0/models_bin/1"
+
+if command -v wget >/dev/null 2>&1; then
+    _PROGRESS_OPT=()
+    if wget --help 2>&1 | grep -q -- '--show-progress'; then
+        _PROGRESS_OPT=(-q --show-progress)
+    fi
+
+    download() {
+        wget "${_PROGRESS_OPT[@]}" \
+            --tries=6 \
+            --timeout=30 \
+            --max-redirect=1 \
+            --output-document="$2" \
+            "$1"
+    }
+elif command -v curl >/dev/null 2>&1; then
+    download() {
+        curl \
+            --fail \
+            --location \
+            --retry 5 \
+            --output "$2" \
+            "$1"
+    }
+else
+    echo "Error: Neither wget nor curl is installed." >&2
+    exit 1
+fi
+
+echo "Downloading OpenVINO face detection model (FP16)..."
+download \
+    "$BASE_URL/face-detection-adas-0001/FP16/face-detection-adas-0001.xml" \
+    "$SCRIPT_DIR/face-detection-adas-0001.xml"
+download \
+    "$BASE_URL/face-detection-adas-0001/FP16/face-detection-adas-0001.bin" \
+    "$SCRIPT_DIR/face-detection-adas-0001.bin"
+echo ""
+
+echo "Downloading OpenVINO face re-identification model (FP16)..."
+download \
+    "$BASE_URL/face-reidentification-retail-0095/FP16/face-reidentification-retail-0095.xml" \
+    "$SCRIPT_DIR/face-reidentification-retail-0095.xml"
+download \
+    "$BASE_URL/face-reidentification-retail-0095/FP16/face-reidentification-retail-0095.bin" \
+    "$SCRIPT_DIR/face-reidentification-retail-0095.bin"
+echo ""
+
+echo "Downloading OpenVINO face landmarks model (FP16)..."
+download \
+    "$OPENZOO_URL/temp/facial-landmarks-35-adas-0002/FP16/facial-landmarks-35-adas-0002.xml" \
+    "$SCRIPT_DIR/facial-landmarks-35-adas-0002.xml"
+download \
+    "$OPENZOO_URL/temp/facial-landmarks-35-adas-0002/FP16/facial-landmarks-35-adas-0002.bin" \
+    "$SCRIPT_DIR/facial-landmarks-35-adas-0002.bin"
+echo ""
+
+echo "Downloading OpenVINO face anti-spoofing model..."
+download \
+    "https://raw.githubusercontent.com/vladimirwest/OpenVINO_Face_Anti-Spoofing/refs/heads/master/anti_spoofing_480.xml" \
+    "$SCRIPT_DIR/anti-spoofing-480.xml"
+download \
+    "https://raw.githubusercontent.com/vladimirwest/OpenVINO_Face_Anti-Spoofing/refs/heads/master/anti_spoofing_480.bin" \
+    "$SCRIPT_DIR/anti-spoofing-480.bin"
+echo ""
+
+echo "Downloading OpenVINO damo-flir..."
+download \
+    "https://modelscope.cn/models/iic/cv_manual_face-liveness_flir/resolve/master/model.onnx?view=false" \
+    "$SCRIPT_DIR/damo-flir.onnx"
+"@python_path@" -m openvino.tools.ovc \
+    "$SCRIPT_DIR/damo-flir.onnx" \
+    --output_model "$SCRIPT_DIR/damo-flir.xml"
+rm "$SCRIPT_DIR/damo-flir.onnx"
+chmod 644 *.bin *.xml
+
+echo ""
+echo "-------------------------------------------------------------------------------------"
+echo ""
+echo "Creating model cache directory at $CACHE_DIR..."
+mkdir -p "$CACHE_DIR"
+chmod 700 "$CACHE_DIR"
+echo ""
+echo "-------------------------------------------------------------------------------------"
+echo ""
+echo "Done! OpenVINO models installed."
+echo "The GPU model cache will be populated on first run (~10s), then loads in <500ms."
+echo ""

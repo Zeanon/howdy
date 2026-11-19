@@ -1,0 +1,3 @@
+#!/bin/bash
+
+"@python_path@" -I -m howdy-gtk "$@"

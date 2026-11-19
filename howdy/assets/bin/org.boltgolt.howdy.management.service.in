@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=@management_bus@
+SystemdService=@howdy_management_service_name@
+Exec=/usr/bin/false

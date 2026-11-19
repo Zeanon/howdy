@@ -1,0 +1,6 @@
+[Service]
+ProtectHome=no
+PrivateDevices=yes
+DeviceAllow=/dev/uinput rw
+BindPaths=/tmp/.X11-unix
+BindPaths=/dev

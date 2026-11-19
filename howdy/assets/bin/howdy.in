@@ -1,0 +1,3 @@
+#!/bin/sh
+
+"@python_path@" -I -m howdy.cli "$@"

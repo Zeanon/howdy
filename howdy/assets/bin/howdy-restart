@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# early return on enything besides wakeup
+if [[ "$1" != "post" ]]; then
+    exit 0
+fi
+
+# restart howdy auth daemon
+systemctl restart @howdy_authentication_service_name@

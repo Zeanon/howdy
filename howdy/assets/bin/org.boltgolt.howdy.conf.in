@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE busconfig PUBLIC
+ "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+
+<busconfig>
+    <!-- Root betreibt den Howdy-Daemon -->
+    <policy user="root">
+        <allow own="@authentication_bus@"/>
+        <allow own="@management_bus@"/>
+        <allow send_destination="@authentication_bus@"
+               send_interface="@authentication_interface@"
+               send_type="method_call"/>
+        <allow send_type="signal"
+               send_interface="@popup_interface@"/>
+        <allow receive_type="signal"
+               receive_interface="@popup_interface@"/>
+    </policy>
+
+    <!-- Normale Benutzer -->
+    <policy context="default">
+        <deny own="@authentication_bus@"/>
+        <deny own="@management_bus@"/>
+        <allow send_destination="@authentication_bus@"
+               send_interface="@authentication_interface@"
+               send_type="method_call"
+               send_member="StartAuthentication"/>
+        <allow send_destination="@authentication_bus@"
+               send_interface="@authentication_interface@"
+               send_type="method_call"
+               send_member="GetResult"/>
+        <allow send_destination="@authentication_bus@"
+               send_interface="@authentication_interface@"
+               send_type="method_call"
+               send_member="CancelAuthentication"/>
+        <allow send_destination="@authentication_bus@"
+               send_interface="@authentication_interface@"
+               send_type="method_call"
+               send_member="ClearAuthentication"/>
+        <allow send_destination="@management_bus@"
+               send_interface="@management_interface@"
+               send_type="method_call"
+               send_member="Add"/>
+        <allow send_destination="@management_bus@"
+               send_interface="@management_interface@"
+               send_type="method_call"
+               send_member="List"/>
+        <allow send_destination="@management_bus@"
+               send_interface="@management_interface@"
+               send_type="method_call"
+               send_member="Remove"/>
+        <allow send_destination="@management_bus@"
+               send_interface="@management_interface@"
+               send_type="method_call"
+               send_member="Clear"/>
+        <allow send_destination="@management_bus@"
+               send_interface="@management_interface@"
+               send_type="method_call"
+               send_member="SetModels"/>
+        <allow receive_type="signal"
+               receive_sender="@authentication_bus@"
+               receive_interface="@popup_interface@"
+               receive_member="Show"/>
+        <allow receive_type="signal"
+               receive_sender="@authentication_bus@"
+               receive_interface="@popup_interface@"
+               receive_member="Update"/>
+        <allow receive_type="signal"
+               receive_sender="@authentication_bus@"
+               receive_interface="@popup_interface@"
+               receive_member="Close"/>
+    </policy>
+</busconfig>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+  "https://specifications.freedesktop.org/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>boltgolt</vendor>
+  <vendor_url>https://github.com/boltgolt/howdy</vendor_url>
+  <icon_name>howdy</icon_name>
+  <action id="@management_interface@">
+    <description>Manage Howdy authentication</description>
+    <message>Authenticate to manage Howdy</message>
+
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self_keep</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

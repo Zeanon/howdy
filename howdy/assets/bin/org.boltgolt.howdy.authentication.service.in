@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=@authentication_bus@
+SystemdService=@howdy_authentication_service_name@
+Exec=/usr/bin/false

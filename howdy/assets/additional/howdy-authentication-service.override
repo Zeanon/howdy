@@ -1,0 +1,11 @@
+[Service]
+BindPaths=/dev
+PrivateDevices=yes
+DeviceAllow=<your-camera>
+DeviceAllow=char-video4linux rw
+DeviceAllow=/dev/dri/card0 rw <replace with your GPU>
+DeviceAllow=/dev/dri/renderD128 rw
+
+# Only for the hotkey rubber stamp: it reads the keyboards in /dev/input
+#SupplementaryGroups=input
+#DeviceAllow=char-input r
