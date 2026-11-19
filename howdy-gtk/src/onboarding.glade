@@ -32,7 +32,7 @@
     <property name="can-focus">False</property>
     <property name="title" translatable="yes">Welcome to Howdy</property>
     <property name="window-position">center</property>
-    <property name="icon">logo.png</property>
+    <property name="icon">assets/logo.png</property>
     <property name="type-hint">menu</property>
     <property name="gravity">center</property>
     <child>
@@ -41,7 +41,7 @@
         <property name="can-focus">False</property>
         <property name="orientation">vertical</property>
         <child>
-          <object class="GtkBox" id="slide6">
+          <object class="GtkBox" id="slide7">
             <property name="can-focus">False</property>
             <property name="no-show-all">True</property>
             <property name="orientation">vertical</property>
@@ -89,7 +89,7 @@ You can open the Howdy Configurator later on to change more advanced settings or
           </packing>
         </child>
         <child>
-          <object class="GtkBox" id="slide5">
+          <object class="GtkBox" id="slide6">
             <property name="can-focus">False</property>
             <property name="no-show-all">True</property>
             <property name="orientation">vertical</property>
@@ -315,7 +315,7 @@ but will take much longer to authenticate you</property>
           </packing>
         </child>
         <child>
-          <object class="GtkBox" id="slide4">
+          <object class="GtkBox" id="slide5">
             <property name="can-focus">False</property>
             <property name="no-show-all">True</property>
             <property name="orientation">vertical</property>
@@ -400,7 +400,7 @@ but will take much longer to authenticate you</property>
           </packing>
         </child>
         <child>
-          <object class="GtkBox" id="slide3">
+          <object class="GtkBox" id="slide4">
             <property name="can-focus">False</property>
             <property name="no-show-all">True</property>
             <property name="orientation">vertical</property>
@@ -485,7 +485,7 @@ but will take much longer to authenticate you</property>
           </packing>
         </child>
         <child>
-          <object class="GtkBox" id="slide2">
+          <object class="GtkBox" id="slide3">
             <property name="can-focus">False</property>
             <property name="no-show-all">True</property>
             <property name="orientation">vertical</property>
@@ -638,6 +638,79 @@ but will take much longer to authenticate you</property>
           </packing>
         </child>
         <child>
+          <object class="GtkBox" id="slide2">
+            <property name="can-focus">False</property>
+            <property name="no-show-all">True</property>
+            <property name="margin-bottom">10</property>
+            <property name="orientation">vertical</property>
+            <child>
+              <object class="GtkLabel" id="label8openvino">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="margin-top">20</property>
+                <property name="label" translatable="yes">Downloading OpenVINO data files</property>
+                <attributes>
+                  <attribute name="weight" value="bold"/>
+                </attributes>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="label1openvino">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="margin-left">10</property>
+                <property name="margin-right">10</property>
+                <property name="margin-top">10</property>
+                <property name="margin-bottom">20</property>
+                <property name="label" translatable="yes">Howdy needs three pre trained facial recognition datasets to be able to recognise you, which will be downloaded now. You can see the download progress below.</property>
+                <property name="justify">center</property>
+                <property name="wrap">True</property>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkEventBox" id="downloadeventboxopenvino">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <child>
+                  <object class="GtkLabel" id="downloadoutputlabelopenvino">
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="margin-left">10</property>
+                    <property name="margin-right">10</property>
+                    <property name="margin-top">10</property>
+                    <property name="label" translatable="yes">Starting download...</property>
+                    <property name="justify">center</property>
+                    <attributes>
+                      <attribute name="foreground" value="#f3f3f3f3f3f3"/>
+                      <attribute name="background" value="#000000000000"/>
+                    </attributes>
+                  </object>
+                </child>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+                <property name="position">3</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+            <property name="position">5</property>
+          </packing>
+        </child>
+        <child>
           <object class="GtkBox" id="slide0">
             <property name="visible">True</property>
             <property name="can-focus">False</property>
@@ -649,7 +722,7 @@ but will take much longer to authenticate you</property>
                 <property name="margin-end">7</property>
                 <property name="margin-top">33</property>
                 <property name="margin-bottom">23</property>
-                <property name="pixbuf">logo_about.png</property>
+                <property name="pixbuf">assets/logo_about.png</property>
               </object>
               <packing>
                 <property name="expand">False</property>
