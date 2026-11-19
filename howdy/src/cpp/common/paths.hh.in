@@ -1,0 +1,30 @@
+#pragma once
+
+// Configured by meson, see howdy/meson.build
+
+namespace howdy::paths {
+
+inline constexpr const char* VERSION = "@version@";
+
+inline constexpr const char* CONFIG_DIR = "@config_dir@";
+inline constexpr const char* DLIB_DATA_DIR = "@dlib_data_dir@";
+inline constexpr const char* OPENVINO_DATA_DIR = "@openvino_data_dir@";
+inline constexpr const char* OPENVINO_CACHE_DIR = "@openvino_cache_dir@";
+inline constexpr const char* USER_MODELS_DIR = "@user_models_dir@";
+inline constexpr const char* LOG_PATH = "@log_path@";
+inline constexpr const char* DATA_DIR = "@data_dir@";
+// The glade files and the logos of the window
+inline constexpr const char* GTK_DATA_DIR = "@gtk_data_dir@";
+
+inline constexpr const char* BUS_NAME = "@authentication_bus@";
+inline constexpr const char* AUTHENTICATION_PATH = "@authentication_path@";
+inline constexpr const char* AUTHENTICATION_INTERFACE = "@authentication_interface@";
+inline constexpr const char* AUTHENTICATION_SERVICE_NAME = "@howdy_authentication_service_name@";
+inline constexpr const char* POPUP_PATH = "@popup_path@";
+inline constexpr const char* POPUP_INTERFACE = "@popup_interface@";
+
+inline constexpr const char* MANAGEMENT_BUS = "@management_bus@";
+inline constexpr const char* MANAGEMENT_PATH = "@management_path@";
+inline constexpr const char* MANAGEMENT_INTERFACE = "@management_interface@";
+
+} // namespace howdy::paths
