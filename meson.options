@@ -1,0 +1,29 @@
+option('install_dir', type: 'string', value: '', description: 'Set the folder, where all howdy components should be installed to')
+option('pam_dir', type: 'string', value: '/usr/lib/security', description: 'Set the pam_howdy destination directory')
+option('py_sources_dir', type: 'string', value: '', description: 'Set the python sources directory')
+option('python_path', type: 'string', value: '', description: 'Set the path to the python executable')
+ 
+option('config_dir', type: 'string', value: '', description: 'Set the howdy config directory')
+option('pam_config_dir', type: 'string', value: '/usr/share/pam-configs', description: 'Set the path to the pam-config drop in')
+ 
+option('dlib_data_dir', type: 'string', value: '', description: 'Set the dlib data directory')
+option('openvino_data_dir', type: 'string', value: '', description: 'Set the openvino data directory')
+option('openvino_cache_dir', type: 'string', value: '', description: 'Set the dir for the openvino cache for the model blobs')
+option('user_models_dir', type: 'string', value: '', description: 'Set the user models directory')
+ 
+option('log_path', type: 'string', value: '/var/log/howdy', description: 'Set the log file path')
+ 
+option('install_config', type: 'boolean', value: true, description: 'Install Howdy config file')
+ 
+option('install_pam_config', type: 'boolean', value: true, description: 'Install pam config file (for Debian/Ubuntu)')
+option('with_wakeup_hook', type: 'boolean', value: true, description: 'Install a wakeup hook to automatically restart howdy on system wakeup')
+option('install_selinux_module', type: 'boolean', value: false, yield: true, description: 'Build and install the SELinux policy module (needs checkmodule and semodule_package)')
+option('install_polkit_dropin', type: 'boolean', value: true, yield: true, description: 'Install a systemd drop-in giving polkit-agent-helper@.service camera access')
+#option('fetch_dlib_data', type: 'boolean', value: false, description: 'Download dlib data files')
+
+option('openvino', type: 'feature', value: 'auto', description: 'OpenVINO support in the C++ authentication daemon')
+option('auth_daemon', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the authentication daemon')
+option('management_daemon', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the management daemon')
+option('popup_service', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the popup service')
+option('cli', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the howdy command line interface')
+option('gtk_app', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the configuration window: cpp builds it into the howdy program (howdy gui, howdy-gtk is a link to it, needs -Dcli=cpp), python installs the Python app')
