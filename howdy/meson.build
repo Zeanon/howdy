@@ -815,6 +815,12 @@ if get_option('cli') == 'python'
 endif
 
 
+# The directories the units may write to. Without them a unit with ReadWritePaths= does not start
+# (status 226/NAMESPACE), so they are there after the installation: the face models of the users
+# and the cache of OpenVINO, only for root.
+install_emptydir(usermodelsdir, install_mode: 'rwx------', install_tag: 'service')
+install_emptydir(openvinocachedir, install_mode: 'rwx------', install_tag: 'service')
+
 authentication_service = configure_file(
     input: 'assets/bin/howdy-authentication.service.in',
     output: howdy_authentication_service_name,

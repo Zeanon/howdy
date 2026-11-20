@@ -44,7 +44,8 @@ SystemCallErrorNumber=EPERM
 UMask=0077
 LockPersonality=yes
 
-ReadWritePaths=@openvino_cache_dir@
+# Without the directory (no OpenVINO) the unit still starts
+ReadWritePaths=-@openvino_cache_dir@
 # Where the snapshots are saved
 @log_directory_setting@
 

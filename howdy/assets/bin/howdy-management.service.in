@@ -41,7 +41,8 @@ SystemCallErrorNumber=EPERM
 UMask=0077
 LockPersonality=yes
 
-ReadWritePaths=@user_models_dir@
+# Created at the installation, the unit still starts without it
+ReadWritePaths=-@user_models_dir@
 
 CapabilityBoundingSet=
 AmbientCapabilities=
