@@ -17,7 +17,9 @@ class FprintdAuthenticator {
 	FprintdAuthenticator(const FprintdAuthenticator&) = delete;
 	FprintdAuthenticator& operator=(const FprintdAuthenticator&) = delete;
 
-	Result authenticate(std::chrono::milliseconds timeout, bool detection_notice, int max_tries);
+	// on_scanning is called once, when fprintd waits for the finger, not for a user without
+	// enrolled fingerprints or without a reader
+	Result authenticate(std::chrono::milliseconds timeout, bool detection_notice, const std::function<void()>& on_scanning, int max_tries);
 
 	void cancel() noexcept;
 
@@ -59,6 +61,7 @@ class FprintdAuthenticator {
 	bool claimed_ = false;
 	bool is_swipe_ = false;
 	bool verify_started_ = false;
+	bool scanning_notified_ = false;
 
 	bool cancelled_ = false;
 	bool finished_ = false;

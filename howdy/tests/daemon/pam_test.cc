@@ -3,6 +3,7 @@
 // Usage: pam_test <confdir> <service> <user>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include <security/pam_appl.h>
 
@@ -12,6 +13,10 @@ int conversation(int count, const struct pam_message** messages, struct pam_resp
 	*responses = static_cast<struct pam_response*>(calloc(static_cast<size_t>(count), sizeof(struct pam_response)));
 	for (int i = 0; i < count; ++i) {
 		std::printf("MSG %d: %s\n", messages[i]->msg_style, messages[i]->msg);
+		// A wrong password for a prompt, nobody types here
+		if (messages[i]->msg_style == PAM_PROMPT_ECHO_OFF || messages[i]->msg_style == PAM_PROMPT_ECHO_ON) {
+			(*responses)[i].resp = strdup("wrong");
+		}
 	}
 	return PAM_SUCCESS;
 }

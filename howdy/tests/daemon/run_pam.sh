@@ -15,6 +15,12 @@ mkdir -p "$PAM_DIR"
 if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 	configure "$PAM_SRC_DIR/vars.hh" "$PAM_DIR/vars.hh"
 	sed -i "s|@config_file_path@|$T/etc/config.ini|" "$PAM_DIR/vars.hh"
+	# The module that checks the password, from the first directory of the distributions that has it
+	PAM_UNIX=""
+	for dir in /usr/lib/x86_64-linux-gnu/security /usr/lib64/security /usr/lib/aarch64-linux-gnu/security /usr/lib/security /lib/security; do
+		[ -f "$dir/pam_unix.so" ] && { PAM_UNIX="$dir/pam_unix.so"; break; }
+	done
+	sed -i "s|@pam_unix_path@|${PAM_UNIX:-/nonexistent/pam_unix.so}|" "$PAM_DIR/vars.hh"
 	read -r -a PAM_CFLAGS <<< "$(pkg-config --cflags INIReader libsystemd libevdev | system_includes)"
 	read -r -a PAM_LIBS <<< "$(pkg-config --libs INIReader libsystemd libevdev)"
 	"$CXX" -std=c++20 -fPIC -shared -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" \
@@ -87,5 +93,86 @@ chmod 600 "$MODEL"
 run_pam
 expect "not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
 expect "the user was asked to look into the camera" "$(has "Please look directly into the camera")" yes
+
+echo "--- the methods that can be used are announced"
+# fprintd on the private bus, its mode is read at every call
+export FPRINTD_MODE_FILE="$T/fprintd.mode"
+echo wait > "$FPRINTD_MODE_FILE"
+start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+wait_for_name net.reactivated.Fprint
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 init-message" > "$CONFDIR/howdy-test"
+"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$T/etc/config.ini" "$T/etc/config.ini" fingerprint.enable=true fingerprint.timeout=6s
+chmod 644 "$T/etc/config.ini"
+
+position() { grep -nF "$1" <<< "$OUT" | head -1 | cut -d: -f1; }
+INIT_FACE="Look directly into the camera"
+INIT_FINGER="Place your finger on the finerprint reader"
+
+# scenario <name> <fprintd mode> <face model: yes|no> sets OUT
+scenario() {
+	echo "$2" > "$FPRINTD_MODE_FILE"
+	if [ "$3" = yes ]; then cp "$T/genuine.dat" "$MODEL"; chmod 600 "$MODEL"; else rm -f "$MODEL"; fi
+	run_pam
+	[ -z "${SHOW:-}" ] || echo "$OUT" | sed "s/^/    | /"
+}
+
+scenario "both" wait yes
+expect "face and fingerprint: authenticated by the face" "$(result_of)" 0
+expect "face and fingerprint: both are offered" "$(has "$INIT_FINGER")$(has "Or look directly into the camera")" yesyes
+expect "face and fingerprint: the face is announced" "$(has "Facial authentication...")" yes
+expect "face and fingerprint: the fingerprint is announced" "$(has "Fingerprint authentication...")" yes
+expect "face and fingerprint: the order of the messages" "$([ "$(position "$INIT_FINGER")" -lt "$(position "Facial authentication...")" ] && [ "$(position "Please look directly into the camera")" -lt "$(position "Fingerprint authentication...")" ] && echo ordered)" ordered
+expect "face and fingerprint: the finger notice comes after the fingerprint announcement" "$([ "$(position "Fingerprint authentication...")" -lt "$(position "Place your finger on the fingerprint reader")" ] && echo ordered)" ordered
+expect "face and fingerprint: the messages are in the order of the console" "$(grep -v '^RESULT' <<< "$OUT" | sed 's/^MSG [0-9]*: //' | head -7 | tr '\n' '|')" "Place your finger on the finerprint reader|Or look directly into the camera|Facial authentication...|Please look directly into the camera||Fingerprint authentication...|Place your finger on the fingerprint reader|"
+
+scenario "no fingerprints" no-prints yes
+expect "no fingerprints: authenticated by the face" "$(result_of)" 0
+expect "no fingerprints: only the face is offered" "$(has "$INIT_FACE")$(has "$INIT_FINGER")" yesno
+expect "no fingerprints: the fingerprint is not announced" "$(has "Fingerprint authentication...")" no
+expect "no fingerprints: the face is announced" "$(has "Facial authentication...")" yes
+
+scenario "no face model" match no
+expect "no face model: authenticated by the finger" "$(result_of)" 0
+expect "no face model: only the fingerprint is offered" "$(has "$INIT_FINGER")$(has "$INIT_FACE")" yesno
+expect "no face model: the face is not announced" "$(has "Facial authentication...")$(has "Please look directly into the camera")" nono
+expect "no face model: the fingerprint is announced" "$(has "Fingerprint authentication...")" yes
+expect "no face model: the user is told who authenticated" "$(has "Fingerprint authenticated as $USER_NAME")" yes
+
+scenario "no reader" no-device no
+expect "nothing to use: not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "nothing to use: nothing is said to the user" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
+
+scenario "no fingerprints, no face model" no-prints no
+expect "nothing to use with enrolled fingerprints missing: nothing is said" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
+expect "and it does not take long" "$([ "$SECONDS_TAKEN" -lt 3 ] && echo yes || echo no)" yes
+
+echo "--- the password prompt comes first"
+# The prompt is printed by the password task, the notices by the module. Without a wait between them the
+# order depends on which is faster, so it is tried more than once.
+echo wait > "$FPRINTD_MODE_FILE"
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay" > "$CONFDIR/howdy-test"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+prompt_first=0
+runs=10
+for _ in $(seq "$runs"); do
+	run_pam
+	[ -z "${SHOW:-}" ] || echo "$OUT" | sed "s/^/    | /"
+	[ -n "$(position "MSG 1:")" ] && [ -n "$(position "Facial authentication...")" ] && [ "$(position "MSG 1:")" -lt "$(position "Facial authentication...")" ] && prompt_first=$((prompt_first + 1))
+done
+expect "the password prompt comes before the notices in every run" "$prompt_first" "$runs"
+
+echo "--- the password prompt comes first, with the password only"
+# Nothing to wait for and nothing to set apart from the prompt here, so there are no blank lines
+"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$T/etc/config.ini" "$T/etc/config.ini" face_authentication.enable=false fingerprint.enable=false
+chmod 644 "$T/etc/config.ini"
+prompt_first=0
+for _ in $(seq "$runs"); do
+	run_pam
+	[ -z "${SHOW:-}" ] || echo "$OUT" | sed "s/^/    | /"
+	[ -n "$(position "MSG 1:")" ] && { [ -z "$(position "MSG 4:")" ] || [ "$(position "MSG 1:")" -lt "$(position "MSG 4:")" ]; } && prompt_first=$((prompt_first + 1))
+done
+expect "the password prompt is there in every run, before any blank line" "$prompt_first" "$runs"
+expect "there are no blank lines, nothing follows them" "$(has "MSG 4")" no
 
 exit $failed

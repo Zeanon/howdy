@@ -256,8 +256,10 @@ void FprintdAuthenticator::process_events(std::chrono::steady_clock::time_point 
 	}
 }
 
-FprintdAuthenticator::Result FprintdAuthenticator::authenticate(std::chrono::milliseconds timeout, bool detection_notice, int max_tries) {
+FprintdAuthenticator::Result
+FprintdAuthenticator::authenticate(std::chrono::milliseconds timeout, bool detection_notice, const std::function<void()>& on_scanning, int max_tries) {
 	result_ = Result::Error;
+	scanning_notified_ = false;
 
 	if (!connect()) {
 		cleanup();
@@ -296,7 +298,15 @@ FprintdAuthenticator::Result FprintdAuthenticator::authenticate(std::chrono::mil
 			return result_;
 		}
 
-		if (detection_notice) {
+		if (!scanning_notified_) {
+			scanning_notified_ = true;
+			if (on_scanning) {
+				on_scanning();
+			}
+		}
+
+		// The first time it is said with the other notices of the module, in their order
+		if (detection_notice && retries > 0) {
 			conv_function_(PAM_TEXT_INFO, S("Place your finger on the fingerprint reader"));
 		}
 
