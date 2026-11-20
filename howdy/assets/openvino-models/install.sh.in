@@ -43,46 +43,74 @@ else
     exit 1
 fi
 
+# The files come from servers and branches that could change or be replaced
+# without notice. Only use what has the expected SHA-256.
+verify() {
+    if ! echo "$2  $1" | sha256sum --check --status; then
+        echo "Error: $1 does not have the expected checksum ($2), it was not installed." >&2
+        rm -f "$1"
+        exit 1
+    fi
+}
+
 echo "Downloading OpenVINO face detection model (FP16)..."
 download \
     "$BASE_URL/face-detection-adas-0001/FP16/face-detection-adas-0001.xml" \
     "$SCRIPT_DIR/face-detection-adas-0001.xml"
+verify "$SCRIPT_DIR/face-detection-adas-0001.xml" \
+    "59ccfd224324a5417210ce863909ae265c89548b19a85364470935201c5176ef"
 download \
     "$BASE_URL/face-detection-adas-0001/FP16/face-detection-adas-0001.bin" \
     "$SCRIPT_DIR/face-detection-adas-0001.bin"
+verify "$SCRIPT_DIR/face-detection-adas-0001.bin" \
+    "10d3d424905ddef043b16fa6c036b7aa14c5193ae2c470699799746d7d6def37"
 echo ""
 
 echo "Downloading OpenVINO face re-identification model (FP16)..."
 download \
     "$BASE_URL/face-reidentification-retail-0095/FP16/face-reidentification-retail-0095.xml" \
     "$SCRIPT_DIR/face-reidentification-retail-0095.xml"
+verify "$SCRIPT_DIR/face-reidentification-retail-0095.xml" \
+    "ce53d2c9c08c0bd1c1660fb8a5b6d0e3e4ec19eb92f1036d2d83a85e83082dce"
 download \
     "$BASE_URL/face-reidentification-retail-0095/FP16/face-reidentification-retail-0095.bin" \
     "$SCRIPT_DIR/face-reidentification-retail-0095.bin"
+verify "$SCRIPT_DIR/face-reidentification-retail-0095.bin" \
+    "241229ca3d206321868d46ce74a3c0b06c49cea58db7dc70b2e842ff287545d1"
 echo ""
 
 echo "Downloading OpenVINO face landmarks model (FP16)..."
 download \
     "$OPENZOO_URL/temp/facial-landmarks-35-adas-0002/FP16/facial-landmarks-35-adas-0002.xml" \
     "$SCRIPT_DIR/facial-landmarks-35-adas-0002.xml"
+verify "$SCRIPT_DIR/facial-landmarks-35-adas-0002.xml" \
+    "b6158ac7d58f45b948aa21bcf36271092cf0ae38040b29d269ea0df1f69684f6"
 download \
     "$OPENZOO_URL/temp/facial-landmarks-35-adas-0002/FP16/facial-landmarks-35-adas-0002.bin" \
     "$SCRIPT_DIR/facial-landmarks-35-adas-0002.bin"
+verify "$SCRIPT_DIR/facial-landmarks-35-adas-0002.bin" \
+    "f75558439fa2a9a183174ed3f43eeaa8eb61024aac1aab907813cb40cc9823b9"
 echo ""
 
 echo "Downloading OpenVINO face anti-spoofing model..."
 download \
     "https://raw.githubusercontent.com/vladimirwest/OpenVINO_Face_Anti-Spoofing/refs/heads/master/anti_spoofing_480.xml" \
     "$SCRIPT_DIR/anti-spoofing-480.xml"
+verify "$SCRIPT_DIR/anti-spoofing-480.xml" \
+    "cb378426c8e4b984c9c86653d2d8709642e06d4414005f684df25515d2d7feb3"
 download \
     "https://raw.githubusercontent.com/vladimirwest/OpenVINO_Face_Anti-Spoofing/refs/heads/master/anti_spoofing_480.bin" \
     "$SCRIPT_DIR/anti-spoofing-480.bin"
+verify "$SCRIPT_DIR/anti-spoofing-480.bin" \
+    "b1497cac3eec89fb4ffc05bdf9d4697a1df1ac237c0084680ea87a5e0c648606"
 echo ""
 
 echo "Downloading OpenVINO damo-flir..."
 download \
     "https://modelscope.cn/models/iic/cv_manual_face-liveness_flir/resolve/master/model.onnx?view=false" \
     "$SCRIPT_DIR/damo-flir.onnx"
+verify "$SCRIPT_DIR/damo-flir.onnx" \
+    "df80cea7228b92562692e56aac965d35766c77399159798c552fb3c77b410c72"
 "@python_path@" -m openvino.tools.ovc \
     "$SCRIPT_DIR/damo-flir.onnx" \
     --output_model "$SCRIPT_DIR/damo-flir.xml"

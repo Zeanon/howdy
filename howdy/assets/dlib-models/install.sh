@@ -33,18 +33,35 @@ else
     exit 1
 fi
 
+# The files come from a branch of a repository and could change or be replaced
+# without notice. Only use what has the expected SHA-256, the check runs before
+# anything is unpacked.
+verify() {
+    if ! echo "$2  $1" | sha256sum --check --status; then
+        echo "Error: $1 does not have the expected checksum ($2), it was not installed." >&2
+        rm -f "$1"
+        exit 1
+    fi
+}
+
 echo "Downloading 3 required data files..."
 download \
 	"https://github.com/davisking/dlib-models/raw/master/dlib_face_recognition_resnet_model_v1.dat.bz2" \
 	"dlib_face_recognition_resnet_model_v1.dat.bz2"
+verify "dlib_face_recognition_resnet_model_v1.dat.bz2" \
+	"abb1f61041e434465855ce81c2bd546e830d28bcbed8d27ffbe5bb408b11553a"
 
 download \
 	"https://github.com/davisking/dlib-models/raw/master/mmod_human_face_detector.dat.bz2" \
 	"mmod_human_face_detector.dat.bz2"
+verify "mmod_human_face_detector.dat.bz2" \
+	"db9e9e40f092c118d5eb3e643935b216838170793559515541c56a2b50d9fc84"
 
 download \
 	"https://github.com/davisking/dlib-models/raw/master/shape_predictor_5_face_landmarks.dat.bz2" \
 	"shape_predictor_5_face_landmarks.dat.bz2"
+verify "shape_predictor_5_face_landmarks.dat.bz2" \
+	"6e787bbebf5c9efdb793f6cd1f023230c4413306605f24f299f12869f95aa472"
 
 # Uncompress the data files and delete the original archive
 echo " "
