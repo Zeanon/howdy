@@ -53,10 +53,11 @@
                send_interface="@management_interface@"
                send_type="method_call"
                send_member="Clear"/>
-        <allow send_destination="@management_bus@"
-               send_interface="@management_interface@"
-               send_type="method_call"
-               send_member="SetModels"/>
+        <!-- Only the daemon (root) sends the popup signals. The system bus lets
+             every user send signals by default, so anybody could show a text in
+             the popup of another user. -->
+        <deny send_type="signal"
+              send_interface="@popup_interface@"/>
         <allow receive_type="signal"
                receive_sender="@authentication_bus@"
                receive_interface="@popup_interface@"
@@ -64,7 +65,11 @@
         <allow receive_type="signal"
                receive_sender="@authentication_bus@"
                receive_interface="@popup_interface@"
-               receive_member="Update"/>
+               receive_member="UpdateMessage"/>
+        <allow receive_type="signal"
+               receive_sender="@authentication_bus@"
+               receive_interface="@popup_interface@"
+               receive_member="UpdateSubtext"/>
         <allow receive_type="signal"
                receive_sender="@authentication_bus@"
                receive_interface="@popup_interface@"
