@@ -1,11 +1,15 @@
 #include "snapshot.hh"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
 #include <ctime>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -117,6 +121,59 @@ std::filesystem::path generate_snapshot(const std::vector<cv::Mat>& frames, cons
 	complete = true;
 
 	return path;
+}
+
+std::size_t prune_snapshots(const SnapshotRetention& retention) {
+	if (retention.max_age.count() <= 0 && retention.max_count == 0) {
+		return 0;
+	}
+
+	const std::filesystem::path path = std::filesystem::path(paths::LOG_PATH) / "snapshots";
+	const int directory_fd = open(path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+	if (directory_fd < 0) {
+		if (errno == ENOENT) {
+			return 0;
+		}
+		throw std::runtime_error("Could not open " + path.string() + ": " + std::strerror(errno));
+	}
+	// The stream owns the descriptor now
+	DIR* directory = fdopendir(directory_fd);
+	if (directory == nullptr) {
+		const int error = errno;
+		close(directory_fd);
+		throw std::runtime_error("Could not read " + path.string() + ": " + std::strerror(error));
+	}
+	const ScopeExit close_directory([&] { closedir(directory); });
+
+	// Only regular .jpg files, looked at without following links
+	std::vector<std::pair<std::time_t, std::string>> files;
+	while (const dirent* entry = readdir(directory)) {
+		const std::string name = entry->d_name;
+		struct stat info{};
+		if (!name.ends_with(".jpg") || fstatat(directory_fd, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0 || !S_ISREG(info.st_mode)) {
+			continue;
+		}
+		files.emplace_back(info.st_mtime, name);
+	}
+
+	// Oldest first, so that everything that has to go is at the start
+	std::sort(files.begin(), files.end());
+
+	const std::time_t now = std::time(nullptr);
+	std::size_t removed = 0;
+	for (std::size_t i = 0; i < files.size(); ++i) {
+		const bool too_old = retention.max_age.count() > 0 && now - files[i].first > retention.max_age.count();
+		const bool too_many = retention.max_count > 0 && files.size() - i > retention.max_count;
+		if (!too_old && !too_many) {
+			break;
+		}
+		if (unlinkat(directory_fd, files[i].second.c_str(), 0) == 0) {
+			++removed;
+		} else {
+			log(LOG_WARNING, "Could not delete the old snapshot " + files[i].second + ": " + std::strerror(errno));
+		}
+	}
+	return removed;
 }
 
 } // namespace howdy

@@ -98,6 +98,17 @@ members=$(grep -oE "member=(Show|UpdateMessage|UpdateSubtext|Close)" "$T/monitor
 # Show carries the text "Face authentication...", the popup is only updated if a text changes
 expect "popup signal order" "$members" "Show UpdateSubtext Close"
 
+echo "--- snapshot retention"
+# A snapshot of an earlier time is deleted when the daemon starts, of the failed
+# attempts only the newest ones are kept
+mkdir -p "$T/log/snapshots"
+touch -d "30 days ago" "$T/log/snapshots/20200101T000000.jpg"
+start_daemon "${NOLIVE[@]}" snapshots.save_failed=true snapshots.max_snapshots=2 snapshots.retention=7d
+expect "an old snapshot is deleted when the daemon starts" "$(find "$T/log/snapshots" -name '*.jpg' | wc -l)" 0
+cp "$T/impostor.dat" "$MODEL"
+for _ in 1 2 3; do E "foreign face, the snapshot is saved" TIMEOUT; done
+expect "only the newest two snapshots are kept" "$(find "$T/log/snapshots" -name '*.jpg' | wc -l)" 2
+
 echo "--- dlib HOG, liveness enabled"
 start_daemon
 E "photo is rejected by liveness detection" TIMEOUT

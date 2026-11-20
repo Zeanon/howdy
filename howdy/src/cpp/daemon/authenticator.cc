@@ -62,7 +62,9 @@ double round_to(double value, int digits) {
 
 // Save the first frames of the scan with some metadata, see [snapshots] in config.ini.
 // A snapshot that can't be saved must never change the result of the authentication.
-void make_snapshot(const std::vector<cv::Mat>& frames, const std::string& type, double scan_time, long frame_count, double lowest_certainty) {
+void make_snapshot(
+	const std::vector<cv::Mat>& frames, const std::string& type, double scan_time, long frame_count, double lowest_certainty,
+	const SnapshotRetention& retention) {
 	try {
 		const std::time_t now = std::time(nullptr);
 		std::tm utc{};
@@ -83,6 +85,7 @@ void make_snapshot(const std::vector<cv::Mat>& frames, const std::string& type, 
 						std::string(S("Hostname: ")) + hostname.data(),
 						std::string(S("Best certainty value: ")) + format_double(round_to(lowest_certainty * 10, 1)),
 					});
+		prune_snapshots(retention);
 	} catch (const std::exception& exc) {
 		log(LOG_ERR, std::string("Could not save the snapshot: ") + exc.what());
 	}
@@ -95,6 +98,12 @@ Authenticator::Authenticator(PopupSink& popup) : popup_(popup), config_((std::fi
 		log(LOG_WARNING, "Could not parse the config file completely, error at line " + std::to_string(config_.parse_error()));
 	}
 	read_config();
+	// Old snapshots go away even if no new ones are saved any more
+	try {
+		prune_snapshots(snapshot_retention_);
+	} catch (const std::exception& exc) {
+		log(LOG_WARNING, std::string("Could not delete the old snapshots: ") + exc.what());
+	}
 	initialize_models();
 }
 
@@ -134,6 +143,8 @@ void Authenticator::read_config() {
 	auth_popup_ = config_.get_bool(fa, "show_auth_popup", false);
 	save_failed_ = config_.get_bool("snapshots", "save_failed", false);
 	save_successful_ = config_.get_bool("snapshots", "save_successful", false);
+	snapshot_retention_.max_age = std::chrono::seconds(std::max(0LL, str_to_seconds(config_.get("snapshots", "retention", "7d"))));
+	snapshot_retention_.max_count = static_cast<std::size_t>(std::max(0L, config_.get_int("snapshots", "max_snapshots", 200)));
 	dark_threshold_ = config_.get_float("video", "dark_threshold", 50.0);
 	max_height_ = config_.get_float("video", "max_height", 320.0);
 	rotate_ = static_cast<int>(config_.get_int("video", "rotate", 0));
@@ -371,7 +382,8 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 		if (std::chrono::duration<double>(Clock::now() - start_time).count() > args.timeout) {
 			// Create a timeout snapshot if enabled
 			if (save_failed_) {
-				make_snapshot(snapframes, S("FAILED"), std::chrono::duration<double>(Clock::now() - start_time).count(), frames, lowest_certainty);
+				make_snapshot(
+					snapframes, S("FAILED"), std::chrono::duration<double>(Clock::now() - start_time).count(), frames, lowest_certainty, snapshot_retention_);
 			}
 			if (dark_tries == valid_frames) {
 				log(LOG_ERR, std::string(S("All frames were too dark, please check dark_threshold in config\n")) + "Average darkness: " +
@@ -518,7 +530,9 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 
 				// Make snapshot if enabled
 				if (save_successful_) {
-					make_snapshot(snapframes, S("SUCCESSFUL"), std::chrono::duration<double>(Clock::now() - start_time).count(), frames, lowest_certainty);
+					make_snapshot(
+						snapframes, S("SUCCESSFUL"), std::chrono::duration<double>(Clock::now() - start_time).count(), frames, lowest_certainty,
+						snapshot_retention_);
 				}
 
 				// Run the rubber stamps if enabled, they can still deny the authentication

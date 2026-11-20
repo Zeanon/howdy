@@ -2,6 +2,8 @@
 
 # Import modules
 import os
+import time
+import syslog
 import cv2
 
 import numpy as np
@@ -94,3 +96,51 @@ def generate(frames, text_lines):
 
 	# Return the saved file location
 	return filepath
+
+
+def prune(max_age, max_count):
+	"""Delete the snapshots that are older than max_age seconds and, of the rest,
+	the oldest ones beyond max_count. Zero means no limit. Only regular .jpg files
+	of the snapshot directory are touched, links are not followed. Returns the
+	number of deleted files."""
+	if max_age <= 0 and max_count <= 0:
+		return 0
+
+	try:
+		directory_fd = os.open(
+			paths_factory.snapshots_dir_path(),
+			os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+		)
+	except FileNotFoundError:
+		return 0
+
+	try:
+		files = []
+		with os.scandir(directory_fd) as entries:
+			for entry in entries:
+				if entry.name.endswith(".jpg") and entry.is_file(follow_symlinks=False):
+					files.append(
+						(entry.stat(follow_symlinks=False).st_mtime, entry.name)
+					)
+
+		# Oldest first, so that everything that has to go is at the start
+		files.sort()
+
+		now = time.time()
+		removed = 0
+		for index, (modified, name) in enumerate(files):
+			too_old = max_age > 0 and now - modified > max_age
+			too_many = max_count > 0 and len(files) - index > max_count
+			if not too_old and not too_many:
+				break
+			try:
+				os.unlink(name, dir_fd=directory_fd)
+				removed += 1
+			except OSError as exc:
+				syslog.syslog(
+					syslog.LOG_WARNING,
+					f"Could not delete the old snapshot {name}: {exc}",
+				)
+		return removed
+	finally:
+		os.close(directory_fd)

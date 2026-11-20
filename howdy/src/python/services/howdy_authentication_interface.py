@@ -108,6 +108,8 @@ class HowdyAuthenticator:
 		self.similarity_detector = None
 
 		self._read_config()
+		# Old snapshots go away even if no new ones are saved any more
+		self._prune_snapshots()
 		self._initialize_models()
 
 		self._initialized = True
@@ -152,6 +154,13 @@ class HowdyAuthenticator:
 		)
 		self.save_successful = self.config.getboolean(
 			"snapshots", "save_successful", fallback=False
+		)
+		# How long and how many snapshots are kept, zero means no limit
+		self.snapshot_max_age = max(
+			0, str_to_seconds(self.config.get("snapshots", "retention", fallback="7d"))
+		)
+		self.snapshot_max_count = max(
+			0, self.config.getint("snapshots", "max_snapshots", fallback=200)
 		)
 
 		self.use_anti_spoof = self.config.getboolean(
@@ -405,6 +414,14 @@ class HowdyAuthenticator:
 						self.auth_ui.Close(self.ui_uid)
 						self.ui_uid = None
 
+	def _prune_snapshots(self):
+		try:
+			snapshot.prune(self.snapshot_max_age, self.snapshot_max_count)
+		except Exception as exc:
+			syslog.syslog(
+				syslog.LOG_WARNING, f"Could not delete the old snapshots: {exc}"
+			)
+
 	def _make_snapshot(self, snapframes, kind, scan_time, frames, lowest_certainty):
 		"""Save the first frames of the scan with some metadata, see [snapshots] in
 		config.ini. A snapshot that can't be saved must never change the result of
@@ -425,6 +442,7 @@ class HowdyAuthenticator:
 					S("Best certainty value: ") + str(round(lowest_certainty * 10, 1)),
 				],
 			)
+			snapshot.prune(self.snapshot_max_age, self.snapshot_max_count)
 		except Exception as exc:
 			syslog.syslog(syslog.LOG_ERR, f"Could not save the snapshot: {exc}")
 

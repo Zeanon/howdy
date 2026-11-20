@@ -12,6 +12,7 @@
 #include "config.hh"
 #include "face_backend.hh"
 #include "liveness.hh"
+#include "snapshot.hh"
 #include "video_capture.hh"
 
 #ifdef HOWDY_WITH_OPENVINO
@@ -140,6 +141,7 @@ class Authenticator {
 	// [snapshots]
 	bool save_failed_ = false;
 	bool save_successful_ = false;
+	SnapshotRetention snapshot_retention_;
 	double dark_threshold_ = 50.0;
 	double max_height_ = 320.0;
 	int rotate_ = 0;

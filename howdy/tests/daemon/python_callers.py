@@ -1,6 +1,7 @@
-"""Test of the checks who calls the Python daemons: the common caller checks, the
-authentication daemon (who may see, cancel and clear a request, who may start one)
-and the management daemon with the polkit check of the cli package.
+"""Test of the Python daemons that needs no bus: the checks who calls them (the
+common caller checks, the authentication daemon: who may see, cancel and clear a
+request and who may start one, the management daemon with the polkit check of
+the cli package) and the retention of the snapshots.
 
 Usage: python_callers.py <src/python dir> <work dir>
 
@@ -15,6 +16,7 @@ import pwd
 import re
 import shutil
 import sys
+import time
 import types
 
 SOURCE_DIR, WORK_DIR = sys.argv[1:3]
@@ -379,4 +381,100 @@ class PolkitBus:
 
 
 asyncio.run(management())
+
+print("--- retention of the snapshots")
+from howdy import paths_factory, snapshot  # noqa: E402
+
+DAY = 86400
+DIRECTORY = str(paths_factory.snapshots_dir_path())
+
+
+def make_file(name, age):
+	path = os.path.join(DIRECTORY, name)
+	with open(path, "w") as handle:
+		handle.write("x")
+	moment = time.time() - age
+	os.utime(path, (moment, moment))
+
+
+def fill():
+	shutil.rmtree(DIRECTORY, ignore_errors=True)
+	os.makedirs(DIRECTORY)
+	for name, age in (
+		("a-10d.jpg", 10 * DAY),
+		("b-8d.jpg", 8 * DAY),
+		("c-6d.jpg", 6 * DAY),
+		("d-3d.jpg", 3 * DAY),
+		("e-1d.jpg", 1 * DAY),
+		("f-1h.jpg", 3600),
+		("notes-20d.txt", 20 * DAY),
+	):
+		make_file(name, age)
+	os.mkdir(os.path.join(DIRECTORY, "dir-20d.jpg"))
+
+
+OTHERS = {"notes-20d.txt", "dir-20d.jpg"}
+
+
+def names():
+	return set(os.listdir(DIRECTORY))
+
+
+shutil.rmtree(DIRECTORY, ignore_errors=True)
+check("no snapshot directory", snapshot.prune(7 * DAY, 3), 0)
+
+fill()
+check("no limit deletes nothing", snapshot.prune(0, 0), 0)
+check("no limit keeps all files", len(names()), 8)
+
+check("max age 7d deletes two", snapshot.prune(7 * DAY, 0), 2)
+check(
+	"max age keeps the younger ones and what is no snapshot",
+	names(),
+	OTHERS | {"c-6d.jpg", "d-3d.jpg", "e-1d.jpg", "f-1h.jpg"},
+)
+
+fill()
+check("max 3 snapshots deletes three", snapshot.prune(0, 3), 3)
+check("the newest are kept", names(), OTHERS | {"d-3d.jpg", "e-1d.jpg", "f-1h.jpg"})
+check("nothing more to delete", snapshot.prune(0, 3), 0)
+
+fill()
+check("age and count together", snapshot.prune(2 * DAY, 5), 4)
+check("only the newest two are left", names(), OTHERS | {"e-1d.jpg", "f-1h.jpg"})
+
+# A link is not followed and not deleted, its target is not touched
+fill()
+target = os.path.join(WORK_DIR, "outside.jpg")
+with open(target, "w") as handle:
+	handle.write("x")
+os.utime(target, (time.time() - 30 * DAY,) * 2)
+os.symlink(target, os.path.join(DIRECTORY, "link-30d.jpg"))
+snapshot.prune(7 * DAY, 0)
+check(
+	"the link is left alone",
+	os.path.islink(os.path.join(DIRECTORY, "link-30d.jpg")),
+	True,
+)
+check("its target is left alone", os.path.exists(target), True)
+
+# The directory itself being a link is refused
+shutil.rmtree(DIRECTORY)
+elsewhere = os.path.join(WORK_DIR, "elsewhere")
+shutil.rmtree(elsewhere, ignore_errors=True)
+os.makedirs(elsewhere)
+make_file_path = os.path.join(elsewhere, "old.jpg")
+with open(make_file_path, "w") as handle:
+	handle.write("x")
+os.utime(make_file_path, (time.time() - 30 * DAY,) * 2)
+os.symlink(elsewhere, DIRECTORY)
+try:
+	snapshot.prune(7 * DAY, 0)
+	refused = False
+except OSError:
+	refused = True
+check("a linked directory is refused", refused, True)
+check("and nothing in it is deleted", os.path.exists(make_file_path), True)
+os.unlink(DIRECTORY)
+
 sys.exit(1 if failed else 0)
