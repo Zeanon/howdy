@@ -265,12 +265,13 @@ Options are passed to `meson setup` (or `meson configure build`), for example `m
 |--------|---------|-------------|
 | `install_dir` | `<prefix>/lib/<multiarch>/Howdy` | Where the daemons and the Python sources are installed |
 | `pam_dir` | `/usr/lib/security` | Where `pam_howdy.so` is installed |
+| `pam_unix_path` | found automatically | Full path of `pam_unix.so`, which `pam_howdy.so` uses for the password. Empty: searched in the usual directories of the distributions |
 | `config_dir` | `<prefix>/etc/howdy` | Configuration directory |
-| `user_models_dir` | `<config_dir>/models` | Where the face models are stored |
+| `user_models_dir` | `<config_dir>/models` | Where the face models are stored, created at the installation and only for root (mode `0700`) |
 | `dlib_data_dir` | `<prefix>/share/howdy/dlib-models` | dlib model directory |
 | `openvino_data_dir` | `<prefix>/share/howdy/openvino-models` | OpenVINO model directory |
 | `openvino_cache_dir` | `/var/cache/howdy/openvino` | Cache for the compiled OpenVINO model blobs |
-| `log_path` | `/var/log/howdy` | Log and snapshot directory |
+| `log_path` | `/var/log/howdy` | Log and snapshot directory. Below `/var/log` the unit of the authentication daemon creates it, for another path it has to exist |
 | `python_path` | `<install_dir>/.venv/bin/python3` | Python used by meson and the Python components |
 | `install_config` | `true` | Install the default `config.ini` (an existing one is never overwritten) |
 | `install_pam_config` | `true` | Install the PAM config for `pam-auth-update` (Debian/Ubuntu) |
@@ -280,6 +281,7 @@ Options are passed to `meson setup` (or `meson configure build`), for example `m
 | `management_daemon` | `cpp` | `cpp` or `python` implementation of the management daemon |
 | `cli` | `cpp` | `cpp` or `python` implementation of the command line tool |
 | `gtk_app` | `cpp` | `cpp` builds the configuration window into `howdy` (needs `-Dcli=cpp`), `python` installs the Python app |
+| `hardening` | `true` | Build with the hardening options of the compiler and linker: position independent executables, stack protector, stack clash and control flow protection, bounds checks of the standard library, fortify (when optimizing), relro and bind now |
 
 ## Setup
 
@@ -357,7 +359,8 @@ All options are documented in the comments of `config.ini`. Some highlights:
 |---------|--------|-------------|
 | `[core]` | `disabled` | Turn Howdy off (also available as `howdy disable 1`) |
 | `[core]` | `abort_if_ssh`, `abort_if_lid_closed` | Skip face recognition in these situations |
-| `[face_authentication]` | `certainty` | How strict the match is. Lower is stricter. |
+| `[face_authentication]` | `certainty` | How strict the match is, in percent from 0 to 100 (default 75). Higher is stricter. |
+| `[face_authentication]` | `start_cooldown` | How long a caller without privileges has to wait after an authentication before it can start the next one (default `2s`, `0` for no limit). Root and the user of the daemon are not limited |
 | `[face_authentication]` | `use_cnn` | Use the more accurate dlib CNN detector instead of HOG. Needs a GPU to be fast. Ignored with OpenVINO. |
 | `[face_authentication]` | `use_openvino` | Use the OpenVINO backend |
 | `[face_authentication]` | `use_anti_spoof`, `use_damo_flir`, `micromotion_detection`, `texture_detection`, `similarity_detection` | Liveness checks against photos and screens |
@@ -366,6 +369,7 @@ All options are documented in the comments of `config.ini`. Some highlights:
 | `[video]` | `dark_threshold` | Frames darker than this are skipped |
 | `[video]` | `rotate` | Rotation of the captured frames, see below |
 | `[snapshots]` | `save_failed`, `save_successful` | Save snapshots of login attempts to `log_path/snapshots` |
+| `[snapshots]` | `retention`, `max_snapshots` | Delete snapshots older than this (default `7d`) and keep at most this many (default `100`), the oldest go first. `0` means no limit |
 | `[rubberstamps]` | `enabled`, `stamp_rules` | Extra checks after a successful recognition, see the [rubber stamp guide](https://github.com/boltgolt/howdy/wiki/Rubber-Stamp-Guide) |
 
 ### Rubber stamps
