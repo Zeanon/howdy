@@ -35,6 +35,9 @@
 
 // How long the messages about the methods wait for the answer whether they can be used at all
 static const auto AVAILABILITY_WAIT = std::chrono::milliseconds(1000);
+// The start of the authentication, the wait for the answers of the methods counts from here
+static std::chrono::steady_clock::time_point auth_started;
+
 static const auto DEFAULT_ENTER_TIMEOUT = std::chrono::duration<int, std::chrono::milliseconds::period>(500);
 
 termios original_terminal_flags;
@@ -190,51 +193,72 @@ inline int howdy_status(int status) {
 }
 
 /**
- * What can be used for the user
+ * Whether a method can be used for the user. A method answers at once whether it can (a face model,
+ * enrolled fingerprints and a reader are there), only what can be used is announced. Each method is
+ * waited for on its own, until AVAILABILITY_WAIT after the start, so that a slow method holds back only
+ * the messages that come after its own. A method that does not answer in time is taken as available, as
+ * it was before the methods were asked.
  */
-struct Available {
-	bool face;
-	bool fingerprint;
-};
-
-/**
- * The methods answer at once whether they can be used for the user at all (a face model, enrolled
- * fingerprints and a reader are there). Only what can be used is announced. A method that does not
- * answer in time is taken as available, as it was before they were asked.
- */
-inline Available wait_for_availability() {
+inline bool method_available(bool enabled, const Availability& state) {
+	if (!enabled) {
+		return false;
+	}
 	std::unique_lock<std::mutex> lock(mutx);
-	convar.wait_for(lock, AVAILABILITY_WAIT, [] {
-		const bool answered = (!face_auth || face_availability != Availability::Unknown) && (!fingerprint || fingerprint_availability != Availability::Unknown);
-		return answered || terminate || confirmation_type != ConfirmationType::Unset;
+	convar.wait_until(lock, auth_started + AVAILABILITY_WAIT, [&state] {
+		return state != Availability::Unknown || terminate || confirmation_type != ConfirmationType::Unset;
 	});
-	return {face_auth && face_availability != Availability::Unavailable, fingerprint && fingerprint_availability != Availability::Unavailable};
+	return state != Availability::Unavailable;
 }
 
-inline void print_init_message(const Available& available) {
-	if (available.face && available.fingerprint) {
-		conv_function(PAM_TEXT_INFO, S("Place your finger on the finerprint reader\nOr look directly into the camera"));
-	} else if (available.fingerprint) {
-		conv_function(PAM_TEXT_INFO, S("Place your finger on the finerprint reader"));
-	} else if (available.face) {
+inline void print_init_message() {
+	const bool face_available = method_available(face_auth, face_availability);
+	const bool fingerprint_available = method_available(fingerprint, fingerprint_availability);
+	// The wait ends when the authentication is done, a method that did not answer is not announced then
+	if (terminate || confirmation_type != ConfirmationType::Unset) {
+		return;
+	}
+	if (face_available && fingerprint_available) {
+		conv_function(PAM_TEXT_INFO, S("Place your finger on the fingerprint reader\nOr look directly into the camera"));
+	} else if (fingerprint_available) {
+		conv_function(PAM_TEXT_INFO, S("Place your finger on the fingerprint reader"));
+	} else if (face_available) {
 		conv_function(PAM_TEXT_INFO, S("Look directly into the camera"));
 	}
 }
 
-inline void print_detection_notices(const Available& available) {
-	if (password && blank_lines && (available.face || available.fingerprint)) {
-		conv_function(PAM_TEXT_INFO, "");
-	}
-	if (available.face) {
+/**
+ * The notices of the methods that can be used, in this order, each one when its own method has answered.
+ */
+inline void print_detection_notices() {
+	// The blank lines set the messages of the methods apart from the password prompt. Without a message there
+	// is nothing to set apart, and they would come before the prompt, which the password task prints at the
+	// same time.
+	bool separated = false;
+	const auto separate = [&separated] {
+		if (!separated && password && blank_lines) {
+			conv_function(PAM_TEXT_INFO, "");
+			conv_function(PAM_TEXT_INFO, "");
+		}
+		separated = true;
+	};
+
+	// The wait for an answer ends when the authentication is done, a method that did not answer is not announced then
+	const auto done = [] { return terminate || confirmation_type != ConfirmationType::Unset; };
+
+	bool face_announced = false;
+	if (method_available(face_auth, face_availability) && !done()) {
+		separate();
 		if (verbose) {
 			conv_function(PAM_TEXT_INFO, S("Facial authentication..."));
 		}
 		conv_function(PAM_TEXT_INFO, S("Please look directly into the camera"));
-		if (blank_lines) {
+		face_announced = true;
+	}
+	if (method_available(fingerprint, fingerprint_availability) && !done()) {
+		separate();
+		if (face_announced && blank_lines) {
 			conv_function(PAM_TEXT_INFO, "");
 		}
-	}
-	if (available.fingerprint) {
 		if (verbose) {
 			conv_function(PAM_TEXT_INFO, S("Fingerprint authentication..."));
 		}
@@ -248,6 +272,7 @@ inline void print_detection_notices(const Available& available) {
  * wait for a result
  */
 inline void do_auth() {
+	auth_started = std::chrono::steady_clock::now();
 	if (fingerprint) {
 		fingerprint_task_ptr->activate();
 	}
@@ -270,27 +295,17 @@ inline void do_auth() {
 		return;
 	}
 
-	const Available available = wait_for_availability();
-
-	if (terminate || confirmation_type != ConfirmationType::Unset) {
-		return;
-	}
 	if (init_message) {
-		print_init_message(available);
+		print_init_message();
 	}
 
 	if (terminate || confirmation_type != ConfirmationType::Unset) {
 		return;
-	}
-	// The blank lines set the messages of the face and the fingerprint apart from the password prompt.
-	// Without them there is nothing to set apart, and they would come before the prompt, which the
-	// password task prints at the same time.
-	const bool others_available = available.face || available.fingerprint;
-	if (password && blank_lines && others_available) {
-		conv_function(PAM_TEXT_INFO, "");
 	}
 	if (detection_notice) {
-		print_detection_notices(available);
+		print_detection_notices();
+	} else if (password && blank_lines && (method_available(face_auth, face_availability) || method_available(fingerprint, fingerprint_availability))) {
+		conv_function(PAM_TEXT_INFO, "");
 	}
 
 	if (!terminate && confirmation_type == ConfirmationType::Unset) {
@@ -889,6 +904,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 			howdy_finished = true;
 			// Without a scan there was nothing to look for
+			// Without a scan there was nothing to look for
 			if (face_availability == Availability::Unknown) {
 				face_availability = (rc == FaceAuthenticator::Result::Success) ? Availability::Available : Availability::Unavailable;
 			}
@@ -943,6 +959,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			std::unique_lock<std::mutex> lock(mutx);
 
 			fingerprint_finished = true;
+			// Without a scan there was nothing to touch
 			// Without a scan there was nothing to touch
 			if (fingerprint_availability == Availability::Unknown) {
 				fingerprint_availability = (rc == FprintdAuthenticator::Result::Success) ? Availability::Available : Availability::Unavailable;

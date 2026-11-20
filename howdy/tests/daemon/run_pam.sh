@@ -111,7 +111,7 @@ chmod 644 "$T/etc/config.ini"
 
 position() { grep -nF "$1" <<< "$OUT" | head -1 | cut -d: -f1; }
 INIT_FACE="Look directly into the camera"
-INIT_FINGER="Place your finger on the finerprint reader"
+INIT_FINGER="Place your finger on the fingerprint reader"
 
 # scenario <name> <fprintd mode> <face model: yes|no> sets OUT
 scenario() {
@@ -127,8 +127,21 @@ expect "face and fingerprint: both are offered" "$(has "$INIT_FINGER")$(has "Or 
 expect "face and fingerprint: the face is announced" "$(has "Facial authentication...")" yes
 expect "face and fingerprint: the fingerprint is announced" "$(has "Fingerprint authentication...")" yes
 expect "face and fingerprint: the order of the messages" "$([ "$(position "$INIT_FINGER")" -lt "$(position "Facial authentication...")" ] && [ "$(position "Please look directly into the camera")" -lt "$(position "Fingerprint authentication...")" ] && echo ordered)" ordered
-expect "face and fingerprint: the finger notice comes after the fingerprint announcement" "$([ "$(position "Fingerprint authentication...")" -lt "$(position "Place your finger on the fingerprint reader")" ] && echo ordered)" ordered
-expect "face and fingerprint: the messages are in the order of the console" "$(grep -v '^RESULT' <<< "$OUT" | sed 's/^MSG [0-9]*: //' | head -7 | tr '\n' '|')" "Place your finger on the finerprint reader|Or look directly into the camera|Facial authentication...|Please look directly into the camera||Fingerprint authentication...|Place your finger on the fingerprint reader|"
+expect "face and fingerprint: the messages are in the order of the console" "$(grep -v '^RESULT' <<< "$OUT" | sed 's/^MSG [0-9]*: //' | head -7 | tr '\n' '|')" "Place your finger on the fingerprint reader|Or look directly into the camera|Facial authentication...|Please look directly into the camera||Fingerprint authentication...|Place your finger on the fingerprint reader|"
+
+# A slow reader holds back only its own notice, the face is announced at once
+# (without init-message, which waits for both methods)
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+export PAM_TEST_TIMES="$T/pam_times"
+rm -f "$PAM_TEST_TIMES"
+scenario "slow reader" slow yes
+unset PAM_TEST_TIMES
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 init-message" > "$CONFDIR/howdy-test"
+at() { awk -F'\t' -v text="$1" '$2 == text { print $1; exit }' "$T/pam_times"; }
+expect "a slow reader: authenticated by the face" "$(result_of)" 0
+expect "a slow reader: the face is announced at once" "$([ "$(at "Facial authentication...")" -lt 300 ] && echo yes)" yes
+expect "a slow reader: the fingerprint is announced when its reader answers" "$([ "$(at "Fingerprint authentication...")" -ge 500 ] && echo yes)" yes
+expect "a slow reader: the messages are in the usual order" "$(grep -v '^RESULT' <<< "$OUT" | sed 's/^MSG [0-9]*: //' | head -5 | tr '\n' '|')" "Facial authentication...|Please look directly into the camera||Fingerprint authentication...|Place your finger on the fingerprint reader|"
 
 scenario "no fingerprints" no-prints yes
 expect "no fingerprints: authenticated by the face" "$(result_of)" 0

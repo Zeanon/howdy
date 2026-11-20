@@ -6,10 +6,12 @@ change while the stand-in runs:
   no-device   there is no reader
   match       the finger matches a second after VerifyStart
   wait        VerifyStart works, nobody touches the reader
+  slow        like wait, but Claim takes 0.6 seconds, as a reader that is slow to open
 """
 
 import asyncio
 import os
+import time
 
 from dbus_next import BusType, DBusError, Message, Variant
 from dbus_next.aio import MessageBus
@@ -40,7 +42,8 @@ class Device(ServiceInterface):
 
 	@method()
 	def Claim(self, username: "s"):  # type: ignore
-		pass
+		if mode() == "slow":
+			time.sleep(0.6)
 
 	@method()
 	def Release(self):

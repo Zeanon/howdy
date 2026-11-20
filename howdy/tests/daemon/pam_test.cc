@@ -4,15 +4,36 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 
 #include <security/pam_appl.h>
 
 namespace {
 
+// When a message came, in milliseconds since the start, written to the file in PAM_TEST_TIMES (tab, text)
+void log_time(const char* text) {
+	const char* path = std::getenv("PAM_TEST_TIMES");
+	if (path == nullptr) {
+		return;
+	}
+	static timespec start{};
+	timespec now{};
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (start.tv_sec == 0 && start.tv_nsec == 0) {
+		start = now;
+	}
+	FILE* file = std::fopen(path, "a");
+	if (file != nullptr) {
+		std::fprintf(file, "%ld\t%s\n", ((now.tv_sec - start.tv_sec) * 1000) + ((now.tv_nsec - start.tv_nsec) / 1000000), text);
+		std::fclose(file);
+	}
+}
+
 int conversation(int count, const struct pam_message** messages, struct pam_response** responses, void* /*data*/) {
 	*responses = static_cast<struct pam_response*>(calloc(static_cast<size_t>(count), sizeof(struct pam_response)));
 	for (int i = 0; i < count; ++i) {
 		std::printf("MSG %d: %s\n", messages[i]->msg_style, messages[i]->msg);
+		log_time(messages[i]->msg);
 		// A wrong password for a prompt, nobody types here
 		if (messages[i]->msg_style == PAM_PROMPT_ECHO_OFF || messages[i]->msg_style == PAM_PROMPT_ECHO_ON) {
 			(*responses)[i].resp = strdup("wrong");
@@ -27,6 +48,7 @@ int main(int argc, char** argv) {
 	if (argc != 4) {
 		return 2;
 	}
+	log_time("start");
 	const struct pam_conv conv = {conversation, nullptr};
 	pam_handle_t* handle = nullptr;
 	if (pam_start_confdir(argv[2], argv[3], &conv, argv[1], &handle) != PAM_SUCCESS) {
