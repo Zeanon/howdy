@@ -32,7 +32,9 @@ class FaceAuthenticator {
 	FaceAuthenticator(const FaceAuthenticator&) = delete;
 	FaceAuthenticator& operator=(const FaceAuthenticator&) = delete;
 
-	Result authenticate(const std::function<int(int, const char*)>& conv_function, bool detection_notice, int max_tries);
+	// on_scanning is called once, when the daemon has found a face model of the user
+	// and starts to look for the face, not for a user without a model
+	Result authenticate(const std::function<int(int, const char*)>& conv_function, const std::function<void()>& on_scanning, int max_tries);
 
 	void cancel() noexcept;
 
@@ -40,7 +42,7 @@ class FaceAuthenticator {
 	bool connect();
 	bool start_authentication();
 	void cancel_request();
-	void process_events();
+	void process_events(const std::function<void()>& on_scanning);
 	void cleanup();
 
 	static Result map_status(const char* status) noexcept;
@@ -57,6 +59,7 @@ class FaceAuthenticator {
 
 	bool cancelled_ = false;
 	bool request_started_ = false;
+	bool scanning_notified_ = false;
 
 	Result result_ = Result::Unset;
 };

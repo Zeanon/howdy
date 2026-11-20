@@ -14,12 +14,10 @@ namespace howdy {
 
 namespace {
 
-// The directory can be searched by everybody, but not listed: the PAM module
-// checks with stat() whether a user has a model before it asks the daemon, and
-// it runs as whoever calls PAM, not always as root. With 0700 that check would
-// fail for those and the face authentication would silently be skipped. The
-// files in it are only accessible for root (MODEL_FILE_MODE).
-constexpr mode_t MODELS_DIR_MODE = 0711;
+// Only root can look into the directory, so nobody else can even tell who has a
+// face model. The PAM module does not look for the model itself, it asks the
+// daemon, which runs as root.
+constexpr mode_t MODELS_DIR_MODE = 0700;
 constexpr mode_t MODEL_FILE_MODE = 0600;
 
 // A user may only fill so much of the disk of root. The limits are far above
@@ -113,8 +111,9 @@ void ModelStore::add(const std::string& username, nlohmann::json model) const {
 		if (ec) {
 			throw std::runtime_error("Could not create the models directory: " + ec.message());
 		}
-		chmod(directory_.c_str(), MODELS_DIR_MODE);
 	}
+	// Also for a directory of an older version that others could search
+	chmod(directory_.c_str(), MODELS_DIR_MODE);
 
 	auto models = load(path).value_or(nlohmann::json::array());
 	if (models.size() >= MAX_MODELS_PER_USER) {

@@ -190,7 +190,7 @@ void FaceAuthenticator::cleanup() {
 	request_id_.clear();
 }
 
-void FaceAuthenticator::process_events() {
+void FaceAuthenticator::process_events(const std::function<void()>& on_scanning) {
 	int r;
 	while (!cancelled_) {
 		sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -229,6 +229,14 @@ void FaceAuthenticator::process_events() {
 			return;
 		}
 
+		// A user without a face model is answered at once, only now it is known that the camera is used
+		if (!scanning_notified_ && str_equal(status, "RUNNING")) {
+			scanning_notified_ = true;
+			if (on_scanning) {
+				on_scanning();
+			}
+		}
+
 		std::this_thread::sleep_for(POLL_INTERVAL);
 	}
 
@@ -238,8 +246,10 @@ void FaceAuthenticator::process_events() {
 	}
 }
 
-FaceAuthenticator::Result FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv_function, bool detection_notice, int max_tries) {
+FaceAuthenticator::Result
+FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv_function, const std::function<void()>& on_scanning, int max_tries) {
 	result_ = Result::Error;
+	scanning_notified_ = false;
 
 	if (!connect()) {
 		return result_;
@@ -254,12 +264,7 @@ FaceAuthenticator::Result FaceAuthenticator::authenticate(const std::function<in
 			return result_;
 		}
 
-		/*
-		if (detection_notice) {
-			conv_function(PAM_TEXT_INFO, S("Please look directly into the camera"));
-		}*/
-
-		process_events();
+		process_events(on_scanning);
 
 		if (result_ == Result::NoDevice) {
 			conv_function(PAM_ERROR_MSG, S("Howdy could not find a camera device at the path specified in the config file."));

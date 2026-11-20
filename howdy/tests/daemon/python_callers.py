@@ -289,6 +289,52 @@ async def authentication():
 	)
 	INTERFACE.bus = Bus(UIDS)
 
+	# A user without a face model is answered at once, also while a scan runs, and is not made to wait
+	INTERFACE.authenticator = types.SimpleNamespace(
+		has_face_model=lambda username: False, start_cooldown=0
+	)
+	INTERFACE.active_request = "running"
+	started = await as_caller(":daemon", "StartAuthentication", "root", [])
+	check(
+		"no model: the request is accepted while a scan runs",
+		isinstance(started, str) and len(started) > 0,
+		True,
+	)
+	check(
+		"no model: the result is known at once",
+		await as_caller(":daemon", "GetResult", started),
+		str(auth_module.HowdyStatus.NoEnrolledFaces),
+	)
+	check(
+		"no model: the scan that runs is not touched",
+		INTERFACE.active_request,
+		"running",
+	)
+	INTERFACE.authenticator = types.SimpleNamespace(
+		has_face_model=lambda username: True, start_cooldown=0
+	)
+	check(
+		"with a model the running scan makes the caller wait",
+		await as_caller(":daemon", "StartAuthentication", "root", []),
+		"org.howdy.Authentication.Busy",
+	)
+	INTERFACE.active_request = None
+
+	# Nobody can ask again and again, the cooldown applies to a user without a model, too
+	nobody = pwd.getpwnam("nobody").pw_uid
+	INTERFACE.bus = Bus({":nobody": nobody})
+	INTERFACE.authenticator = types.SimpleNamespace(
+		has_face_model=lambda username: False, start_cooldown=60
+	)
+	first = await as_caller(":nobody", "StartAuthentication", "nobody", [])
+	check("cooldown: the first request is accepted", isinstance(first, str), True)
+	check(
+		"cooldown: the next one has to wait",
+		await as_caller(":nobody", "StartAuthentication", "nobody", []),
+		"org.howdy.Authentication.Busy",
+	)
+	INTERFACE.bus = Bus(UIDS)
+
 	# Only the own user can be authenticated, everybody else is refused before anything starts
 	check(
 		"an ordinary user can not authenticate somebody else",

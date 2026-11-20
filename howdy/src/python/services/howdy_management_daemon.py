@@ -166,9 +166,10 @@ class ManagementInterface:
 			lock = self.user_locks.setdefault(username, asyncio.Lock())
 
 			async with lock:
-				os.makedirs(
-					paths_factory.user_models_dir_path(), mode=0o700, exist_ok=True
-				)
+				models_dir = paths_factory.user_models_dir_path()
+				os.makedirs(models_dir, mode=0o700, exist_ok=True)
+				# Also for a directory of an older version that others could search
+				os.chmod(models_dir, 0o700)
 
 				enc_file = paths_factory.user_model_path(username)
 				try:

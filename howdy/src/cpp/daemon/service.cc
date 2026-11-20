@@ -304,10 +304,14 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		return sd_bus_error_set(ret_error, "org.howdy.Authentication.NotAuthorized", "Only the own user can be authenticated");
 	}
 
+	// A user without a face model is answered at once, without the camera and whatever else is running. The
+	// client must not tell it from a scan that is about to start, it would ask the user to look into the camera.
+	const bool has_model = self->authenticator_.has_face_model(username);
+
 	std::string request_id;
 	{
 		const std::lock_guard<std::mutex> lock(self->mutex_);
-		if (self->active_request_.has_value() || self->stopping_) {
+		if ((has_model && self->active_request_.has_value()) || self->stopping_) {
 			return sd_bus_error_set(ret_error, "org.howdy.Authentication.Busy", "An authentication is already running");
 		}
 		if (!trusted) {
@@ -318,6 +322,21 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		}
 
 		request_id = new_request_id();
+		if (!has_model) {
+			auto request = std::make_shared<Request>();
+			request->owner_uid = caller_uid;
+			request->username = username;
+			request->status = Status::NoEnrolledFaces;
+			const auto now = Clock::now();
+			request->finished = now;
+			self->requests_[request_id] = request;
+			// Nobody can use this to keep asking, either
+			if (!trusted && self->authenticator_.start_cooldown().count() > 0) {
+				self->cooldown_until_[caller_uid] = now + self->authenticator_.start_cooldown();
+			}
+			return sd_bus_reply_method_return(message, "s", request_id.c_str());
+		}
+
 		auto request = std::make_shared<Request>();
 		request->owner_uid = caller_uid;
 		request->username = username;

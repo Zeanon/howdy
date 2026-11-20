@@ -76,6 +76,7 @@ NOPOLL=4 E "client stops polling" KEEPALIVE_TIMEOUT timeout=0
 echo "--- busy / cancel / clear"
 id=$(call StartAuthentication sas "$USER_NAME" 1 timeout=0 | cut -d'"' -f2)
 expect "second start while running" "$(call StartAuthentication sas "$USER_NAME" 0)" "Call failed: An authentication is already running"
+USER_NAME=nobody E "a user without a model is answered while a scan is running" NO_ENROLLED_FACE
 sleep 0.5
 expect "running" "$(call GetResult s "$id")" 's "RUNNING"'
 expect "cancel" "$(call CancelAuthentication s "$id")" "b true"
@@ -120,6 +121,7 @@ chmod 600 "$MODEL"
 echo "--- snapshot retention"
 # A snapshot of an earlier time is deleted when the daemon starts, of the failed
 # attempts only the newest ones are kept
+rm -rf "$T/log/snapshots"
 mkdir -p "$T/log/snapshots"
 touch -d "30 days ago" "$T/log/snapshots/20200101T000000.jpg"
 start_daemon "${NOLIVE[@]}" snapshots.save_failed=true snapshots.max_snapshots=2 snapshots.retention=7d

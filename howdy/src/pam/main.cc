@@ -33,6 +33,8 @@
 
 #define S(msg) gettext(msg)
 
+// How long the notice for the face waits for the answer of the daemon, which comes at once
+static const auto FACE_DECISION_WAIT = std::chrono::milliseconds(500);
 static const auto DEFAULT_ENTER_TIMEOUT = std::chrono::duration<int, std::chrono::milliseconds::period>(500);
 
 termios original_terminal_flags;
@@ -84,6 +86,9 @@ int pam_res = PAM_IGNORE;
 bool terminate = false;
 
 bool howdy_finished = false;
+// The daemon has said whether it looks for the face, and that the user has no face model
+bool face_decided = false;
+bool face_has_no_model = false;
 bool howdy_success = false;
 
 bool fingerprint_finished = false;
@@ -226,7 +231,7 @@ inline void do_auth() {
 	if (terminate || confirmation_type != ConfirmationType::Unset) {
 		return;
 	}
-	if (password && blank_lines) {
+	if (password && blank_lines) { // TODO
 		conv_function(PAM_TEXT_INFO, "");
 	}
 	if (detection_notice) {
@@ -234,12 +239,23 @@ inline void do_auth() {
 			conv_function(PAM_TEXT_INFO, "");
 		}
 		if (face_auth) {
-			if (verbose) {
-				conv_function(PAM_TEXT_INFO, S("Facial authentication..."));
+			// The daemon answers at once whether it looks for the face, a user without a face
+			// model must not be asked to look into the camera. Without an answer in time the
+			// notice is shown, as it was before the daemon was asked.
+			bool ask_for_face = true;
+			{
+				std::unique_lock<std::mutex> lock(mutx);
+				convar.wait_for(lock, FACE_DECISION_WAIT, [] { return face_decided || terminate || confirmation_type != ConfirmationType::Unset; });
+				ask_for_face = !face_has_no_model;
 			}
-			conv_function(PAM_TEXT_INFO, S("Please look directly into the camera"));
-			if (blank_lines) {
-				conv_function(PAM_TEXT_INFO, "");
+			if (ask_for_face) {
+				if (verbose) {
+					conv_function(PAM_TEXT_INFO, S("Facial authentication..."));
+				}
+				conv_function(PAM_TEXT_INFO, S("Please look directly into the camera"));
+				if (blank_lines) {
+					conv_function(PAM_TEXT_INFO, "");
+				}
 			}
 		}
 		if (fingerprint && verbose) {
@@ -636,18 +652,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		globfree(&glob_result);
 	}
 
-	/*
 	if ((!whitelist.empty() && !whitelist.count(std::string(username))) || blacklist.count(std::string(username))) {
 		return PAM_IGNORE;
-	}
-	*/
-
-	// pre-check if this user has face model file
-	auto model_path = std::string(USER_MODELS_DIR) + "/" + username + ".dat";
-	struct stat stat_;
-	if (stat(model_path.c_str(), &stat_) != 0) {
-		// no face model found, disable face_auth
-		face_auth = false;
 	}
 
 	// Will contain PAM conversation structure
@@ -830,7 +836,15 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
 		pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
-		FaceAuthenticator::Result rc = face_authenticator->authenticate(conv_function, detection_notice, static_cast<int>(max_face_auth_tries));
+		// The daemon looks for the face, so the user has a face model
+		const auto on_scanning = [] {
+			{
+				std::unique_lock<std::mutex> lock(mutx);
+				face_decided = true;
+			}
+			convar.notify_one();
+		};
+		FaceAuthenticator::Result rc = face_authenticator->authenticate(conv_function, on_scanning, static_cast<int>(max_face_auth_tries));
 
 		bool terminated = (rc == FaceAuthenticator::Result::Cancelled || rc == FaceAuthenticator::Result::Disconnected || terminate);
 
@@ -838,6 +852,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			std::unique_lock<std::mutex> lock(mutx);
 
 			howdy_finished = true;
+			face_decided = true;
+			face_has_no_model = (rc == FaceAuthenticator::Result::NoEnrolledFace);
 			howdy_success = (rc == FaceAuthenticator::Result::Success);
 			howdy_status_code = face_auth_result_to_pam_result(rc);
 

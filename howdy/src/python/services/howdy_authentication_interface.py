@@ -115,6 +115,20 @@ class HowdyAuthenticator:
 
 		self._initialized = True
 
+	def has_face_model(self, username):
+		"""Whether the user has a face model, otherwise there is nothing to look for.
+		True if that can not be said, the authentication then reports what is wrong."""
+		try:
+			models = json.loads(
+				read_trusted_file(paths_factory.user_model_path(username))
+			)
+			encodings, _ = flatten_models(models, 256 if self.use_openvino else 128)
+			return len(encodings) > 0
+		except FileNotFoundError:
+			return False
+		except Exception:
+			return True
+
 	def _read_config(self):
 		self.config = configparser.ConfigParser()
 		self.config.read(paths_factory.config_file_path())
@@ -809,8 +823,13 @@ class AuthenticationInterface(ServiceInterface):
 				"Only the own user can be authenticated",
 			)
 
+		# A user without a face model is answered at once, without the camera and
+		# whatever else is running. The client must not tell it from a scan that is
+		# about to start, it would ask the user to look into the camera.
+		has_model = self.authenticator.has_face_model(username)
+
 		with self.lock:
-			if self.active_request is not None:
+			if has_model and self.active_request is not None:
 				raise DBusError(
 					"org.howdy.Authentication.Busy",
 					"An authentication is already running",
@@ -826,6 +845,21 @@ class AuthenticationInterface(ServiceInterface):
 			timeout = Timeout(time.monotonic() + 2)
 			request_id = str(uuid.uuid4())
 			cancel_event = threading.Event()
+
+			if not has_model:
+				self.requests[request_id] = {
+					"owner": caller_uid,
+					"status": HowdyStatus.NoEnrolledFaces,
+					"cancel": cancel_event,
+					"timeout": timeout,
+				}
+				# Nobody can use this to keep asking, either
+				if not trusted and self.authenticator.start_cooldown > 0:
+					self.cooldown_until[caller_uid] = (
+						time.monotonic() + self.authenticator.start_cooldown
+					)
+				self._clear_later(request_id)
+				return request_id
 
 			self.requests[request_id] = {
 				"owner": caller_uid,
@@ -871,19 +905,24 @@ class AuthenticationInterface(ServiceInterface):
 				if self.active_request == request_id:
 					self.active_request = None
 
-			def cleanup_request():
-				time.sleep(30)
-				self.clear(request_id)
-
-			thread = threading.Thread(
-				target=cleanup_request,
-				name="howdy-auth-cleanup",
-				daemon=True,
-			)
-			thread.start()
+			self._clear_later(request_id)
 
 		self.executor.submit(run_authentication)
 		return request_id
+
+	def _clear_later(self, request_id):
+		"""Forget a finished request after a while"""
+
+		def cleanup_request():
+			time.sleep(30)
+			self.clear(request_id)
+
+		thread = threading.Thread(
+			target=cleanup_request,
+			name="howdy-auth-cleanup",
+			daemon=True,
+		)
+		thread.start()
 
 	def owns(self, request, caller_uid):
 		return may_access(caller_uid, request["owner"], True)

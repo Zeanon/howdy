@@ -81,6 +81,10 @@ class Authenticator {
 	// args: show-auth-popup[=bool] and timeout=<time>
 	Status authenticate(const std::string& username, const std::vector<std::string>& args, const RequestControl& control);
 
+	// Whether the user has a face model, otherwise there is nothing to look for. True if that
+	// can not be said, the authentication then reports what is wrong.
+	[[nodiscard]] bool has_face_model(const std::string& username) const;
+
 	// How long a caller without privileges has to wait after its authentication to start the next one
 	[[nodiscard]] std::chrono::seconds start_cooldown() const {
 		return start_cooldown_;

@@ -307,6 +307,18 @@ void Authenticator::cleanup() {
 	}
 }
 
+bool Authenticator::has_face_model(const std::string& username) const {
+	try {
+		if (!backend_) {
+			return true;
+		}
+		const auto loaded = load_user_encodings(username, backend_->encoding_size());
+		return loaded.has_value() && !loaded->empty();
+	} catch (const std::exception&) {
+		return true;
+	}
+}
+
 Status Authenticator::run(const std::string& username, const Args& args, const RequestControl& control) { // NOLINT(readability-function-cognitive-complexity)
 	// Amount of ignored dark frames
 	int dark_tries = 0;

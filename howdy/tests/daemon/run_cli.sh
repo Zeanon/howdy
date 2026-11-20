@@ -67,9 +67,8 @@ echo "--- management daemon"
 rm -rf "$T/models"
 expect "list without models" "$(mcall List s "$USER_NAME")" 's "[]"'
 expect "add" "$(mcall Add ss "$USER_NAME" "$MODEL_JSON")" "b true"
-# Searchable for everybody, because the PAM module checks with stat() whether a user has a model, but
-# not listable and the models in it are only for root
-expect "the models directory can be searched, but not listed" "$(stat -c %a "$T/models")" 711
+# Only root can look into the directory, so nobody else can tell who has a model
+expect "the models directory is only for root" "$(stat -c %a "$T/models")" 700
 expect "model file mode" "$(stat -c %a "$MODEL")" 600
 expect "add as the caller, without a user" "$(mcall Add s "$SECOND_JSON")" "b true"
 out="$(mcall List "")"
