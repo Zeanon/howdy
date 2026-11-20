@@ -45,6 +45,8 @@ UMask=0077
 LockPersonality=yes
 
 ReadWritePaths=@openvino_cache_dir@
+# Where the snapshots are saved
+@log_directory_setting@
 
 CapabilityBoundingSet=
 AmbientCapabilities=

@@ -53,12 +53,21 @@ else
     popup_exec = '"' + (installdir / 'howdy-auth-popup') + '"'
 endif
 
+# The authentication daemon saves the snapshots to the log path, which its unit makes read
+# only otherwise (ProtectSystem=strict). Below /var/log systemd creates the directory.
+if logpath.startswith('/var/log/') and logpath.substring(9).strip('/') != ''
+    log_directory_setting = 'LogsDirectory=' + logpath.substring(9).strip('/') + '\nLogsDirectoryMode=0700'
+else
+    log_directory_setting = 'ReadWritePaths=-' + logpath
+endif
+
 service_conf_data = configuration_data({
     'authentication_exec': authentication_exec,
     'management_exec': management_exec,
     'popup_exec': popup_exec,
     'python_path': py_exec,
     'openvino_cache_dir': openvinocachedir,
+    'log_directory_setting': log_directory_setting,
     'user_models_dir': usermodelsdir,
     'howdy_authentication_service_name': howdy_authentication_service_name,
     'authentication_bus': dbus_authentication_bus,
