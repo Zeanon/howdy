@@ -101,6 +101,7 @@ fi
 # The components, as in meson.build
 BASE_SOURCES=(
 	"$SRC_DIR/common/util.cc"
+	"$SRC_DIR/common/caller.cc"
 	"$SRC_DIR/common/polkit.cc"
 	"$SRC_DIR/common/management_client.cc"
 )

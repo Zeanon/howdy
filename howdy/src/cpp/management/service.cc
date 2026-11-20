@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "caller.hh"
 #include "paths.hh"
 #include "polkit.hh"
 #include "util.hh"
@@ -129,11 +130,8 @@ int ManagementService::handle(sd_bus_message* message) {
 		}
 
 		// The caller is identified by the bus, not by what it claims
-		sd_bus_creds* raw_creds = nullptr;
-		check(sd_bus_query_sender_creds(message, SD_BUS_CREDS_EUID, &raw_creds), "Failed to identify the caller");
-		const std::unique_ptr<sd_bus_creds, decltype(&sd_bus_creds_unref)> creds(raw_creds, sd_bus_creds_unref);
 		uid_t caller_uid = 0;
-		check(sd_bus_creds_get_euid(creds.get(), &caller_uid), "Failed to identify the caller");
+		check(query_caller_uid(message, caller_uid), "Failed to identify the caller");
 
 		if (!with_user) {
 			const auto name = lookup_username(caller_uid);

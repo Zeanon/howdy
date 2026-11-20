@@ -15,6 +15,7 @@
 
 #include <systemd/sd-id128.h>
 
+#include "caller.hh"
 #include "paths.hh"
 #include "util.hh"
 
@@ -31,24 +32,6 @@ void check(int r, const char* what) {
 	if (r < 0) {
 		throw std::runtime_error(std::string(what) + ": " + std::strerror(-r));
 	}
-}
-
-// Root and the user of the daemon itself may do everything. The methods are open to every
-// user, so everybody else is restricted to its own user.
-bool is_trusted(uid_t uid) {
-	return uid == 0 || uid == geteuid();
-}
-
-// The caller is identified by the bus, not by what it claims
-int query_caller_uid(sd_bus_message* message, uid_t& uid) {
-	sd_bus_creds* creds = nullptr;
-	int r = sd_bus_query_sender_creds(message, SD_BUS_CREDS_EUID, &creds);
-	if (r < 0) {
-		return r;
-	}
-	r = sd_bus_creds_get_euid(creds, &uid);
-	sd_bus_creds_unref(creds);
-	return r;
 }
 
 std::string new_request_id() {
@@ -245,7 +228,7 @@ void AuthenticationService::worker_loop() {
 		// Cancellation takes precedence over a late result.
 		request->status = request->control.cancel.load() ? Status::Cancelled : result;
 		request->finished = Clock::now();
-		if (!is_trusted(request->owner_uid) && authenticator_.start_cooldown().count() > 0) {
+		if (!is_privileged(request->owner_uid, true) && authenticator_.start_cooldown().count() > 0) {
 			cooldown_until_[request->owner_uid] = *request->finished + authenticator_.start_cooldown();
 		}
 		if (active_request_ == request_id) {
@@ -273,7 +256,7 @@ void AuthenticationService::purge_finished() {
 bool AuthenticationService::clear(const std::string& request_id, uid_t caller_uid) {
 	const std::lock_guard<std::mutex> lock(mutex_);
 	const auto it = requests_.find(request_id);
-	if (it == requests_.end() || (!is_trusted(caller_uid) && it->second->owner_uid != caller_uid)) {
+	if (it == requests_.end() || !may_access(caller_uid, it->second->owner_uid, true)) {
 		return false;
 	}
 	if (it->second->status == Status::Running) {
@@ -315,7 +298,7 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 	if (r < 0) {
 		return r;
 	}
-	const bool trusted = is_trusted(caller_uid);
+	const bool trusted = is_privileged(caller_uid, true);
 	if (!trusted && *target_uid != caller_uid) {
 		return sd_bus_error_set(ret_error, "org.howdy.Authentication.NotAuthorized", "Only the own user can be authenticated");
 	}
@@ -368,7 +351,7 @@ int AuthenticationService::method_get_result(sd_bus_message* message, void* user
 		const std::lock_guard<std::mutex> lock(self->mutex_);
 		const auto it = self->requests_.find(request_id);
 		// A request of somebody else does not exist for the caller
-		if (it == self->requests_.end() || (!is_trusted(caller_uid) && it->second->owner_uid != caller_uid)) {
+		if (it == self->requests_.end() || !may_access(caller_uid, it->second->owner_uid, true)) {
 			return sd_bus_error_set(ret_error, "org.howdy.Authentication.UnknownRequest", "Unknown authentication request");
 		}
 		it->second->control.extend_keepalive(KEEPALIVE_EXTENSION);
@@ -397,7 +380,7 @@ int AuthenticationService::method_cancel(sd_bus_message* message, void* userdata
 	{
 		const std::lock_guard<std::mutex> lock(self->mutex_);
 		const auto it = self->requests_.find(request_id);
-		if (it != self->requests_.end() && it->second->status == Status::Running && (is_trusted(caller_uid) || it->second->owner_uid == caller_uid)) {
+		if (it != self->requests_.end() && it->second->status == Status::Running && may_access(caller_uid, it->second->owner_uid, true)) {
 			it->second->status = Status::Cancelling;
 			it->second->control.cancel.store(true);
 			cancelled = true;

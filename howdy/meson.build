@@ -207,6 +207,7 @@ if build_auth_daemon or build_management_daemon or build_cli
         [
             native_paths_h,
             'src/cpp/common/util.cc',
+            'src/cpp/common/caller.cc',
             'src/cpp/common/polkit.cc',
             'src/cpp/common/management_client.cc',
         ],

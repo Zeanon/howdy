@@ -3,6 +3,7 @@
 #include <cstring>
 #include <memory>
 
+#include "caller.hh"
 #include "paths.hh"
 #include "util.hh"
 
@@ -38,7 +39,7 @@ void check_caller_may_manage(uid_t caller_uid, const std::string& target_user) {
 	if (!target_uid.has_value()) {
 		throw std::runtime_error("Unknown user: " + target_user);
 	}
-	if (caller_uid != 0 && caller_uid != *target_uid) {
+	if (!may_access(caller_uid, *target_uid)) {
 		throw AuthorizationError("Not authorized to modify models for user " + target_user);
 	}
 }
