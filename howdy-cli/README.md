@@ -28,7 +28,7 @@ This interactive bash script provides a user-friendly menu-driven interface to i
 - **Camera device selection** with automatic device detection via `v4l2-ctl`
 - **Certainty threshold** adjustment (security level)
 - **Timeout** configuration
-- **Enable/Disable** Howdy globally or for login screen only
+- **Enable/Disable** Howdy
 - **View** current configuration
 - Direct config file editing support
 
@@ -52,17 +52,15 @@ This interactive bash script provides a user-friendly menu-driven interface to i
 ## Installation
 
 ### 1. Install the Command
-`howdy-cli` is part of the meson build of Howdy and is installed to the `bindir` together with it (for `/usr/local` that is `/usr/local/bin/howdy-cli`). To install only the manager use the install script:
+`howdy-cli` is part of the meson build of Howdy and is installed to the `bindir` together with it (for `/usr/local` that is `/usr/local/bin/howdy-cli`). To install only the manager, set up the build and install the files with the tag `cli_manager`, nothing has to be compiled for it:
 ```bash
 git clone <repository-url>
-cd howdy/howdy-cli
-./install-cli.sh
+cd howdy
+meson setup build
+sudo meson install -C build --no-rebuild --tags cli_manager
 ```
 
-- With a meson build directory of Howdy (`../build` or the one you pass as argument) the script is installed by meson, with the prefix and the config path of that build (`-Dconfig_dir=...`).
-- Without one the script is generated with the default paths (`/usr/local/bin/howdy-cli`, config file `/usr/local/etc/howdy/config.ini`). Change them with `PREFIX=... CONFIG_FILE=... ./install-cli.sh`.
-
-The config path is written into the script, by default `<config_dir>/config.ini`. The manager is not installed by the meson build with `-Dinstall_howdy_cli=false`.
+The prefix and the config path of the build (`-Dprefix=...`, `-Dconfig_dir=...`) are written into the script, by default the config file is `<config_dir>/config.ini`. The manager is not installed by the meson build with `-Dinstall_howdy_cli=false`.
 
 ### 2. Run It
 ```bash
@@ -123,9 +121,8 @@ The **Configure Howdy** submenu (`C`) provides:
 - `1` **Set camera device** - Change the camera used for recognition
 - `E` **Enable Howdy** - Activate face authentication
 - `D` **Disable Howdy** - Turn off face authentication completely
-- `L` **Disable login screen only** - Keep Howdy active but disable for login
 - `T` **Set timeout** - Configure how long to wait for face detection
-- `S` **Set certainty** - Adjust security level (higher = stricter, e.g., 4.5)
+- `S` **Set certainty** - Adjust security level in percent, 0 to 100 (higher = stricter, default 75)
 - `C` **Show current config** - View the entire configuration file
 - `B` **Back** - Return to the main menu
 
@@ -140,10 +137,9 @@ All entries that change the configuration need root.
 
 ### Enable/Disable Howdy
 
-`E` provides three choices (disabling needs root):
+`E` provides two choices (disabling needs root):
 1. **Disable completely** - Turn off Howdy for all authentication
-2. **Disable login screen only** - Keep Howdy active for sudo/apps but not login
-3. **Enable Howdy** - Instructions to re-enable via config file
+2. **Enable Howdy** - Instructions to re-enable via config file
 
 ## Supported Distributions
 
@@ -208,7 +204,7 @@ Howdy configuration is stored in the config directory that meson set when the ma
 ### Script won't run
 ```bash
 # Install the command again
-./install-cli.sh
+sudo meson install -C build --no-rebuild --tags cli_manager
 
 # Run it, with sudo for installing and configuring
 sudo howdy-cli
@@ -233,7 +229,7 @@ ls -l /dev/video*
 - Ensure IR camera is properly connected
 - Verify camera device path in config (`C` → `C`)
 - Add multiple face models for different lighting conditions
-- Adjust certainty threshold (lower = stricter)
+- Adjust certainty threshold (higher = stricter, 0 to 100, default 75)
 - Test in good lighting conditions
 
 ### Permission errors
@@ -260,10 +256,9 @@ sudo chmod 644 /usr/local/etc/howdy/config.ini
 
 ## Security Considerations
 
-- **Certainty threshold**: Lower values (e.g., 3.5-4.5) provide stricter authentication
+- **Certainty threshold**: Higher values (0 to 100, default 75) provide stricter authentication, but may reject you in poor light
 - **Multiple models**: Register your face in different conditions (glasses, no glasses, different lighting)
 - **Timeout**: Shorter timeouts reduce the window for unauthorized access attempts
-- **Disable for login**: Consider disabling Howdy for login screen and using it only for sudo/apps
 
 ## Advanced Usage
 
@@ -303,7 +298,6 @@ sudo howdy disable
 howdy-cli/
 ├── bin/howdy-manager.sh.in # Main bash script (template, meson sets the config path)
 ├── meson.build             # Installs the script as <bindir>/howdy-cli
-├── install-cli.sh          # Installs only the manager, with or without a meson build
 └── README.md               # This file
 ```
 

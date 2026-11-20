@@ -14,6 +14,7 @@
 #                      otherwise the tests are built without OpenVINO.
 #   CXX                C++ compiler (default: g++)
 #   SANITIZE=1         build with AddressSanitizer and UBSan
+#   SKIP_IMAGES=1      do not download the example images (for the tests that need none)
 
 set -euo pipefail
 export LC_ALL=C
@@ -180,7 +181,8 @@ link_daemon() { link "$1" "${BASE_SOURCES[@]}" "${CORE_SOURCES[@]}" "${DAEMON_SO
 link_management() { link "$1" "${BASE_SOURCES[@]}" "${MANAGEMENT_SOURCES[@]}"; }
 link_cli() { link "$1" "${BASE_SOURCES[@]}" "${CORE_SOURCES[@]}" "${CLI_SOURCES[@]}" "${GUI_SOURCES[@]}"; }
 
-"$TEST_DIR/fetch_images.sh" "$IMG_DIR"
+# SKIP_IMAGES=1 for the tests that need no images (no download)
+[ -n "${SKIP_IMAGES:-}" ] || "$TEST_DIR/fetch_images.sh" "$IMG_DIR"
 
 # Videos that serve as cameras, made of the dlib example images:
 #   still.mp4    two faces       single.mp4   exactly one face (what an enrollment needs)

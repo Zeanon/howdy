@@ -17,6 +17,9 @@ them needs root, a camera or the system bus.
 | `run_python.sh` | The checks who calls the Python daemons, without a bus or polkit (a stand-in answers which user a bus name belongs to): the common caller checks, who may see, cancel and clear a request of the authentication daemon and who may start one, the caller of the management daemon and the polkit check of the cli package, the retention of the snapshots and `read_trusted_file()` of the Python daemons. Needs only the reference Python with `dbus-next`, opencv and numpy. |
 | `run_gui.sh` | The graphical interface in a virtual display: `gui_test.cc` clicks the buttons of the window and the setup wizard. The management daemon is a stand-in on a private D-Bus that logs which connection every call came from, to show that all calls come from one process (polkit then asks for the password once). Covered are adding a model (loading the models, the dialog, saving it), deleting, every failure, the refusal by polkit, closing the dialog (clicked from outside with `xdotool`), the whole wizard with infrared and other cameras, the downloads and the certainty policies, and the program itself started as `howdy gui` and as `howdy-gtk`. A program called `howdy` that logs its calls shows that the window starts no subprocess. `CAMERA=/dev/video0` additionally tests the video tab with a real camera (nothing is saved). |
 
+The CI runs `run_trusted_file.sh`, `run_snapshot.sh` and `run_python.sh` (with `SKIP_IMAGES=1` and the Python of the system), the others need
+models, a camera stand-in, a bus or a display.
+
 `SLOW_TESTS=1 howdy/tests/daemon/run_cli.sh` additionally runs `howdy add` with
 the real timings (about a minute) and waits for the idle timeout of the
 management daemon.

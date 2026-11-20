@@ -179,7 +179,7 @@ configure_camera() {
 
     [[ ! -e "$DEVICE" ]] && error_exit "Device not found"
 
-    sed -i "s|^device_path *=.*|device_path = $DEVICE|" "$CONFIG_FILE"
+    set_config video device_path "$DEVICE"
 
     echo "✅ Camera set to $DEVICE"
     pause
@@ -225,8 +225,7 @@ remove_model() {
 toggle_howdy() {
     echo
     echo "1) Disable Howdy completely"
-    echo "2) Disable Howdy for login screen only"
-    echo "3) Enable Howdy (restore defaults)"
+    echo "2) Enable Howdy (restore defaults)"
     echo
     read -rp "Choose: " CHOICE
 
@@ -236,17 +235,12 @@ toggle_howdy() {
             howdy disable
             ;;
         2)
-            require_root
-            howdy disable-login
-            ;;
-        3)
             echo
             echo "To enable Howdy again, edit the config:"
             echo "sudo howdy config"
             echo
             echo "Set:"
             echo "disabled = false"
-            echo "disable_login = false"
             ;;
         *)
             echo "Invalid choice"
@@ -261,7 +255,6 @@ config_menu() {
     echo "1) Set camera device"
     echo "E) Enable Howdy"
     echo "D) Disable Howdy"
-    echo "L) Disable login screen only"
     echo "T) Set timeout"
     echo "S) Set certainty (security level)"
     echo "C) Show current config"
@@ -275,29 +268,31 @@ config_menu() {
             ;;
         E|e)
             require_root
-            set_config disabled false
-            set_config disable_login false
+            set_config core disabled false
             echo "Howdy enabled"
             ;;
         D|d)
             require_root
-            set_config disabled true
+            set_config core disabled true
             echo "Howdy disabled"
-            ;;
-        L|l)
-            require_root
-            set_config disable_login true
-            echo "Login screen disabled"
             ;;
         T|t)
             require_root
-            read -rp "Enter timeout (seconds): " T
-            set_config timeout "$T"
+            read -rp "Enter timeout in seconds of the face authentication: " T
+            if [[ ! "$T" =~ ^[0-9]+$ ]] || [[ "$T" -lt 1 ]]; then
+                echo "Invalid timeout, enter a number of seconds"
+            else
+                set_config face_authentication timeout "$T"
+            fi
             ;;
         S|s)
             require_root
-            read -rp "Enter certainty (higher = stricter, e.g. 4.5): " C
-            set_config certainty "$C"
+            read -rp "Enter certainty in percent, 0 to 100 (higher = stricter, default 75): " C
+            if [[ ! "$C" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v c="$C" 'BEGIN { exit !(c >= 0 && c <= 100) }'; then
+                echo "Invalid certainty, enter a number from 0 to 100"
+            else
+                set_config face_authentication certainty "$C"
+            fi
             ;;
         C|c)
             echo
@@ -313,15 +308,17 @@ config_menu() {
     pause
 }
 
+# set_config <section> <key> <value>: changes the option in its section only, several sections
+# have a "timeout", and adds it to the section (or the section) if it is not there
 set_config() {
-    KEY="$1"
-    VALUE="$2"
-    CONFIG="$CONFIG_FILE"
+    local section="$1" key="$2" value="$3" config="$CONFIG_FILE"
 
-    if grep -q "^$KEY" "$CONFIG"; then
-        sed -i "s|^$KEY *=.*|$KEY = $VALUE|" "$CONFIG"
+    if sed -n "/^\[$section\]/,/^\[/p" "$config" | grep -q "^$key *="; then
+        sed -i "/^\[$section\]/,/^\[/ s|^$key *=.*|$key = $value|" "$config"
+    elif grep -q "^\[$section\]" "$config"; then
+        sed -i "/^\[$section\]/a $key = $value" "$config"
     else
-        echo "$KEY = $VALUE" >> "$CONFIG"
+        printf '\n[%s]\n%s = %s\n' "$section" "$key" "$value" >> "$config"
     fi
 }
 
