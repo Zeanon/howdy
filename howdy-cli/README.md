@@ -40,7 +40,7 @@ This interactive bash script provides a user-friendly menu-driven interface to i
 ## Requirements
 
 - **Operating System**: Linux (Ubuntu, Fedora, Debian, Arch, or derivatives)
-- **Root privileges**: Script must be run with `sudo`
+- **Privileges**: Installing Howdy and changing the configuration need root, start `howdy-cli` with `sudo` for these actions. Adding, listing, testing and removing face models work as a normal user, they are authorized by polkit (action `org.boltgolt.howdy.Management`)
 - **Dependencies** (auto-installed on Ubuntu/Debian):
   - `v4l-utils` - Camera device management
   - `python3-opencv` - Computer vision library
@@ -51,19 +51,25 @@ This interactive bash script provides a user-friendly menu-driven interface to i
 
 ## Installation
 
-### 1. Download the Script
+### 1. Install the Command
+`howdy-cli` is part of the meson build of Howdy and is installed to the `bindir` together with it (for `/usr/local` that is `/usr/local/bin/howdy-cli`). To install only the manager use the install script:
 ```bash
 git clone <repository-url>
-cd howdy-gui
-chmod +x howdy-manager.sh
+cd howdy/howdy-cli
+./install-cli.sh
 ```
 
-### 2. Run the Script
+- With a meson build directory of Howdy (`../build` or the one you pass as argument) the script is installed by meson, with the prefix and the config path of that build (`-Dconfig_dir=...`).
+- Without one the script is generated with the default paths (`/usr/local/bin/howdy-cli`, config file `/usr/local/etc/howdy/config.ini`). Change them with `PREFIX=... CONFIG_FILE=... ./install-cli.sh`.
+
+The config path is written into the script, by default `<config_dir>/config.ini`. The manager is not installed by the meson build with `-Dinstall_howdy_cli=false`.
+
+### 2. Run It
 ```bash
-sudo ./howdy-manager.sh
+howdy-cli
 ```
 
-The script **must** be run with `sudo` as it requires root privileges for Howdy installation and configuration.
+Installing Howdy and changing the configuration need root, start the manager with `sudo howdy-cli` for these actions. Without root these menu entries stop with a message and return to the menu. For the face models (add, list, test, remove) polkit asks for your authorization if it is needed. If it is denied, the action ends and the menu is shown again.
 
 ## Usage
 
@@ -76,61 +82,65 @@ When you run the script, you'll see an interactive menu:
      HOWDY FACE AUTH MANAGER (BASH)
 ======================================
 
-1) Install Howdy
-2) Configure camera
-3) Add face model
-4) Test face recognition
-5) List face models
-6) Remove / clear models
-7) Enable / disable Howdy
-8) Configure Howdy
-0) Exit
+I) Install Howdy
+A) Add face model
+T) Test face recognition
+L) List face models
+D) Remove / clear models
+E) Enable / disable Howdy
+C) Configure Howdy
+Q) Exit
 ```
+
+Enter the letter of the entry (upper or lower case). If an action fails, the message stays on the screen and the menu is shown below it.
 
 ### First-Time Setup
 
-1. **Install Howdy** (Option 1)
+1. **Install Howdy** (`I`, needs root)
    - The script will detect your distribution
    - Automatically select the appropriate installation method
    - Install all required dependencies
    - For Ubuntu 24.04+, it will use the community PPA
 
-2. **Configure Camera** (Option 2)
+2. **Configure Camera** (`C`, then `1`, needs root)
    - View all available camera devices
    - Select your IR camera (e.g., `/dev/video0`)
    - Camera path is saved to Howdy config
 
-3. **Add Face Model** (Option 3)
+3. **Add Face Model** (`A`)
    - Look at the camera when prompted
    - Your face will be captured and enrolled
    - Model is saved for authentication
 
-4. **Test Recognition** (Option 4)
+4. **Test Recognition** (`T`)
    - Verify that Howdy can recognize your face
    - Get immediate feedback on recognition success
 
 ### Configuration Options
 
-The **Configure Howdy** submenu (Option 8) provides:
+The **Configure Howdy** submenu (`C`) provides:
 
-1. **Set camera device** - Change the camera used for recognition
-2. **Enable Howdy** - Activate face authentication
-3. **Disable Howdy** - Turn off face authentication completely
-4. **Disable login screen only** - Keep Howdy active but disable for login
-5. **Set timeout** - Configure how long to wait for face detection
-6. **Set certainty** - Adjust security level (higher = stricter, e.g., 4.5)
-7. **Show current config** - View the entire configuration file
+- `1` **Set camera device** - Change the camera used for recognition
+- `E` **Enable Howdy** - Activate face authentication
+- `D` **Disable Howdy** - Turn off face authentication completely
+- `L` **Disable login screen only** - Keep Howdy active but disable for login
+- `T` **Set timeout** - Configure how long to wait for face detection
+- `S` **Set certainty** - Adjust security level (higher = stricter, e.g., 4.5)
+- `C` **Show current config** - View the entire configuration file
+- `B` **Back** - Return to the main menu
+
+All entries that change the configuration need root.
 
 ### Managing Face Models
 
-- **List models** (Option 5): View all enrolled face models
-- **Remove models** (Option 6): 
+- **List models** (`L`): View all enrolled face models
+- **Remove models** (`D`): 
   - Enter a specific model ID to remove one model
   - Enter `all` to clear all models at once
 
 ### Enable/Disable Howdy
 
-Option 7 provides three choices:
+`E` provides three choices (disabling needs root):
 1. **Disable completely** - Turn off Howdy for all authentication
 2. **Disable login screen only** - Keep Howdy active for sudo/apps but not login
 3. **Enable Howdy** - Instructions to re-enable via config file
@@ -146,7 +156,7 @@ Option 7 provides three choices:
 - Zorin OS
 
 ### Fedora Family
-- Fedora (via COPR: `principis/howdy`)
+- Fedora (via COPR: `alvarogarinf/howdy`)
 - RHEL
 - CentOS
 - Rocky Linux
@@ -168,6 +178,8 @@ Option 7 provides three choices:
 The script is organized into logical sections:
 
 - **Helpers**: Error handling, root privilege checking, pause functionality
+- **Polkit**: Authorization for the face model commands (`authorize`)
+- **Menu actions**: Every action runs in its own subshell (`run_action`), a failing command ends the action, not the manager
 - **OS Detection**: Automatic distribution and version detection
 - **Installation**: Distribution-specific Howdy installation logic
 - **Camera Configuration**: Device detection and configuration
@@ -176,10 +188,13 @@ The script is organized into logical sections:
 
 ### Configuration File
 
-Howdy configuration is stored at `/etc/howdy/config.ini`. The script provides helper functions to safely modify configuration values without manual editing.
+Howdy configuration is stored in the config directory that meson set when the manager was built (by default `/usr/local/etc/howdy/config.ini`). The script provides helper functions to safely modify configuration values without manual editing.
 
 ### Key Functions
 
+- `require_root()` - Stops an action that needs root privileges
+- `authorize()` - Asks polkit for the management action once
+- `run_action()` - Runs a menu action and returns to the menu if it fails
 - `detect_os()` - Identifies Linux distribution and version
 - `install_howdy()` - Handles distribution-specific installation
 - `configure_camera()` - Sets up camera device
@@ -192,11 +207,11 @@ Howdy configuration is stored at `/etc/howdy/config.ini`. The script provides he
 
 ### Script won't run
 ```bash
-# Ensure script is executable
-chmod +x howdy-manager.sh
+# Install the command again
+./install-cli.sh
 
-# Run with sudo
-sudo ./howdy-manager.sh
+# Run it, with sudo for installing and configuring
+sudo howdy-cli
 ```
 
 ### Howdy installation fails
@@ -216,28 +231,28 @@ ls -l /dev/video*
 
 ### Face recognition not working
 - Ensure IR camera is properly connected
-- Verify camera device path in config (Option 8 → 7)
+- Verify camera device path in config (`C` → `C`)
 - Add multiple face models for different lighting conditions
 - Adjust certainty threshold (lower = stricter)
 - Test in good lighting conditions
 
 ### Permission errors
-- Always run the script with `sudo`
-- Ensure your user has sudo privileges
-- Check that `/etc/howdy/config.ini` is writable
+- Installing Howdy and changing the configuration need root: start the manager with `sudo howdy-cli`
+- Adding, listing and removing face models ask polkit for an authorization. If you deny it, the action ends and the menu is shown again
+- Check that the config file (by default `/usr/local/etc/howdy/config.ini`) is writable for root
 
 ### Configuration not saving
 ```bash
 # Verify config file exists
-ls -l /etc/howdy/config.ini
+ls -l /usr/local/etc/howdy/config.ini
 
 # Check file permissions
-sudo chmod 644 /etc/howdy/config.ini
+sudo chmod 644 /usr/local/etc/howdy/config.ini
 ```
 
 ## Known Limitations
 
-- Requires root privileges for all operations
+- Installing Howdy and changing the configuration need root
 - IR camera required for face authentication
 - Ubuntu 24.04+ uses unofficial community PPA
 - Some distributions require manual Howdy installation
@@ -255,7 +270,7 @@ sudo chmod 644 /etc/howdy/config.ini
 ### Direct Config Editing
 ```bash
 # Edit config file directly
-sudo nano /etc/howdy/config.ini
+sudo nano /usr/local/etc/howdy/config.ini
 
 # Or use Howdy's built-in editor
 sudo howdy config
@@ -285,9 +300,11 @@ sudo howdy disable
 ## Project Structure
 
 ```
-howdy-gui/
-├── howdy-manager.sh    # Main bash script (this tool)
-└── README.md           # This file
+howdy-cli/
+├── bin/howdy-manager.sh.in # Main bash script (template, meson sets the config path)
+├── meson.build             # Installs the script as <bindir>/howdy-cli
+├── install-cli.sh          # Installs only the manager, with or without a meson build
+└── README.md               # This file
 ```
 
 ## Contributing
@@ -314,7 +331,7 @@ This project is provided as-is for managing Howdy face authentication.
 - [Howdy Documentation](https://github.com/boltgolt/howdy/wiki)
 - [Ubuntu PPA (Official)](https://launchpad.net/~boltgolt/+archive/ubuntu/howdy)
 - [Ubuntu PPA (Unofficial 24.04+)](https://launchpad.net/~ubuntuhandbook1/+archive/ubuntu/howdy)
-- [Fedora COPR](https://copr.fedorainfracloud.org/coprs/principis/howdy/)
+- [Fedora COPR](https://copr.fedorainfracloud.org/coprs/alvarogarinf/howdy/)
 - [AUR Package](https://aur.archlinux.org/packages/howdy)
 
 ## Changelog

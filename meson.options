@@ -18,6 +18,7 @@ option('install_config', type: 'boolean', value: true, description: 'Install How
 option('install_pam_config', type: 'boolean', value: true, description: 'Install pam config file (for Debian/Ubuntu)')
 option('with_wakeup_hook', type: 'boolean', value: true, description: 'Install a wakeup hook to automatically restart howdy on system wakeup')
 option('install_selinux_module', type: 'boolean', value: false, yield: true, description: 'Build and install the SELinux policy module (needs checkmodule and semodule_package)')
+option('install_howdy_cli', type: 'boolean', value: true, yield: true, description: 'Install the howdy-cli manager script (interactive menu, needs bash)')
 option('install_polkit_dropin', type: 'boolean', value: true, yield: true, description: 'Install a systemd drop-in giving polkit-agent-helper@.service camera access')
 #option('fetch_dlib_data', type: 'boolean', value: false, description: 'Download dlib data files')
 

@@ -39,3 +39,4 @@ paths_dict = {
 # happen before the first build target, and howdy-gtk builds one
 subdir('howdy')
 subdir('howdy-gtk')
+subdir('howdy-cli')

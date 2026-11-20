@@ -1,5 +1,9 @@
 #!/bin/bash
-set -e
+# No global "set -e": every menu action runs in its own subshell with "set -e"
+# (see run_action), so a failing command ends the action and not the manager.
+# This is a template, meson sets the path of the config file (see meson.build).
+
+CONFIG_FILE="@config_file_path@"
 
 # ----------------------------
 # Helpers
@@ -14,10 +18,49 @@ error_exit() {
     exit 1
 }
 
+# For the actions that change the system or /etc/howdy. Calls of howdy for the
+# face models need no root, they are authorized by polkit.
 require_root() {
     if [[ $EUID -ne 0 ]]; then
-        error_exit "Run this script with sudo"
+        error_exit "This action needs root privileges, start the manager with sudo"
     fi
+}
+
+# ----------------------------
+# Polkit
+# ----------------------------
+POLKIT_ACTION="@management_interface@"
+
+# Managing face models needs the polkit action of the Howdy management daemon.
+# Ask for it once, the authorization is retained for a short time and covers the
+# calls of howdy below. Does nothing for root, without polkit or as long as the
+# action is not installed (Howdy is not installed yet).
+authorize() {
+    [[ $EUID -eq 0 ]] && return 0
+    command -v pkcheck >/dev/null || return 0
+    pkaction --action-id "$POLKIT_ACTION" >/dev/null 2>&1 || return 0
+
+    pkcheck --action-id "$POLKIT_ACTION" --process "$$" --allow-user-interaction || {
+        echo "⚠️  Authorization denied, commands that need it will fail"
+        return 1
+    }
+}
+
+# Run a menu action in a subshell with "set -e". A failing command (also of
+# howdy, for example if the polkit authorization is denied) or an error_exit ends
+# only the action. The message stays on the screen, the menu is drawn below it.
+KEEP_OUTPUT=0
+run_action() {
+    local rc
+    # Not in a "||" list, bash ignores "set -e" there
+    ( set -e; "$@" )
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo
+        echo "⚠️  The action failed (exit code $rc)"
+        KEEP_OUTPUT=1
+    fi
+    return 0
 }
 
 # ----------------------------
@@ -35,8 +78,8 @@ detect_os() {
 
     DISTRO="$(echo "$DISTRO" | tr 'A-Z' 'a-z')"
     echo "Installing dependencies..."
-    sudo apt update
-    sudo apt install -y \
+    apt update
+    apt install -y \
         software-properties-common \
         v4l-utils \
         python3-opencv \
@@ -49,6 +92,7 @@ detect_os() {
 # Install Howdy
 # ----------------------------
 install_howdy() {
+    require_root
     detect_os
 
     echo
@@ -116,6 +160,7 @@ install_howdy() {
 
     command -v howdy >/dev/null || error_exit "Howdy installation failed"
     echo "✅ Howdy installed successfully"
+    authorize || true
     pause
 }
 
@@ -123,6 +168,8 @@ install_howdy() {
 # Camera configuration
 # ----------------------------
 configure_camera() {
+    require_root
+
     echo
     echo "Available cameras:"
     v4l2-ctl --list-devices || error_exit "v4l-utils not installed"
@@ -132,7 +179,7 @@ configure_camera() {
 
     [[ ! -e "$DEVICE" ]] && error_exit "Device not found"
 
-    sed -i "s|^device_path *=.*|device_path = $DEVICE|" /etc/howdy/config.ini
+    sed -i "s|^device_path *=.*|device_path = $DEVICE|" "$CONFIG_FILE"
 
     echo "✅ Camera set to $DEVICE"
     pause
@@ -185,9 +232,11 @@ toggle_howdy() {
 
     case "$CHOICE" in
         1)
+            require_root
             howdy disable
             ;;
         2)
+            require_root
             howdy disable-login
             ;;
         3)
@@ -210,48 +259,51 @@ config_menu() {
     echo
     echo "========== HOWDY CONFIG =========="
     echo "1) Set camera device"
-    echo "2) Enable Howdy"
-    echo "3) Disable Howdy"
-    echo "4) Disable login screen only"
-    echo "5) Set timeout"
-    echo "6) Set certainty (security level)"
-    echo "7) Show current config"
-    echo "0) Back"
+    echo "E) Enable Howdy"
+    echo "D) Disable Howdy"
+    echo "L) Disable login screen only"
+    echo "T) Set timeout"
+    echo "S) Set certainty (security level)"
+    echo "C) Show current config"
+    echo "B) Back"
     echo
     read -rp "Choose option: " CFG
 
     case "$CFG" in
         1)
-            v4l2-ctl --list-devices
-            read -rp "Enter device path (e.g. /dev/video0): " DEV
-            [[ -e "$DEV" ]] && set_config device_path "$DEV"
+            configure_camera
             ;;
-        2)
+        E|e)
+            require_root
             set_config disabled false
             set_config disable_login false
             echo "Howdy enabled"
             ;;
-        3)
+        D|d)
+            require_root
             set_config disabled true
             echo "Howdy disabled"
             ;;
-        4)
+        L|l)
+            require_root
             set_config disable_login true
             echo "Login screen disabled"
             ;;
-        5)
+        T|t)
+            require_root
             read -rp "Enter timeout (seconds): " T
             set_config timeout "$T"
             ;;
-        6)
+        S|s)
+            require_root
             read -rp "Enter certainty (higher = stricter, e.g. 4.5): " C
             set_config certainty "$C"
             ;;
-        7)
+        C|c)
             echo
-            cat /etc/howdy/config.ini
+            cat "$CONFIG_FILE"
             ;;
-        0)
+        B|b)
             return
             ;;
         *)
@@ -264,7 +316,7 @@ config_menu() {
 set_config() {
     KEY="$1"
     VALUE="$2"
-    CONFIG="/etc/howdy/config.ini"
+    CONFIG="$CONFIG_FILE"
 
     if grep -q "^$KEY" "$CONFIG"; then
         sed -i "s|^$KEY *=.*|$KEY = $VALUE|" "$CONFIG"
@@ -279,33 +331,36 @@ set_config() {
 # Main Menu
 # ----------------------------
 main_menu() {
-    clear
+    if [[ $KEEP_OUTPUT -eq 1 ]]; then
+        KEEP_OUTPUT=0
+        echo
+    else
+        clear
+    fi
     echo "======================================"
     echo "     HOWDY FACE AUTH MANAGER (BASH)"
     echo "======================================"
     echo
-    echo "1) Install Howdy"
-    echo "2) Configure camera"
-    echo "3) Add face model"
-    echo "4) Test face recognition"
-    echo "5) List face models"
-    echo "6) Remove / clear models"
-    echo "7) Enable / disable Howdy"
-    echo "8) Configure Howdy"
-    echo "0) Exit"
+    echo "I) Install Howdy"
+    echo "A) Add face model"
+    echo "T) Test face recognition"
+    echo "L) List face models"
+    echo "D) Remove / clear models"
+    echo "E) Enable / disable Howdy"
+    echo "C) Configure Howdy"
+    echo "Q) Exit"
     echo
     read -rp "Choose an option: " CHOICE
 
     case "$CHOICE" in
-        1) install_howdy ;;
-        2) configure_camera ;;
-        3) add_face ;;
-        4) test_face ;;
-        5) list_models ;;
-        6) remove_model ;;
-        7) toggle_howdy ;;
-        8) config_menu ;;
-        0) exit 0 ;;
+        I|i) run_action install_howdy ;;
+        A|a) run_action add_face ;;
+        T|t) run_action test_face ;;
+        L|l) run_action list_models ;;
+        D|d) run_action remove_model ;;
+        E|e) run_action toggle_howdy ;;
+        C|c) run_action config_menu ;;
+        Q|q) exit 0 ;;
         *) echo "Invalid choice"; pause ;;
     esac
 }
@@ -313,7 +368,8 @@ main_menu() {
 # ----------------------------
 # Entry point
 # ----------------------------
-require_root
+# require_root
+# authorize
 
 while true; do
     main_menu
