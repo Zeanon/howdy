@@ -1,0 +1,382 @@
+"""Test of the checks who calls the Python daemons: the common caller checks, the
+authentication daemon (who may see, cancel and clear a request, who may start one)
+and the management daemon with the polkit check of the cli package.
+
+Usage: python_callers.py <src/python dir> <work dir>
+
+The sources are staged like the installation does, with the placeholders of meson
+filled in. The bus is a stand-in that answers GetConnectionUnixUser from a table,
+so neither a bus nor polkit is needed.
+"""
+
+import asyncio
+import os
+import pwd
+import re
+import shutil
+import sys
+import types
+
+SOURCE_DIR, WORK_DIR = sys.argv[1:3]
+
+PLACEHOLDERS = {
+	"version": "test",
+	"config_dir": f"{WORK_DIR}/etc",
+	"user_models_dir": f"{WORK_DIR}/models",
+	"openvino_cache_dir": f"{WORK_DIR}/cache",
+	"dlib_data_dir": f"{WORK_DIR}/dlib",
+	"openvino_data_dir": f"{WORK_DIR}/openvino",
+	"log_path": f"{WORK_DIR}/log",
+	"data_dir": f"{WORK_DIR}/data",
+	"gtk_data_dir": f"{WORK_DIR}/gtkdata",
+	"authentication_bus": "org.boltgolt.howdy.authentication",
+	"authentication_path": "/org/boltgolt/howdy/Authentication",
+	"authentication_interface": "org.boltgolt.howdy.Authentication",
+	"howdy_authentication_service_name": "howdy-authentication-test.service",
+	"popup_path": "/org/boltgolt/howdy/AuthPopup",
+	"popup_interface": "org.boltgolt.howdy.AuthPopup",
+	"management_bus": "org.boltgolt.howdy.management",
+	"management_path": "/org/boltgolt/howdy/Management",
+	"management_interface": "org.boltgolt.howdy.Management",
+}
+
+
+def stage():
+	"""Copy the package the way it is installed (flat, plus the sub packages)"""
+	package = os.path.join(WORK_DIR, "pyhowdy", "howdy")
+	shutil.rmtree(os.path.join(WORK_DIR, "pyhowdy"), ignore_errors=True)
+	os.makedirs(package)
+	flat = [
+		os.path.join(SOURCE_DIR, d) for d in ("services", "face", "enroll", "common")
+	]
+	files = [
+		(os.path.join(d, f), os.path.join(package, f))
+		for d in flat
+		for f in os.listdir(d)
+		if f.endswith(".py")
+	]
+	for sub in ("cli", "recorders", "rubberstamps"):
+		os.makedirs(os.path.join(package, sub))
+		for f in os.listdir(os.path.join(SOURCE_DIR, sub)):
+			if f.endswith(".py"):
+				files.append(
+					(os.path.join(SOURCE_DIR, sub, f), os.path.join(package, sub, f))
+				)
+
+	for source, target in files:
+		with open(source) as handle:
+			text = handle.read()
+		text = re.sub(
+			r"@([a-z_]+)@", lambda m: PLACEHOLDERS.get(m.group(1), m.group(0)), text
+		)
+		with open(target, "w") as handle:
+			handle.write(text)
+	open(os.path.join(package, "__init__.py"), "a").close()
+	return os.path.join(WORK_DIR, "pyhowdy")
+
+
+sys.path.insert(0, stage())
+
+from dbus_next import DBusError, MessageType  # noqa: E402
+from dbus_next.service import ServiceInterface  # noqa: E402
+
+from howdy import howdy_authentication_interface as auth_module  # noqa: E402
+from howdy import howdy_management_daemon as management_module  # noqa: E402
+from howdy.caller import (  # noqa: E402
+	CallerError,
+	MissingSenderError,
+	is_privileged,
+	may_access,
+	query_caller_uid,
+)
+from howdy.cli.auth import check_authorization  # noqa: E402
+
+failed = False
+
+
+def check(name, got, want):
+	global failed
+	ok = got == want
+	failed = failed or not ok
+	print(
+		("PASS  " if ok else "FAIL  ")
+		+ name
+		+ ("" if ok else f": got {got!r}, expected {want!r}")
+	)
+
+
+class Bus:
+	"""Answers GetConnectionUnixUser from a table of bus name to uid"""
+
+	def __init__(self, uids=None, error=None):
+		self.uids = uids or {}
+		self.error = error
+
+	async def call(self, msg):
+		if self.error:
+			return types.SimpleNamespace(
+				message_type=MessageType.ERROR, body=[self.error]
+			)
+		return types.SimpleNamespace(
+			message_type=MessageType.METHOD_RETURN, body=[self.uids[msg.body[0]]]
+		)
+
+
+async def outcome(coroutine):
+	"""The result of a call, or the name of its error"""
+	try:
+		return await coroutine
+	except DBusError as exc:
+		return exc.type
+	except Exception as exc:
+		return type(exc).__name__
+
+
+DAEMON = os.geteuid()
+OWNER, OTHER = 4242, 4243
+# A uid that is neither root nor the user of the daemon, whoever runs the test
+if DAEMON in (OWNER, OTHER):
+	OWNER, OTHER = 5252, 5253
+
+print("--- common caller checks")
+check("root is privileged", is_privileged(0), True)
+check(
+	"the daemon user is not privileged by default", is_privileged(DAEMON), DAEMON == 0
+)
+check("the daemon user is privileged if trusted", is_privileged(DAEMON, True), True)
+check("somebody else is not privileged", is_privileged(OTHER, True), False)
+check("the owner may access", may_access(OWNER, OWNER), True)
+check("somebody else may not access", may_access(OTHER, OWNER), False)
+check("root may access", may_access(0, OWNER), True)
+check("the daemon user may access if trusted", may_access(DAEMON, OWNER, True), True)
+check(
+	"the daemon user may not access by default", may_access(DAEMON, OWNER), DAEMON == 0
+)
+
+
+async def common():
+	check("uid from the bus", await query_caller_uid(Bus({":1.1": 1234}), ":1.1"), 1234)
+	for sender in (None, ""):
+		try:
+			await query_caller_uid(Bus(), sender)
+			result = "no error"
+		except MissingSenderError:
+			result = "missing sender"
+		check(f"sender {sender!r}", result, "missing sender")
+	try:
+		await query_caller_uid(Bus(error="gone"), ":1.1")
+		result = "no error"
+	except MissingSenderError:
+		result = "missing sender"
+	except CallerError:
+		result = "caller error"
+	check("error of the bus", result, "caller error")
+
+
+asyncio.run(common())
+
+print("--- authentication daemon")
+INTERFACE = object.__new__(auth_module.AuthenticationInterface)
+ServiceInterface.__init__(INTERFACE, "org.boltgolt.howdy.Authentication")
+METHODS = {m.name: m.fn for m in ServiceInterface._get_methods(INTERFACE)}
+
+
+def new_interface(uids):
+	import threading
+
+	interface = INTERFACE
+	interface.bus = Bus(uids)
+	interface.lock = threading.Lock()
+	interface.requests = {}
+	interface.cooldown_until = {}
+	return interface
+
+
+def request(status=auth_module.HowdyStatus.Running):
+	import threading
+
+	return {
+		"owner": OWNER,
+		"status": status,
+		"cancel": threading.Event(),
+		"timeout": auth_module.Timeout(0),
+	}
+
+
+UIDS = {":owner": OWNER, ":other": OTHER, ":root": 0, ":daemon": DAEMON}
+
+
+async def as_caller(name, method, *args):
+	auth_module.current_sender.set(name)
+	return await outcome(METHODS[method](INTERFACE, *args))
+
+
+async def authentication():
+	new_interface(UIDS)
+
+	INTERFACE.requests["r1"] = request()
+	check(
+		"owner sees the result",
+		await as_caller(":owner", "GetResult", "r1"),
+		str(auth_module.HowdyStatus.Running),
+	)
+	check(
+		"somebody else does not see it",
+		await as_caller(":other", "GetResult", "r1"),
+		"org.howdy.Authentication.UnknownRequest",
+	)
+	check(
+		"root sees the result",
+		await as_caller(":root", "GetResult", "r1"),
+		str(auth_module.HowdyStatus.Running),
+	)
+	check(
+		"the daemon user sees the result",
+		await as_caller(":daemon", "GetResult", "r1"),
+		str(auth_module.HowdyStatus.Running),
+	)
+
+	check(
+		"somebody else can not cancel",
+		await as_caller(":other", "CancelAuthentication", "r1"),
+		False,
+	)
+	check(
+		"the request keeps running",
+		INTERFACE.requests["r1"]["status"],
+		auth_module.HowdyStatus.Running,
+	)
+	check(
+		"owner cancels", await as_caller(":owner", "CancelAuthentication", "r1"), True
+	)
+	check(
+		"the request is cancelling",
+		INTERFACE.requests["r1"]["status"],
+		auth_module.HowdyStatus.Cancelling,
+	)
+
+	check(
+		"somebody else can not clear",
+		await as_caller(":other", "ClearAuthentication", "r1"),
+		False,
+	)
+	check("the request still exists", "r1" in INTERFACE.requests, True)
+	check("owner clears", await as_caller(":owner", "ClearAuthentication", "r1"), True)
+	check("the request is gone", "r1" in INTERFACE.requests, False)
+	INTERFACE.requests["r2"] = request()
+	check("root clears", await as_caller(":root", "ClearAuthentication", "r2"), True)
+	check(
+		"unknown request is not cleared",
+		await as_caller(":root", "ClearAuthentication", "r2"),
+		False,
+	)
+
+	INTERFACE.requests["r3"] = request()
+	check("the cleanup clears every request", INTERFACE.clear("r3"), True)
+
+	check(
+		"a call without a sender is not authorized",
+		await as_caller(None, "GetResult", "r1"),
+		"org.howdy.Authentication.NotAuthorized",
+	)
+	INTERFACE.bus = Bus(error="gone")
+	check(
+		"a caller that is not known is not authorized",
+		await as_caller(":owner", "GetResult", "r1"),
+		"org.howdy.Authentication.NotAuthorized",
+	)
+	INTERFACE.bus = Bus(UIDS)
+
+	# Only the own user can be authenticated, everybody else is refused before anything starts
+	check(
+		"an ordinary user can not authenticate somebody else",
+		await as_caller(":other", "StartAuthentication", "root", []),
+		"org.howdy.Authentication.NotAuthorized",
+	)
+	check(
+		"unknown user",
+		await as_caller(":owner", "StartAuthentication", "no-such-user-howdy", []),
+		"org.howdy.Authentication.InvalidUser",
+	)
+
+
+asyncio.run(authentication())
+
+print("--- management daemon")
+
+
+async def management():
+	own = pwd.getpwuid(DAEMON).pw_name
+	calls = []
+
+	async def polkit(**kwargs):
+		calls.append(kwargs)
+
+	original = management_module.check_authorization
+	management_module.check_authorization = polkit
+	try:
+		interface = management_module.ManagementInterface(Bus({":1.9": DAEMON}))
+		message = types.SimpleNamespace(sender=":1.9", body=[])
+		check("the caller is the user", await interface.get_caller(message, 0), own)
+		check("the uid is passed on", calls[-1]["caller_uid"], DAEMON)
+		check(
+			"a user name is used",
+			await interface.get_caller(
+				types.SimpleNamespace(sender=":1.9", body=["root"]), 0
+			),
+			"root",
+		)
+
+		for name, bus, sender, want in (
+			("no sender", Bus(), None, "NotAuthorized"),
+			("error of the bus", Bus(error="gone"), ":1.9", "CallerError"),
+		):
+			try:
+				await management_module.ManagementInterface(bus).get_caller(
+					types.SimpleNamespace(sender=sender, body=[]), 0
+				)
+				result = "no error"
+			except management_module.NotAuthorized:
+				result = "NotAuthorized"
+			except CallerError:
+				result = "CallerError"
+			check(name, result, want)
+	finally:
+		management_module.check_authorization = original
+
+	# The polkit check of the cli package: only root and the user may manage the models of a user
+	for name, caller, target, want in (
+		("root manages the models of a user", 0, own, "asks polkit"),
+		("a user manages the own models", DAEMON, own, "asks polkit"),
+		("a user does not manage the models of root", OTHER, "root", "PermissionError"),
+		(
+			"a user does not manage the models of another user",
+			DAEMON,
+			"root",
+			"PermissionError" if DAEMON != 0 else "asks polkit",
+		),
+		("unknown user", 0, "no-such-user-howdy", "ValueError"),
+	):
+		try:
+			await check_authorization(
+				bus=PolkitBus(), bus_name=":1.9", caller_uid=caller, target_user=target
+			)
+			result = "asks polkit"
+		except PermissionError:
+			result = "PermissionError"
+		except ValueError:
+			result = "ValueError"
+		check(name, result, want)
+
+
+class PolkitBus:
+	async def call(self, msg):
+		return types.SimpleNamespace(
+			message_type=MessageType.METHOD_RETURN,
+			body=[[True, False, {}]],
+			signature="(bba{ss})",
+		)
+
+
+asyncio.run(management())
+sys.exit(1 if failed else 0)
