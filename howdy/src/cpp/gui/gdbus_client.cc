@@ -9,7 +9,7 @@ namespace gtkui {
 namespace {
 
 // The daemon answers a failed authorization with this name
-constexpr const char* NOT_AUTHORIZED_ERROR = "org.boltgolt.howdy.Management.NotAuthorized";
+constexpr const char* NOT_AUTHORIZED_ERROR = howdy::paths::MANAGEMENT_NOT_AUTHORIZED_ERROR;
 
 // The time the user gets to answer the password prompt of polkit
 constexpr gint TIMEOUT_MSEC = 300 * 1000;

@@ -1,6 +1,6 @@
 // Howdy management D-Bus daemon
 //
-// Exports org.boltgolt.howdy.Management to add, list, remove and clear the
+// Exports the management interface (paths::MANAGEMENT_INTERFACE) to add, list, remove and clear the
 // face models of a user. The model files are only accessible for root, polkit
 // decides who may manage the models of a user.
 

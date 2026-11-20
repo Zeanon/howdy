@@ -9,7 +9,7 @@
 
 namespace howdy {
 
-// org.boltgolt.howdy.Management
+// The management interface, its name is paths::MANAGEMENT_INTERFACE (set by meson)
 //
 //   Add(model)            Add(user, model)   -> b
 //   List()                List(user)         -> s (JSON)

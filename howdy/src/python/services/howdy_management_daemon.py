@@ -17,6 +17,15 @@ MANAGEMENT_BUS = "@management_bus@"
 MANAGEMENT_PATH = "@management_path@"
 MANAGEMENT_INTERFACE = "@management_interface@"
 
+# The names of the errors of the management interface
+# A refused authorization has its own name, so that clients can tell it from
+# other failures
+NOT_AUTHORIZED_ERROR = "@management_interface@.NotAuthorized"
+ADD_ERROR = "@management_interface@.Add.Error"
+LIST_ERROR = "@management_interface@.List.Error"
+REMOVE_ERROR = "@management_interface@.Remove.Error"
+CLEAR_ERROR = "@management_interface@.Clear.Error"
+
 
 POLKIT_BUS = "org.freedesktop.PolicyKit1"
 POLKIT_PATH = "/org/freedesktop/PolicyKit1/Authority"
@@ -27,6 +36,10 @@ POLKIT_ALLOW_USER_INTERACTION = 1
 
 
 IDLE_TIMEOUT = 30
+
+
+class NotAuthorized(Exception):
+	"""The caller may not manage the face models"""
 
 
 class ManagementInterface:
@@ -110,7 +123,7 @@ class ManagementInterface:
 
 	async def get_caller(self, msg, min_len):
 		if not msg.sender:
-			raise PermissionError("Missing D-Bus sender")
+			raise NotAuthorized("Missing D-Bus sender")
 
 		reply = await self.bus.call(
 			Message(
@@ -133,13 +146,25 @@ class ManagementInterface:
 		else:
 			username = pwd.getpwuid(caller_uid).pw_name
 
-		await check_authorization(
-			bus=self.bus,
-			bus_name=msg.sender,
-			caller_uid=caller_uid,
-			target_user=username,
-		)
+		try:
+			await check_authorization(
+				bus=self.bus,
+				bus_name=msg.sender,
+				caller_uid=caller_uid,
+				target_user=username,
+			)
+		except PermissionError as exc:
+			raise NotAuthorized(str(exc)) from exc
 		return username
+
+	def reply_failure(self, msg, exc, error, failure):
+		"""Log a failed call and answer it with the error of its method, a refused
+		authorization with NotAuthorized"""
+		syslog.syslog(syslog.LOG_ERR, failure)
+		syslog.syslog(syslog.LOG_ERR, traceback.format_exc())
+		if isinstance(exc, NotAuthorized):
+			error = NOT_AUTHORIZED_ERROR
+		self.bus.send(Message.new_error(msg, error, str(exc)))
 
 	async def add(self, msg):
 		try:
@@ -179,13 +204,7 @@ class ManagementInterface:
 			self.bus.send(Message.new_method_return(msg, "b", [True]))
 
 		except Exception as exc:
-			syslog.syslog(syslog.LOG_ERR, "Failed to add face model")
-			syslog.syslog(syslog.LOG_ERR, traceback.format_exc())
-			self.bus.send(
-				Message.new_error(
-					msg, "org.boltgolt.howdy.Management.Add.Error", str(exc)
-				)
-			)
+			self.reply_failure(msg, exc, ADD_ERROR, "Failed to add face model")
 
 	async def list(self, msg):
 		try:
@@ -208,13 +227,7 @@ class ManagementInterface:
 			self.bus.send(Message.new_method_return(msg, "s", [json.dumps(encodings)]))
 
 		except Exception as exc:
-			syslog.syslog(syslog.LOG_ERR, "Failed to list face models")
-			syslog.syslog(syslog.LOG_ERR, traceback.format_exc())
-			self.bus.send(
-				Message.new_error(
-					msg, "org.boltgolt.howdy.Management.List.Error", str(exc)
-				)
-			)
+			self.reply_failure(msg, exc, LIST_ERROR, "Failed to list face models")
 
 	async def remove(self, msg):
 		try:
@@ -250,15 +263,7 @@ class ManagementInterface:
 				self.bus.send(Message.new_method_return(msg, "b", [True]))
 
 		except Exception as exc:
-			syslog.syslog(syslog.LOG_ERR, "Failed to remove face model")
-			syslog.syslog(syslog.LOG_ERR, traceback.format_exc())
-			self.bus.send(
-				Message.new_error(
-					msg,
-					"org.boltgolt.howdy.Management.Remove.Error",
-					str(exc),
-				)
-			)
+			self.reply_failure(msg, exc, REMOVE_ERROR, "Failed to remove face model")
 
 	async def clear(self, msg):
 		try:
@@ -279,15 +284,7 @@ class ManagementInterface:
 			self.bus.send(Message.new_method_return(msg, "b", [True]))
 
 		except Exception as exc:
-			syslog.syslog(syslog.LOG_ERR, "Failed to clear face models")
-			syslog.syslog(syslog.LOG_ERR, traceback.format_exc())
-			self.bus.send(
-				Message.new_error(
-					msg,
-					"org.boltgolt.howdy.Management.Clear.Error",
-					str(exc),
-				)
-			)
+			self.reply_failure(msg, exc, CLEAR_ERROR, "Failed to clear face models")
 
 
 async def main():

@@ -27,7 +27,7 @@ using MessagePtr = std::unique_ptr<sd_bus_message, MessageDeleter>;
 
 void check(int r, const char* what) {
 	if (r < 0) {
-		throw AuthorizationError(std::string(what) + ": " + std::strerror(-r));
+		throw std::runtime_error(std::string(what) + ": " + std::strerror(-r));
 	}
 }
 
@@ -36,7 +36,7 @@ void check(int r, const char* what) {
 void check_caller_may_manage(uid_t caller_uid, const std::string& target_user) {
 	const auto target_uid = lookup_uid(target_user);
 	if (!target_uid.has_value()) {
-		throw AuthorizationError("Unknown user: " + target_user);
+		throw std::runtime_error("Unknown user: " + target_user);
 	}
 	if (caller_uid != 0 && caller_uid != *target_uid) {
 		throw AuthorizationError("Not authorized to modify models for user " + target_user);
@@ -67,12 +67,12 @@ sd_bus_message* new_check_authorization_call(sd_bus* bus, const std::string& bus
 void evaluate_check_authorization_reply(sd_bus_message* reply) {
 	if (sd_bus_message_is_method_error(reply, nullptr) != 0) {
 		const sd_bus_error* error = sd_bus_message_get_error(reply);
-		throw AuthorizationError(
+		throw std::runtime_error(
 			std::string("Polkit authorization failed: ") + (error != nullptr && error->message != nullptr ? error->message : "unknown error"));
 	}
 
 	if (sd_bus_message_has_signature(reply, "(bba{ss})") == 0) {
-		throw AuthorizationError("Unexpected Polkit reply signature");
+		throw std::runtime_error("Unexpected Polkit reply signature");
 	}
 
 	check(sd_bus_message_enter_container(reply, SD_BUS_TYPE_STRUCT, "bba{ss}"), "Could not read the polkit reply");
@@ -100,7 +100,7 @@ void check_authorization(sd_bus* bus, uid_t caller_uid, const std::string& targe
 	if (r < 0) {
 		const std::string text = error.message != nullptr ? error.message : std::strerror(-r);
 		sd_bus_error_free(&error);
-		throw AuthorizationError("Polkit authorization failed: " + text);
+		throw std::runtime_error("Polkit authorization failed: " + text);
 	}
 	sd_bus_error_free(&error);
 

@@ -26,5 +26,12 @@ inline constexpr const char* POPUP_INTERFACE = "@popup_interface@";
 inline constexpr const char* MANAGEMENT_BUS = "@management_bus@";
 inline constexpr const char* MANAGEMENT_PATH = "@management_path@";
 inline constexpr const char* MANAGEMENT_INTERFACE = "@management_interface@";
+// The names of the errors of the management interface, clients can tell a failed
+// authorization from other failures
+inline constexpr const char* MANAGEMENT_NOT_AUTHORIZED_ERROR = "@management_interface@.NotAuthorized";
+inline constexpr const char* MANAGEMENT_ADD_ERROR = "@management_interface@.Add.Error";
+inline constexpr const char* MANAGEMENT_LIST_ERROR = "@management_interface@.List.Error";
+inline constexpr const char* MANAGEMENT_REMOVE_ERROR = "@management_interface@.Remove.Error";
+inline constexpr const char* MANAGEMENT_CLEAR_ERROR = "@management_interface@.Clear.Error";
 
 } // namespace howdy::paths

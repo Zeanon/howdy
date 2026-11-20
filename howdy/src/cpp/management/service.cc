@@ -27,13 +27,13 @@ struct Method {
 
 // What a failed authorization is answered with, so that clients can tell it
 // from other failures
-constexpr const char* NOT_AUTHORIZED_ERROR = "org.boltgolt.howdy.Management.NotAuthorized";
+constexpr const char* NOT_AUTHORIZED_ERROR = paths::MANAGEMENT_NOT_AUTHORIZED_ERROR;
 
 constexpr std::array<Method, 4> METHODS{{
-	{"Add", "s", "org.boltgolt.howdy.Management.Add.Error", "Failed to add face model"},
-	{"List", "", "org.boltgolt.howdy.Management.List.Error", "Failed to list face models"},
-	{"Remove", "s", "org.boltgolt.howdy.Management.Remove.Error", "Failed to remove face model"},
-	{"Clear", "", "org.boltgolt.howdy.Management.Clear.Error", "Failed to clear face models"},
+	{"Add", "s", paths::MANAGEMENT_ADD_ERROR, "Failed to add face model"},
+	{"List", "", paths::MANAGEMENT_LIST_ERROR, "Failed to list face models"},
+	{"Remove", "s", paths::MANAGEMENT_REMOVE_ERROR, "Failed to remove face model"},
+	{"Clear", "", paths::MANAGEMENT_CLEAR_ERROR, "Failed to clear face models"},
 }};
 
 void check(int r, const char* what) {
