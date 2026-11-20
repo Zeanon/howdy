@@ -1,6 +1,10 @@
 name: check
 on: [push, pull_request]
 
+# The jobs only read the repository
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -8,6 +12,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - name: Install required libraries
         run: >
@@ -19,9 +24,11 @@ jobs:
           libdlib-dev libblas-dev liblapack-dev nlohmann-json3-dev
         
       - name: Install meson
-        run: sudo python3 -m pip install meson ninja
+        run: sudo python3 -m pip install meson==1.12.1 ninja==1.13.2
 
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build
         run: |

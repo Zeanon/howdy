@@ -7,16 +7,23 @@ on:
 
   workflow_dispatch:  # click the button on Github repo!
 
+# Nothing by default, the job gets what it needs
+permissions: {}
+
 jobs:
   sync_latest_from_upstream:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The action pushes the commits of upstream to the branch
+    permissions:
+      contents: write
     name: Sync latest commits from upstream repo
 
     steps:
     # REQUIRED step
     # Step 1: run a standard checkout action, provided by github
     - name: Checkout target repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         # optional: set the branch to checkout,
         # sync action checks out your 'target_sync_branch' anyway
@@ -28,7 +35,7 @@ jobs:
     # Step 2: run the sync action
     - name: Sync upstream changes
       id: sync
-      uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+      uses: aormsby/Fork-Sync-With-Upstream-action@9e2e4fd0829a2fe8ca4b13693faac9230c414d51 # v3.4
       with:
         target_sync_branch: master
         # REQUIRED 'target_repo_token' exactly like this!
