@@ -48,12 +48,16 @@ AmbientCapabilities=
 
 PrivateTmp=yes
 PrivateIPC=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+IPAddressDeny=any
 
 ProtectProc=invisible
 ProcSubset=pid
 KeyringMode=private
 RemoveIPC=yes
 
+MemoryDenyWriteExecute=yes
 LimitCORE=0
 
 [Install]

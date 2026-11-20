@@ -44,6 +44,7 @@ AmbientCapabilities=
 
 PrivateTmp=yes
 PrivateIPC=yes
+IPAddressDeny=any
 
 ProtectProc=invisible
 ProcSubset=pid
