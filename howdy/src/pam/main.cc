@@ -646,11 +646,17 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		return pam_res;
 	}
 
-	if (abort_if_ssh) {
-		if (checkenv("SSH_CONNECTION") || checkenv("SSH_CLIENT") || checkenv("SSH_TTY") || checkenv("SSHD_OPTS")) {
-			syslog(LOG_INFO, "Skipped authentication, SSH session detected");
-			return PAM_IGNORE;
-		}
+	// The detection with the environment only, in case the one of the login session does not work:
+	/*
+	if (abort_if_ssh && (checkenv("SSH_CONNECTION") || checkenv("SSH_CLIENT") || checkenv("SSH_TTY") || checkenv("SSHD_OPTS"))) {
+		syslog(LOG_INFO, "Skipped authentication, SSH session detected");
+		return PAM_IGNORE;
+	}
+	*/
+
+	if (abort_if_ssh && is_remote_session()) {
+		syslog(LOG_INFO, "Skipped authentication, remote session detected");
+		return PAM_IGNORE;
 	}
 
 	if (abort_if_lid_closed) {

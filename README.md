@@ -358,7 +358,7 @@ All options are documented in the comments of `config.ini`. Some highlights:
 | Section | Option | Description |
 |---------|--------|-------------|
 | `[core]` | `disabled` | Turn Howdy off (also available as `howdy disable 1`) |
-| `[core]` | `abort_if_ssh`, `abort_if_lid_closed` | Skip face recognition in these situations |
+| `[core]` | `abort_if_ssh`, `abort_if_lid_closed` | Skip face recognition in these situations. A remote session is recognized by the login session of logind (also for `sudo` in an SSH session whose environment was cleared) and by the SSH variables of the environment |
 | `[face_authentication]` | `certainty` | How strict the match is, in percent from 0 to 100 (default 75). Higher is stricter. |
 | `[face_authentication]` | `start_cooldown` | How long a caller without privileges has to wait after an authentication before it can start the next one (default `2s`, `0` for no limit). Root and the user of the daemon are not limited |
 | `[face_authentication]` | `use_cnn` | Use the more accurate dlib CNN detector instead of HOG. Needs a GPU to be fast. Ignored with OpenVINO. |

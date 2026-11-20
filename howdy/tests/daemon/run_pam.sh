@@ -26,11 +26,15 @@ if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 	"$CXX" -std=c++20 -fPIC -shared -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" \
 		"$PAM_SRC_DIR"/{main,face_authenticator,fingerprint_authenticator,enter_device}.cc -o "$PAM_DIR/pam_howdy.so" "${PAM_LIBS[@]}" -lpam -lpthread
 	"$CXX" -std=c++20 "$TEST_DIR/pam_test.cc" -o "$PAM_DIR/pam_test" -lpam
+	"$CXX" -shared -fPIC -x c "$TEST_DIR/fake_logind.c" -o "$PAM_DIR/fake_logind.so"
 	link_daemon "$T/daemon"
 
 	command -v unshare > /dev/null || { echo "Missing unshare"; exit 1; }
 	REAL_USER="$(id -un)" HOWDY_IN_NAMESPACE=1 WORK_DIR="$WORK_DIR" exec unshare -Ur "$BASH" "${BASH_SOURCE[0]}"
 fi
+
+# The test does not depend on where it is started from, over SSH or not
+unset SSH_CONNECTION SSH_CLIENT SSH_TTY SSHD_OPTS
 
 source "$(dirname "${BASH_SOURCE[0]}")/bus.sh"
 start_bus
@@ -61,7 +65,8 @@ echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
 # Runs the PAM stack, sets OUT (messages and result) and SECONDS_TAKEN
 run_pam() {
 	local start=${EPOCHREALTIME/[.,]/}
-	OUT=$("$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1)
+	# fake_logind.so makes the login session a local one, or a remote one with HOWDY_TEST_REMOTE=1
+	OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1)
 	SECONDS_TAKEN=$(( (${EPOCHREALTIME/[.,]/} - start) / 1000000 ))
 }
 result_of() { grep '^RESULT' <<< "$OUT" | cut -d' ' -f2; }
@@ -145,6 +150,26 @@ expect "nothing to use: nothing is said to the user" "$(grep -c '^MSG' <<< "$OUT
 scenario "no fingerprints, no face model" no-prints no
 expect "nothing to use with enrolled fingerprints missing: nothing is said" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
 expect "and it does not take long" "$([ "$SECONDS_TAKEN" -lt 3 ] && echo yes || echo no)" yes
+
+echo "--- a remote session is skipped"
+# The environment can be changed by the user, the login session of logind can not
+echo no-prints > "$FPRINTD_MODE_FILE"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+run_pam
+expect "a local session: the face authenticates" "$(result_of)" 0
+SSH_CONNECTION="192.0.2.1 5000 192.0.2.2 22" run_pam
+# The module returns PAM_IGNORE, which libpam makes PAM_PERM_DENIED (6) if it is the only module. A face that does not match would be 7.
+expect "ssh in the environment: skipped" "$(result_of)" 6
+expect "ssh in the environment: nothing is said" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
+HOWDY_TEST_REMOTE=1 run_pam
+expect "remote session of logind, the environment is clean: skipped" "$(result_of)" 6
+expect "remote session of logind: nothing is said" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 abort-if-ssh=false" > "$CONFDIR/howdy-test"
+HOWDY_TEST_REMOTE=1 run_pam
+expect "abort-if-ssh=false: the remote session is not skipped" "$(result_of)" 0
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
 
 echo "--- the password prompt comes first"
 # The prompt is printed by the password task, the notices by the module. Without a wait between them the

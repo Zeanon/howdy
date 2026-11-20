@@ -4,8 +4,11 @@
 #include "fingerprint_authenticator.hh"
 
 #include <chrono>
+#include <cstdlib>
 #include <set>
 #include <string>
+
+#include <systemd/sd-login.h>
 
 static inline bool str_equal(const char* a, const char* b) {
 	if (a == nullptr && b == nullptr) {
@@ -120,4 +123,23 @@ inline bool checkenv(const char* name) {
 	}
 
 	return false;
+}
+
+/**
+ * Whether the authentication is for a remote session (SSH). The login session of logind says it, which the
+ * user can not change, unlike the environment: whoever clears SSH_CONNECTION before sudo is still in the
+ * remote session. The environment is looked at, too, for the systems without logind and the processes
+ * that belong to no session.
+ */
+inline bool is_remote_session() {
+	char* session = nullptr;
+	if (sd_pid_get_session(0, &session) >= 0) {
+		const int remote = sd_session_is_remote(session);
+		free(session); // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+		if (remote > 0) {
+			return true;
+		}
+	}
+
+	return checkenv("SSH_CONNECTION") || checkenv("SSH_CLIENT") || checkenv("SSH_TTY") || checkenv("SSHD_OPTS");
 }
