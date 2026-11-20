@@ -29,3 +29,5 @@ option('management_daemon', type: 'combo', choices: ['cpp', 'python'], value: 'c
 option('popup_service', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the popup service')
 option('cli', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the howdy command line interface')
 option('gtk_app', type: 'combo', choices: ['cpp', 'python'], value: 'cpp', description: 'Implementation of the configuration window: cpp builds it into the howdy program (howdy gui, howdy-gtk is a link to it, needs -Dcli=cpp), python installs the Python app')
+
+option('hardening', type: 'boolean', value: true, description: 'Build with the hardening options of the compiler and linker (stack protector, relro, bind now, fortify)')
