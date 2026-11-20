@@ -334,7 +334,7 @@ class OnboardingWindow(gtk.Window):
 		self.builder.get_object("leienobutton").hide()
 
 	def on_scanbutton_click(self, button):
-		status = self.proc.wait(2)
+		# status = self.proc.wait(2)
 
 		# if status != 0:
 		# 	self.show_error(S("Error setting camera path"), S("Please set the camera path manually"))

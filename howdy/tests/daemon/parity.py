@@ -6,7 +6,6 @@ sys.path.insert(0, sys.argv[1])
 
 import cv2
 import dlib
-import numpy as np
 
 from howdy import paths_factory
 from howdy.anti_spoof_core import TextureDetector

@@ -131,7 +131,7 @@ if args.user == "root" and args.command not in root_commands:
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 # fmt: off
-# Execute the right command
+# Execute the right command. The modules without run() do it when they are imported
 if args.command == "add":
 	from . import add
 	add.run()
@@ -139,9 +139,9 @@ elif args.command == "clear":
 	from . import clear
 	clear.run()
 elif args.command == "config":
-	from . import config
+	from . import config  # noqa: F401  (runs its command when it is imported)
 elif args.command == "disable":
-	from . import disable
+	from . import disable  # noqa: F401  (runs its command when it is imported)
 elif args.command == "list":
 	from . import list
 	list.run()
@@ -149,11 +149,11 @@ elif args.command == "remove":
 	from . import remove
 	remove.run()
 elif args.command == "set":
-	from . import set
+	from . import set  # noqa: F401  (runs its command when it is imported)
 elif args.command == "snapshot":
-	from . import snap
+	from . import snap  # noqa: F401  (runs its command when it is imported)
 elif args.command == "test":
-	from . import test
+	from . import test  # noqa: F401  (runs its command when it is imported)
 else:
 	print("Howdy 3.0.1")
 # fmt: on
