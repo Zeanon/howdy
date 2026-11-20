@@ -958,7 +958,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			fingerprint_task.stop(true);
 
 			pam_res = pass_task.get();
-			if (pam_res == PAM_SUCCESS) {
+			if (pam_res == PAM_SUCCESS && !no_confirmation) {
+				conv_function(PAM_TEXT_INFO, S(std::format("Password authenticated as {}", username).c_str()));
 				syslog(LOG_INFO, "Authenticated with password");
 			}
 			return pam_res;
