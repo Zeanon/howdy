@@ -19,12 +19,13 @@ from enum import StrEnum
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
-from dbus_next import DBusError, Message, MessageType
+from dbus_next import DBusError, MessageType
 from dbus_next.service import ServiceInterface, method
 
 from .i18n import S
 from . import paths_factory
 from . import snapshot
+from .caller import CallerError, is_privileged, may_access, query_caller_uid
 from .enroll_capture import flatten_models
 from .rotation import rotate_frame
 from .recorders.video_capture import VideoCapture, NoDeviceException
@@ -744,12 +745,6 @@ def remember_sender(msg):
 	return None
 
 
-def is_trusted(uid):
-	"""Root and the user of the daemon itself may do everything. The methods are
-	open to every user, so everybody else is restricted to its own user."""
-	return uid == 0 or uid == os.geteuid()
-
-
 class AuthenticationInterface(ServiceInterface):
 	def __init__(self, ui_service, bus):
 		super().__init__(AUTHENTICATION_INTERFACE)
@@ -769,28 +764,10 @@ class AuthenticationInterface(ServiceInterface):
 
 	async def caller_uid(self):
 		"""The uid of the caller, identified by the bus and not by what it claims"""
-		sender = current_sender.get()
-		if not sender:
-			raise DBusError(
-				"org.howdy.Authentication.NotAuthorized", "Missing D-Bus sender"
-			)
-
-		reply = await self.bus.call(
-			Message(
-				destination="org.freedesktop.DBus",
-				path="/org/freedesktop/DBus",
-				interface="org.freedesktop.DBus",
-				member="GetConnectionUnixUser",
-				signature="s",
-				body=[sender],
-			)
-		)
-		if reply.message_type == MessageType.ERROR:
-			raise DBusError(
-				"org.howdy.Authentication.NotAuthorized",
-				"Could not identify the caller",
-			)
-		return reply.body[0]
+		try:
+			return await query_caller_uid(self.bus, current_sender.get())
+		except CallerError as exc:
+			raise DBusError("org.howdy.Authentication.NotAuthorized", str(exc)) from exc
 
 	@method()
 	async def StartAuthentication(self, username: "s", args: "as") -> "s":  # type: ignore
@@ -803,7 +780,7 @@ class AuthenticationInterface(ServiceInterface):
 			)
 
 		caller_uid = await self.caller_uid()
-		trusted = is_trusted(caller_uid)
+		trusted = is_privileged(caller_uid, True)
 		if not trusted and target_uid != caller_uid:
 			raise DBusError(
 				"org.howdy.Authentication.NotAuthorized",
@@ -887,7 +864,7 @@ class AuthenticationInterface(ServiceInterface):
 		return request_id
 
 	def owns(self, request, caller_uid):
-		return is_trusted(caller_uid) or request["owner"] == caller_uid
+		return may_access(caller_uid, request["owner"], True)
 
 	@method()
 	async def GetResult(self, request_id: "s") -> "s":  # type: ignore

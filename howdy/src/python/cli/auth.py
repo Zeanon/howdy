@@ -3,6 +3,8 @@ import pwd
 from dbus_next.aio import MessageBus
 from dbus_next import Message, MessageType, BusType, Variant
 
+from ..caller import may_access
+
 POLKIT_BUS = "org.freedesktop.PolicyKit1"
 POLKIT_PATH = "/org/freedesktop/PolicyKit1/Authority"
 POLKIT_INTERFACE = "org.freedesktop.PolicyKit1.Authority"
@@ -36,7 +38,7 @@ async def check_authorization(
 			target_uid = pwd.getpwnam(target_user).pw_uid
 		except KeyError:
 			raise ValueError(f"Unknown user: {target_user}")
-		if caller_uid != 0 and caller_uid != target_uid:
+		if not may_access(caller_uid, target_uid):
 			raise PermissionError(
 				f"Not authorized to modify models for user {target_user}"
 			)

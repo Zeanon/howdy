@@ -8,6 +8,7 @@ import traceback
 from . import paths_factory
 from .file_util import write_file_atomic
 from .cli.auth import check_authorization
+from .caller import MissingSenderError, query_caller_uid
 
 from dbus_next.aio import MessageBus
 from dbus_next import Message, MessageType, BusType
@@ -122,24 +123,10 @@ class ManagementInterface:
 		return True
 
 	async def get_caller(self, msg, min_len):
-		if not msg.sender:
-			raise NotAuthorized("Missing D-Bus sender")
-
-		reply = await self.bus.call(
-			Message(
-				destination="org.freedesktop.DBus",
-				path="/org/freedesktop/DBus",
-				interface="org.freedesktop.DBus",
-				member="GetConnectionUnixUser",
-				signature="s",
-				body=[msg.sender],
-			)
-		)
-
-		if reply.message_type == MessageType.ERROR:
-			raise RuntimeError(reply.body[0])
-
-		caller_uid = reply.body[0]
+		try:
+			caller_uid = await query_caller_uid(self.bus, msg.sender)
+		except MissingSenderError as exc:
+			raise NotAuthorized(str(exc)) from exc
 
 		if len(msg.body) > min_len:
 			username = msg.body[0]
