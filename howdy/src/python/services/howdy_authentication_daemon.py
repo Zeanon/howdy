@@ -5,7 +5,10 @@ from dbus_next.aio import MessageBus
 from dbus_next import BusType
 
 from .howdy_popup_interface import UIInterface
-from .howdy_authentication_interface import AuthenticationInterface
+from .howdy_authentication_interface import (
+	AuthenticationInterface,
+	remember_sender,
+)
 
 
 BUS_NAME = "@authentication_bus@"
@@ -18,7 +21,10 @@ async def main():
 
 	# Init the services once.
 	ui_service = UIInterface()
-	auth_service = AuthenticationInterface(ui_service)
+	auth_service = AuthenticationInterface(ui_service, bus)
+
+	# The authentication methods need to know who calls
+	bus.add_message_handler(remember_sender)
 
 	bus.export(POPUP_PATH, ui_service)
 	bus.export(AUTHENTICATION_PATH, auth_service)

@@ -11,6 +11,8 @@
 #include <thread>
 #include <vector>
 
+#include <sys/types.h>
+
 #include <systemd/sd-bus.h>
 #include <systemd/sd-event.h>
 
@@ -79,6 +81,8 @@ class AuthenticationService {
 
   private:
 	struct Request {
+		// The uid of the caller that started it, only this caller (or root) may poll or stop it
+		uid_t owner_uid = 0;
 		std::string username;
 		std::vector<std::string> args;
 		Status status = Status::Running;
@@ -92,7 +96,7 @@ class AuthenticationService {
 	static int method_clear(sd_bus_message* message, void* userdata, sd_bus_error* ret_error);
 	static int on_cleanup_timer(sd_event_source* source, std::uint64_t usec, void* userdata);
 
-	bool clear(const std::string& request_id);
+	bool clear(const std::string& request_id, uid_t caller_uid);
 	void worker_loop();
 	void purge_finished();
 
@@ -103,6 +107,9 @@ class AuthenticationService {
 	std::mutex mutex_;
 	std::condition_variable wakeup_;
 	std::map<std::string, std::shared_ptr<Request>> requests_;
+	// A caller without privileges can only start a new authentication after this time, so it
+	// can not keep the camera busy for everybody else
+	std::map<uid_t, Clock::time_point> cooldown_until_;
 	std::optional<std::string> active_request_;
 	std::shared_ptr<Request> pending_;
 	bool stopping_ = false;

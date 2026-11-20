@@ -55,25 +55,6 @@ bool starts_with(const std::string& value, const char* prefix, std::string& rest
 	return true;
 }
 
-// Python's float()/int() reject trailing garbage, std::stod/stoi do not
-double parse_double(const std::string& value) {
-	std::size_t pos = 0;
-	const double result = std::stod(value, &pos);
-	if (trim(value.substr(pos)).empty()) {
-		return result;
-	}
-	throw std::invalid_argument("Invalid number: '" + value + "'");
-}
-
-int parse_int(const std::string& value) {
-	std::size_t pos = 0;
-	const int result = std::stoi(value, &pos);
-	if (trim(value.substr(pos)).empty()) {
-		return result;
-	}
-	throw std::invalid_argument("Invalid integer: '" + value + "'");
-}
-
 double round_to(double value, int digits) {
 	const double factor = std::pow(10.0, digits);
 	return std::nearbyint(value * factor) / factor;
@@ -123,7 +104,13 @@ void Authenticator::read_config() {
 	use_cnn_ = config_.get_bool(fa, "use_cnn", false);
 	use_openvino_ = config_.get_bool(fa, "use_openvino", false);
 	timeout_ = static_cast<double>(str_to_seconds(config_.get(fa, "timeout", "4s")));
-	certainty_ = config_.get_float(fa, "certainty", 75);
+	start_cooldown_ = std::chrono::seconds(std::max(0LL, str_to_seconds(config_.get(fa, "start_cooldown", "2s"))));
+	certainty_ = round_to(probability_to_certainty(config_.get_float(fa, "certainty", 75)), 5);
+	// Invert certainty if we use openvino as for openvino 1 equals full match,
+	// while for dlib 0 equals full match
+	if (use_openvino_) {
+		certainty_ = 1 - certainty_;
+	}
 	confirmations_ = std::max(1, static_cast<int>(config_.get_int(fa, "confirmations", 5)));
 
 	use_anti_spoof_ = config_.get_bool(fa, "use_anti_spoof", true);
@@ -201,21 +188,7 @@ void Authenticator::initialize_models() {
 }
 
 Authenticator::Args Authenticator::parse_args(const std::vector<std::string>& args) const {
-	Args result{
-		auth_popup_,
-		timeout_,
-		certainty_,
-		anti_spoof_threshold_,
-		damo_flir_threshold_,
-		micromotion_detection_buffer_size_,
-		micromotion_threshold_,
-		texture_detection_buffer_size_,
-		texture_threshold_,
-		similarity_detection_buffer_size_,
-		identical_threshold_,
-		sudden_change_threshold_,
-		confirmations_,
-	};
+	Args result{auth_popup_, timeout_};
 
 	std::string value;
 	for (const auto& arg : args) {
@@ -223,40 +196,14 @@ Authenticator::Args Authenticator::parse_args(const std::vector<std::string>& ar
 			result.auth_popup = true;
 		} else if (starts_with(arg, "timeout=", value)) {
 			result.timeout = static_cast<double>(str_to_seconds(value));
-		} else if (starts_with(arg, "certainty=", value)) {
-			result.certainty = parse_double(value);
 		} else if (starts_with(arg, "show-auth-popup=", value)) {
 			result.auth_popup = str_to_bool(value);
-		} else if (starts_with(arg, "anti-spoof-threshold=", value)) {
-			result.anti_spoof_threshold = 1 - (parse_double(value) / 100);
-		} else if (starts_with(arg, "damo-flir-threshold=", value)) {
-			result.damo_flir_threshold = parse_double(value) / 100;
-		} else if (starts_with(arg, "micromotion-detection-buffer-size=", value)) {
-			result.micromotion_detection_buffer_size = parse_int(value);
-		} else if (starts_with(arg, "micromotion-threshold=", value)) {
-			result.micromotion_threshold = parse_double(value);
-		} else if (starts_with(arg, "texture-detection-buffer-size=", value)) {
-			result.texture_detection_buffer_size = parse_int(value);
-		} else if (starts_with(arg, "texture-threshold=", value)) {
-			result.texture_threshold = parse_double(value);
-		} else if (starts_with(arg, "similarity-detection-buffer-size=", value)) {
-			result.similarity_detection_buffer_size = parse_int(value);
-		} else if (starts_with(arg, "identical-threshold=", value)) {
-			result.identical_threshold = parse_double(value) / 100;
-		} else if (starts_with(arg, "sudden-change-threshold=", value)) {
-			result.sudden_change_threshold = parse_double(value) / 100;
-		} else if (starts_with(arg, "confirmations=", value)) {
-			result.confirmations = parse_int(value);
+		} else {
+			// The thresholds and the other settings come from the config file only
+			log(LOG_WARNING, "Ignoring the unknown argument '" + arg + "'");
 		}
-		// parent_pid= is accepted by the Python daemon but never used
 	}
 
-	result.certainty = round_to(probability_to_certainty(result.certainty), 5);
-	// Invert certainty if we use openvino as for openvino 1 equals full match,
-	// while for dlib 0 equals full match
-	if (use_openvino_) {
-		result.certainty = 1 - result.certainty;
-	}
 	// A timeout below 1 means no timeout
 	if (result.timeout < 1) {
 		result.timeout = std::numeric_limits<double>::infinity();
@@ -283,13 +230,13 @@ Status Authenticator::authenticate(const std::string& username, const std::vecto
 		const Args parsed = parse_args(args);
 
 		if (micromotion_detector_) {
-			micromotion_detector_->init(parsed.micromotion_detection_buffer_size);
+			micromotion_detector_->init(micromotion_detection_buffer_size_);
 		}
 		if (texture_detector_) {
-			texture_detector_->init(parsed.texture_detection_buffer_size);
+			texture_detector_->init(texture_detection_buffer_size_);
 		}
 		if (similarity_detector_) {
-			similarity_detector_->init(parsed.similarity_detection_buffer_size);
+			similarity_detector_->init(similarity_detection_buffer_size_);
 		}
 
 		if (parsed.auth_popup) {
@@ -493,7 +440,7 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 		rotate_frame(gsframe, rotate_, static_cast<int>(frames));
 
 #ifdef HOWDY_WITH_OPENVINO
-		if (spoof_detector_ && (*spoof_detector_)(frame) > args.anti_spoof_threshold) {
+		if (spoof_detector_ && (*spoof_detector_)(frame) > anti_spoof_threshold_) {
 			continue;
 		}
 #endif
@@ -503,7 +450,7 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 
 		for (const auto& fl : face_locations) {
 #ifdef HOWDY_WITH_OPENVINO
-			if (spoof_detector_flir_ && (*spoof_detector_flir_)(frame, fl) < args.damo_flir_threshold) {
+			if (spoof_detector_flir_ && (*spoof_detector_flir_)(frame, fl) < damo_flir_threshold_) {
 				break;
 			}
 #endif
@@ -511,12 +458,12 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 			if (texture_detector_) {
 				// No value means the face is outside of the frame, reject it
 				const auto texture = (*texture_detector_)(gsframe, fl);
-				if (!texture.has_value() || *texture < args.texture_threshold) {
+				if (!texture.has_value() || *texture < texture_threshold_) {
 					break;
 				}
 			}
 
-			if (micromotion_detector_ && micromotion_detector_->calculate_displacement(backend_->motion_landmarks(frame, fl)) < args.micromotion_threshold) {
+			if (micromotion_detector_ && micromotion_detector_->calculate_displacement(backend_->motion_landmarks(frame, fl)) < micromotion_threshold_) {
 				break;
 			}
 
@@ -533,7 +480,7 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 				}
 				// OpenVINO matches are a similarity, the lowest certainty is a distance
 				lowest_certainty = std::min(lowest_certainty, 1 - best);
-				accept = args.certainty < best && best < 1;
+				accept = certainty_ < best && best < 1;
 			} else {
 				double best = std::numeric_limits<double>::infinity();
 				for (const auto& encoding : encodings) {
@@ -546,12 +493,12 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 				}
 				// Update certainty if we have a new low
 				lowest_certainty = std::min(lowest_certainty, best);
-				accept = 0 < best && best < args.certainty;
+				accept = 0 < best && best < certainty_;
 			}
 
 			if (similarity_detector_) {
-				const auto [similarity, stale] = (*similarity_detector_)(*face_encoding, args.identical_threshold);
-				if (stale || similarity < args.sudden_change_threshold) {
+				const auto [similarity, stale] = (*similarity_detector_)(*face_encoding, identical_threshold_);
+				if (stale || similarity < sudden_change_threshold_) {
 					break;
 				}
 			}
@@ -559,7 +506,7 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 			// Check if a match that's confident enough
 			if (accept) {
 				++confirmations_seen;
-				if (confirmations_seen < args.confirmations) {
+				if (confirmations_seen < confirmations_) {
 					// Keep scanning until enough separate frames agree. The break
 					// leaves the per-face loop so one frame can only ever count
 					// once, however many faces it happens to contain.

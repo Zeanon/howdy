@@ -77,23 +77,19 @@ class Authenticator {
 	// Throws ModelException (or other exceptions) if the models can not be loaded
 	explicit Authenticator(PopupSink& popup);
 
+	// args: show-auth-popup[=bool] and timeout=<time>
 	Status authenticate(const std::string& username, const std::vector<std::string>& args, const RequestControl& control);
 
+	// How long a caller without privileges has to wait after its authentication to start the next one
+	[[nodiscard]] std::chrono::seconds start_cooldown() const {
+		return start_cooldown_;
+	}
+
   private:
+	// The only settings of a request, everything else comes from the config file
 	struct Args {
 		bool auth_popup;
 		double timeout;
-		double certainty;
-		double anti_spoof_threshold;
-		double damo_flir_threshold;
-		int micromotion_detection_buffer_size;
-		double micromotion_threshold;
-		int texture_detection_buffer_size;
-		double texture_threshold;
-		int similarity_detection_buffer_size;
-		double identical_threshold;
-		double sudden_change_threshold;
-		int confirmations;
 	};
 
 	void read_config();
@@ -122,6 +118,8 @@ class Authenticator {
 	bool use_cnn_ = false;
 	bool use_openvino_ = false;
 	double timeout_ = 4;
+	std::chrono::seconds start_cooldown_{2};
+	// The certainty of the config as a distance (dlib) or as a similarity (OpenVINO)
 	double certainty_ = 75;
 	int confirmations_ = 5;
 	bool use_anti_spoof_ = true;

@@ -9,6 +9,7 @@ import syslog
 import threading
 import traceback
 import configparser
+import contextvars
 
 from datetime import datetime, UTC
 
@@ -18,7 +19,7 @@ from enum import StrEnum
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
-from dbus_next import DBusError
+from dbus_next import DBusError, Message, MessageType
 from dbus_next.service import ServiceInterface, method
 
 from .i18n import S
@@ -36,18 +37,6 @@ AUTHENTICATION_INTERFACE = "@authentication_interface@"
 class Args:
 	auth_popup: bool
 	timeout: float
-	certainty: float
-	anti_spoof_threshold: float
-	damo_flir_threshold: float
-	micromotion_detection_buffer_size: int
-	micromotion_threshold: float
-	texture_detection_buffer_size: int
-	texture_threshold: float
-	similarity_detection_buffer_size: int
-	identical_threshold: float
-	sudden_change_threshold: float
-	confirmations: int
-	parent_pid: int = None
 
 
 class HowdyStatus(StrEnum):
@@ -136,9 +125,23 @@ class HowdyAuthenticator:
 		self.timeout = str_to_seconds(
 			self.config.get("face_authentication", "timeout", fallback="4s")
 		)
-		self.certainty = self.config.getfloat(
-			"face_authentication", "certainty", fallback=75
+		# How long a caller without privileges has to wait after its authentication
+		# before it can start the next one, so it can not keep the camera busy
+		self.start_cooldown = max(
+			0,
+			str_to_seconds(
+				self.config.get("face_authentication", "start_cooldown", fallback="2s")
+			),
 		)
+		self.certainty = round(
+			probability_to_certainty(
+				self.config.getfloat("face_authentication", "certainty", fallback=75)
+			),
+			5,
+		)
+		# Invert certainty if we use openvino as for openvino 1 equals full match, while for dlib 0 equals full match
+		if self.use_openvino:
+			self.certainty = 1 - self.certainty
 		self.confirmations = max(
 			1, self.config.getint("face_authentication", "confirmations", fallback=5)
 		)
@@ -223,56 +226,20 @@ class HowdyAuthenticator:
 		)
 
 	def _parse_args(self, args):
-		result = Args(
-			auth_popup=self.auth_popup,
-			timeout=self.timeout,
-			certainty=self.certainty,
-			anti_spoof_threshold=self.anti_spoof_threshold,
-			damo_flir_threshold=self.damo_flir_threshold,
-			micromotion_detection_buffer_size=self.micromotion_detection_buffer_size,
-			micromotion_threshold=self.micromotion_threshold,
-			texture_detection_buffer_size=self.texture_detection_buffer_size,
-			texture_threshold=self.texture_threshold,
-			similarity_detection_buffer_size=self.similarity_detection_buffer_size,
-			identical_threshold=self.identical_threshold,
-			sudden_change_threshold=self.sudden_change_threshold,
-			confirmations=self.confirmations,
-		)
+		"""The only settings of a request are show-auth-popup and timeout,
+		everything else comes from the config file"""
+		result = Args(auth_popup=self.auth_popup, timeout=self.timeout)
 		for arg in args:
 			if arg == "show-auth-popup":
 				result.auth_popup = True
 			elif arg.startswith("timeout="):
 				result.timeout = str_to_seconds(arg[8:])
-			elif arg.startswith("certainty="):
-				result.certainty = float(arg[10:])
 			elif arg.startswith("show-auth-popup="):
 				result.auth_popup = str_to_bool(arg[16:])
-			elif arg.startswith("anti-spoof-threshold="):
-				result.anti_spoof_threshold = 1 - (float(arg[21:]) / 100)
-			elif arg.startswith("damo-flir-threshold="):
-				result.damo_flir_threshold = float(arg[20:]) / 100
-			elif arg.startswith("micromotion-detection-buffer-size="):
-				result.micromotion_detection_buffer_size = int(arg[34:])
-			elif arg.startswith("micromotion-threshold="):
-				result.micromotion_threshold = float(arg[22:])
-			elif arg.startswith("texture-detection-buffer-size="):
-				result.texture_detection_buffer_size = int(arg[30:])
-			elif arg.startswith("texture-threshold="):
-				result.texture_threshold = float(arg[18:])
-			elif arg.startswith("similarity-detection-buffer-size="):
-				result.similarity_detection_buffer_size = int(arg[33:])
-			elif arg.startswith("identical-threshold="):
-				result.identical_threshold = float(arg[20:]) / 100
-			elif arg.startswith("sudden-change-threshold="):
-				result.sudden_change_threshold = float(arg[24:]) / 100
-			elif arg.startswith("confirmations="):
-				result.confirmations = int(arg[14:])
-			elif arg.startswith("parent_pid="):
-				result.parent_pid = int(arg[11:])
-		result.certainty = round(probability_to_certainty(result.certainty), 5)
-		# Invert certainty if we use openvino as for openvino 1 equals full match, while for dlib 0 equals full match
-		if self.use_openvino:
-			result.certainty = 1 - result.certainty
+			else:
+				syslog.syslog(
+					syslog.LOG_WARNING, f"Ignoring the unknown argument '{arg}'"
+				)
 		# If timeout is below 1, we set it to sys.maxsize which is basically infinite
 		if result.timeout < 1:
 			result.timeout = sys.maxsize
@@ -374,14 +341,14 @@ class HowdyAuthenticator:
 				args = self._parse_args(args)
 				if self.micromotion_detector is not None:
 					self.micromotion_detector.init(
-						args.micromotion_detection_buffer_size
+						self.micromotion_detection_buffer_size
 					)
 
 				if self.texture_detector is not None:
-					self.texture_detector.init(args.texture_detection_buffer_size)
+					self.texture_detector.init(self.texture_detection_buffer_size)
 
 				if self.similarity_detector is not None:
-					self.similarity_detector.init(args.similarity_detection_buffer_size)
+					self.similarity_detector.init(self.similarity_detection_buffer_size)
 
 				if args.auth_popup:
 					try:
@@ -636,7 +603,7 @@ class HowdyAuthenticator:
 
 			if (
 				self.spoof_detector is not None
-				and self.spoof_detector(frame) > args.anti_spoof_threshold
+				and self.spoof_detector(frame) > self.anti_spoof_threshold
 			):
 				continue
 
@@ -651,13 +618,13 @@ class HowdyAuthenticator:
 
 				if (
 					self.spoof_detector_flir is not None
-					and self.spoof_detector_flir(frame, fl) < args.damo_flir_threshold
+					and self.spoof_detector_flir(frame, fl) < self.damo_flir_threshold
 				):
 					break
 
 				if (
 					self.texture_detector is not None
-					and self.texture_detector(gsframe, fl) < args.texture_threshold
+					and self.texture_detector(gsframe, fl) < self.texture_threshold
 				):
 					break
 
@@ -667,7 +634,7 @@ class HowdyAuthenticator:
 					if (
 						self.micromotion_detector is not None
 						and self.micromotion_detector(frame, fl)
-						< args.micromotion_threshold
+						< self.micromotion_threshold
 					):
 						break
 
@@ -678,13 +645,13 @@ class HowdyAuthenticator:
 					best = np.dot(encodings, face_encoding).max()
 					# OpenVINO matches are a similarity, the lowest certainty is a distance
 					lowest_certainty = min(lowest_certainty, 1 - best)
-					accept = args.certainty < best < 1
+					accept = self.certainty < best < 1
 				else:
 					face_landmark = self.pose_predictor(frame, fl)
 					if (
 						self.micromotion_detector is not None
 						and self.micromotion_detector(face_landmark)
-						< args.micromotion_threshold
+						< self.micromotion_threshold
 					):
 						break
 
@@ -697,20 +664,20 @@ class HowdyAuthenticator:
 					best = np.linalg.norm(encodings - face_encoding, axis=1).min()
 					# Update certainty if we have a new low
 					lowest_certainty = min(lowest_certainty, best)
-					accept = 0 < best < args.certainty
+					accept = 0 < best < self.certainty
 				# fmt: on
 
 				if self.similarity_detector is not None:
 					similarity, stale = self.similarity_detector(
-						face_encoding, args.identical_threshold
+						face_encoding, self.identical_threshold
 					)
-					if stale or similarity < args.sudden_change_threshold:
+					if stale or similarity < self.sudden_change_threshold:
 						break
 
 				# Check if a match that's confident enough
 				if accept:
 					confirmations_seen += 1
-					if confirmations_seen < args.confirmations:
+					if confirmations_seen < self.confirmations:
 						# Keep scanning until enough separate frames agree. The break
 						# leaves the per-face loop so one frame can only ever count
 						# once, however many faces it happens to contain.
@@ -766,9 +733,28 @@ class Timeout:
 		self.time = timeout
 
 
+# The sender of the method call that is handled. dbus-next does not tell the
+# methods who calls, remember_sender() (a message handler of the bus) keeps it.
+current_sender = contextvars.ContextVar("current_sender", default=None)
+
+
+def remember_sender(msg):
+	if msg.message_type == MessageType.METHOD_CALL:
+		current_sender.set(msg.sender)
+	return None
+
+
+def is_trusted(uid):
+	"""Root and the user of the daemon itself may do everything. The methods are
+	open to every user, so everybody else is restricted to its own user."""
+	return uid == 0 or uid == os.geteuid()
+
+
 class AuthenticationInterface(ServiceInterface):
-	def __init__(self, ui_service):
+	def __init__(self, ui_service, bus):
 		super().__init__(AUTHENTICATION_INTERFACE)
+
+		self.bus = bus
 
 		self.authenticator = HowdyAuthenticator(ui_service)
 		self.executor = ThreadPoolExecutor(
@@ -779,15 +765,49 @@ class AuthenticationInterface(ServiceInterface):
 		self.lock = threading.Lock()
 		self.requests = {}
 		self.active_request = None
+		self.cooldown_until = {}
+
+	async def caller_uid(self):
+		"""The uid of the caller, identified by the bus and not by what it claims"""
+		sender = current_sender.get()
+		if not sender:
+			raise DBusError(
+				"org.howdy.Authentication.NotAuthorized", "Missing D-Bus sender"
+			)
+
+		reply = await self.bus.call(
+			Message(
+				destination="org.freedesktop.DBus",
+				path="/org/freedesktop/DBus",
+				interface="org.freedesktop.DBus",
+				member="GetConnectionUnixUser",
+				signature="s",
+				body=[sender],
+			)
+		)
+		if reply.message_type == MessageType.ERROR:
+			raise DBusError(
+				"org.howdy.Authentication.NotAuthorized",
+				"Could not identify the caller",
+			)
+		return reply.body[0]
 
 	@method()
-	def StartAuthentication(self, username: "s", args: "as") -> "s":  # type: ignore
+	async def StartAuthentication(self, username: "s", args: "as") -> "s":  # type: ignore
 		try:
-			pwd.getpwnam(username)
+			target_uid = pwd.getpwnam(username).pw_uid
 		except KeyError:
 			raise DBusError(
 				"org.howdy.Authentication.InvalidUser",
 				"Unknown user",
+			)
+
+		caller_uid = await self.caller_uid()
+		trusted = is_trusted(caller_uid)
+		if not trusted and target_uid != caller_uid:
+			raise DBusError(
+				"org.howdy.Authentication.NotAuthorized",
+				"Only the own user can be authenticated",
 			)
 
 		with self.lock:
@@ -796,12 +816,20 @@ class AuthenticationInterface(ServiceInterface):
 					"org.howdy.Authentication.Busy",
 					"An authentication is already running",
 				)
+			if not trusted and time.monotonic() < self.cooldown_until.get(
+				caller_uid, 0
+			):
+				raise DBusError(
+					"org.howdy.Authentication.Busy",
+					"Too many authentications, try again in a moment",
+				)
 
 			timeout = Timeout(time.monotonic() + 2)
 			request_id = str(uuid.uuid4())
 			cancel_event = threading.Event()
 
 			self.requests[request_id] = {
+				"owner": caller_uid,
 				"status": HowdyStatus.Running,
 				"cancel": cancel_event,
 				"timeout": timeout,
@@ -830,12 +858,23 @@ class AuthenticationInterface(ServiceInterface):
 					else:
 						request["status"] = HowdyStatus.Error
 
+				if not trusted and self.authenticator.start_cooldown > 0:
+					now = time.monotonic()
+					self.cooldown_until[caller_uid] = (
+						now + self.authenticator.start_cooldown
+					)
+					self.cooldown_until = {
+						uid: until
+						for uid, until in self.cooldown_until.items()
+						if until > now
+					}
+
 				if self.active_request == request_id:
 					self.active_request = None
 
 			def cleanup_request():
 				time.sleep(30)
-				self.ClearAuthentication(request_id)
+				self.clear(request_id)
 
 			thread = threading.Thread(
 				target=cleanup_request,
@@ -847,12 +886,17 @@ class AuthenticationInterface(ServiceInterface):
 		self.executor.submit(run_authentication)
 		return request_id
 
+	def owns(self, request, caller_uid):
+		return is_trusted(caller_uid) or request["owner"] == caller_uid
+
 	@method()
-	def GetResult(self, request_id: "s") -> "s":  # type: ignore
+	async def GetResult(self, request_id: "s") -> "s":  # type: ignore
+		caller_uid = await self.caller_uid()
 		with self.lock:
 			request = self.requests.get(request_id)
 
-			if request is None:
+			# A request of somebody else does not exist for the caller
+			if request is None or not self.owns(request, caller_uid):
 				raise DBusError(
 					"org.howdy.Authentication.UnknownRequest",
 					"Unknown authentication request",
@@ -866,11 +910,12 @@ class AuthenticationInterface(ServiceInterface):
 			return str(request["status"])
 
 	@method()
-	def CancelAuthentication(self, request_id: "s") -> "b":  # type: ignore
+	async def CancelAuthentication(self, request_id: "s") -> "b":  # type: ignore
+		caller_uid = await self.caller_uid()
 		with self.lock:
 			request = self.requests.get(request_id)
 
-			if request is None:
+			if request is None or not self.owns(request, caller_uid):
 				return False
 
 			if request["status"] != HowdyStatus.Running:
@@ -881,11 +926,18 @@ class AuthenticationInterface(ServiceInterface):
 			return True
 
 	@method()
-	def ClearAuthentication(self, request_id: "s") -> "b":  # type: ignore
+	async def ClearAuthentication(self, request_id: "s") -> "b":  # type: ignore
+		return self.clear(request_id, await self.caller_uid())
+
+	def clear(self, request_id, caller_uid=None):
+		"""Without a caller (the cleanup of old requests) every request can be cleared"""
 		with self.lock:
-			request = self.requests.pop(request_id, None)
-			if request is None:
+			request = self.requests.get(request_id)
+			if request is None or (
+				caller_uid is not None and not self.owns(request, caller_uid)
+			):
 				return False
+			del self.requests[request_id]
 
 			if request["status"] == HowdyStatus.Running:
 				request["status"] = HowdyStatus.Cancelling

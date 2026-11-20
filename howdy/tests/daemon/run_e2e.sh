@@ -62,8 +62,12 @@ rm -f "$MODEL"
 E "no model" NO_ENROLLED_FACE
 cp "$T/genuine.dat" "$MODEL"
 E "genuine face" SUCCESS
-E "genuine, strict certainty=99" TIMEOUT certainty=99
-E "invalid argument" ERROR certainty=abc
+# The thresholds come from the config file, the daemon reads it once at startup
+start_daemon "${NOLIVE[@]}" face_authentication.certainty=99
+E "genuine, strict certainty=99 in the config" TIMEOUT
+start_daemon "${NOLIVE[@]}"
+E "invalid argument" ERROR timeout=abc
+E "a threshold can not be set by an argument" SUCCESS certainty=1 confirmations=99 anti-spoof-threshold=0
 cp "$T/impostor.dat" "$MODEL"
 E "foreign face" TIMEOUT
 USER_NAME=nosuchuser E "unknown user" "Call failed: Unknown user"
@@ -91,7 +95,8 @@ E "genuine with popup" SUCCESS show-auth-popup
 sleep 0.5
 kill "$MPID"
 members=$(grep -oE "member=(Show|UpdateMessage|UpdateSubtext|Close)" "$T/monitor.log" | uniq | cut -d= -f2 | tr '\n' ' ' || true)
-expect "popup signal order" "$members" "Show UpdateMessage UpdateSubtext Close"
+# Show carries the text "Face authentication...", the popup is only updated if a text changes
+expect "popup signal order" "$members" "Show UpdateSubtext Close"
 
 echo "--- dlib HOG, liveness enabled"
 start_daemon

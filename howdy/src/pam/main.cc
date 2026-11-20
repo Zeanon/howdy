@@ -18,12 +18,15 @@
 #include <sys/stat.h>
 #include <sys/syslog.h>
 
+#include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <fstream>
 #include <functional>
 #include <future>
 #include <mutex>
 #include <optional>
+#include <string_view>
 
 #define S(msg) gettext(msg)
 
@@ -320,6 +323,25 @@ inline void workaround_function(const Workaround& workaround) {
 	}
 }
 
+// The options of the module that the face authentication daemon does not take from the PAM
+// configuration any more, they are read from the config file
+inline bool is_removed_face_option(const std::string& arg) {
+	static constexpr std::array<std::string_view, 11> REMOVED = {
+		"face-auth:certainty=",
+		"face-auth:anti-spoof-threshold=",
+		"face-auth:damo-flir-threshold=",
+		"face-auth:micromotion-detection-buffer-size=",
+		"face-auth:micromotion-threshold=",
+		"face-auth:texture-detection-buffer-size=",
+		"face-auth:texture-threshold=",
+		"face-auth:similarity-detection-buffer-size=",
+		"face-auth:identical-threshold=",
+		"face-auth:sudden-change-threshold=",
+		"face-auth:confirmations=",
+	};
+	return std::any_of(REMOVED.begin(), REMOVED.end(), [&](std::string_view option) { return arg.starts_with(option); });
+}
+
 /**
  * The main function, runs the identification and authentication
  * @param	pamh			The handle to interface directly with PAM
@@ -369,18 +391,6 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	face_auth = config.GetBoolean("face_authentication", "enable", true);
 	max_face_auth_tries = static_cast<unsigned>(config.GetInteger("face_authentication", "max_tries", 1));
 	std::optional<std::string> show_auth_popup = std::nullopt;
-	std::optional<std::string> video_certainty = std::nullopt;
-	std::optional<std::string> anti_spoof_threshold = std::nullopt;
-	std::optional<std::string> damo_flir_threshold = std::nullopt;
-	std::optional<std::string> micromotion_detection_buffer_size = std::nullopt;
-	std::optional<std::string> micromotion_threshold = std::nullopt;
-	std::optional<std::string> texture_detection_buffer_size = std::nullopt;
-	std::optional<std::string> texture_threshold = std::nullopt;
-	std::optional<std::string> similarity_detection_buffer_size = std::nullopt;
-	std::optional<std::string> identical_threshold = std::nullopt;
-	std::optional<std::string> sudden_change_threshold = std::nullopt;
-	std::optional<std::string> equality_certainty = std::nullopt;
-	std::optional<std::string> confirmations = std::nullopt;
 
 	fingerprint = config.GetBoolean("fingerprint", "enable", false);
 	fingerprint_timeout = str_to_seconds(config.GetString("fingerprint", "timeout", "30s"));
@@ -459,28 +469,9 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			show_auth_popup = std::optional<std::string>("show-auth-popup");
 		} else if (arg.starts_with("face-auth:show-auth-popup=")) {
 			show_auth_popup = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:certainty=")) {
-			video_certainty = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:anti-spoof-threshold=")) {
-			anti_spoof_threshold = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:damo-flir-threshold=")) {
-			damo_flir_threshold = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:micromotion-detection-buffer-size=")) {
-			micromotion_detection_buffer_size = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:micromotion-threshold=")) {
-			micromotion_threshold = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:texture-detection-buffer-size=")) {
-			texture_detection_buffer_size = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:texture-threshold=")) {
-			texture_threshold = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:similarity-detection-buffer-size=")) {
-			texture_detection_buffer_size = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:identical-threshold=")) {
-			identical_threshold = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:sudden-change-threshold=")) {
-			sudden_change_threshold = std::optional<std::string>(arg.substr(10, arg.length()));
-		} else if (arg.starts_with("face-auth:confirmations=")) {
-			confirmations = std::optional<std::string>("confirmations=" + arg.substr(24, arg.length()));
+		} else if (is_removed_face_option(arg)) {
+			// These settings were passed to the daemon, which only reads them from the config file now
+			syslog(LOG_WARNING, "The option '%s' is not supported any more, set it in the config file", arg.c_str());
 		} else if (arg.starts_with("global-timeout=")) {
 			global_timeout = str_to_seconds(arg.substr(15, arg.length()));
 		} else if (arg.starts_with("timeout=")) {
@@ -672,48 +663,14 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	});
 	signal_task.activate();
 
-	std::string pid = "parent_pid=" + std::to_string(getpid());
-	std::vector<char const*> args = {
-		pid.c_str(),
-	};
+	// The only settings of a face authentication that are passed to the daemon, everything else comes
+	// from the config file
+	std::vector<char const*> args;
 	if (show_auth_popup) {
 		args.push_back((*show_auth_popup).data());
 	}
 	if (face_auth_timeout) {
 		args.push_back((*face_auth_timeout).data());
-	}
-	if (video_certainty) {
-		args.push_back((*video_certainty).data());
-	}
-	if (anti_spoof_threshold) {
-		args.push_back((*anti_spoof_threshold).data());
-	}
-	if (damo_flir_threshold) {
-		args.push_back((*damo_flir_threshold).data());
-	}
-	if (micromotion_detection_buffer_size) {
-		args.push_back((*micromotion_detection_buffer_size).data());
-	}
-	if (micromotion_threshold) {
-		args.push_back((*micromotion_threshold).data());
-	}
-	if (texture_detection_buffer_size) {
-		args.push_back((*texture_detection_buffer_size).data());
-	}
-	if (texture_threshold) {
-		args.push_back((*texture_threshold).data());
-	}
-	if (similarity_detection_buffer_size) {
-		args.push_back((*similarity_detection_buffer_size).data());
-	}
-	if (identical_threshold) {
-		args.push_back((*identical_threshold).data());
-	}
-	if (sudden_change_threshold) {
-		args.push_back((*sudden_change_threshold).data());
-	}
-	if (confirmations) {
-		args.push_back((*confirmations).data());
 	}
 
 	/*

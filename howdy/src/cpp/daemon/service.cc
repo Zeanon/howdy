@@ -5,10 +5,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <stdexcept>
 #include <string_view>
 
 #include <sys/eventfd.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <systemd/sd-id128.h>
@@ -29,6 +31,24 @@ void check(int r, const char* what) {
 	if (r < 0) {
 		throw std::runtime_error(std::string(what) + ": " + std::strerror(-r));
 	}
+}
+
+// Root and the user of the daemon itself may do everything. The methods are open to every
+// user, so everybody else is restricted to its own user.
+bool is_trusted(uid_t uid) {
+	return uid == 0 || uid == geteuid();
+}
+
+// The caller is identified by the bus, not by what it claims
+int query_caller_uid(sd_bus_message* message, uid_t& uid) {
+	sd_bus_creds* creds = nullptr;
+	int r = sd_bus_query_sender_creds(message, SD_BUS_CREDS_EUID, &creds);
+	if (r < 0) {
+		return r;
+	}
+	r = sd_bus_creds_get_euid(creds, &uid);
+	sd_bus_creds_unref(creds);
+	return r;
 }
 
 std::string new_request_id() {
@@ -225,6 +245,9 @@ void AuthenticationService::worker_loop() {
 		// Cancellation takes precedence over a late result.
 		request->status = request->control.cancel.load() ? Status::Cancelled : result;
 		request->finished = Clock::now();
+		if (!is_trusted(request->owner_uid) && authenticator_.start_cooldown().count() > 0) {
+			cooldown_until_[request->owner_uid] = *request->finished + authenticator_.start_cooldown();
+		}
 		if (active_request_ == request_id) {
 			active_request_.reset();
 		}
@@ -242,12 +265,15 @@ void AuthenticationService::purge_finished() {
 			++it;
 		}
 	}
+	for (auto it = cooldown_until_.begin(); it != cooldown_until_.end();) {
+		it = it->second <= now ? cooldown_until_.erase(it) : std::next(it);
+	}
 }
 
-bool AuthenticationService::clear(const std::string& request_id) {
+bool AuthenticationService::clear(const std::string& request_id, uid_t caller_uid) {
 	const std::lock_guard<std::mutex> lock(mutex_);
 	const auto it = requests_.find(request_id);
-	if (it == requests_.end()) {
+	if (it == requests_.end() || (!is_trusted(caller_uid) && it->second->owner_uid != caller_uid)) {
 		return false;
 	}
 	if (it->second->status == Status::Running) {
@@ -279,8 +305,19 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 	}
 	std::free(static_cast<void*>(strv)); // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory,bugprone-multi-level-implicit-pointer-conversion)
 
-	if (!lookup_uid(username).has_value()) {
+	const auto target_uid = lookup_uid(username);
+	if (!target_uid.has_value()) {
 		return sd_bus_error_set(ret_error, "org.howdy.Authentication.InvalidUser", "Unknown user");
+	}
+
+	uid_t caller_uid = 0;
+	r = query_caller_uid(message, caller_uid);
+	if (r < 0) {
+		return r;
+	}
+	const bool trusted = is_trusted(caller_uid);
+	if (!trusted && *target_uid != caller_uid) {
+		return sd_bus_error_set(ret_error, "org.howdy.Authentication.NotAuthorized", "Only the own user can be authenticated");
 	}
 
 	std::string request_id;
@@ -289,9 +326,16 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		if (self->active_request_.has_value() || self->stopping_) {
 			return sd_bus_error_set(ret_error, "org.howdy.Authentication.Busy", "An authentication is already running");
 		}
+		if (!trusted) {
+			const auto cooldown = self->cooldown_until_.find(caller_uid);
+			if (cooldown != self->cooldown_until_.end() && Clock::now() < cooldown->second) {
+				return sd_bus_error_set(ret_error, "org.howdy.Authentication.Busy", "Too many authentications, try again in a moment");
+			}
+		}
 
 		request_id = new_request_id();
 		auto request = std::make_shared<Request>();
+		request->owner_uid = caller_uid;
 		request->username = username;
 		request->args = std::move(args);
 		request->control.extend_keepalive(INITIAL_KEEPALIVE);
@@ -314,11 +358,17 @@ int AuthenticationService::method_get_result(sd_bus_message* message, void* user
 		return r;
 	}
 
+	uid_t caller_uid = 0;
+	if (const int q = query_caller_uid(message, caller_uid); q < 0) {
+		return q;
+	}
+
 	Status status = Status::Error;
 	{
 		const std::lock_guard<std::mutex> lock(self->mutex_);
 		const auto it = self->requests_.find(request_id);
-		if (it == self->requests_.end()) {
+		// A request of somebody else does not exist for the caller
+		if (it == self->requests_.end() || (!is_trusted(caller_uid) && it->second->owner_uid != caller_uid)) {
 			return sd_bus_error_set(ret_error, "org.howdy.Authentication.UnknownRequest", "Unknown authentication request");
 		}
 		it->second->control.extend_keepalive(KEEPALIVE_EXTENSION);
@@ -338,11 +388,16 @@ int AuthenticationService::method_cancel(sd_bus_message* message, void* userdata
 		return r;
 	}
 
+	uid_t caller_uid = 0;
+	if (const int q = query_caller_uid(message, caller_uid); q < 0) {
+		return q;
+	}
+
 	bool cancelled = false;
 	{
 		const std::lock_guard<std::mutex> lock(self->mutex_);
 		const auto it = self->requests_.find(request_id);
-		if (it != self->requests_.end() && it->second->status == Status::Running) {
+		if (it != self->requests_.end() && it->second->status == Status::Running && (is_trusted(caller_uid) || it->second->owner_uid == caller_uid)) {
 			it->second->status = Status::Cancelling;
 			it->second->control.cancel.store(true);
 			cancelled = true;
@@ -359,7 +414,11 @@ int AuthenticationService::method_clear(sd_bus_message* message, void* userdata,
 	if (r < 0) {
 		return r;
 	}
-	return sd_bus_reply_method_return(message, "b", static_cast<int>(self->clear(request_id)));
+	uid_t caller_uid = 0;
+	if (const int q = query_caller_uid(message, caller_uid); q < 0) {
+		return q;
+	}
+	return sd_bus_reply_method_return(message, "b", static_cast<int>(self->clear(request_id, caller_uid)));
 }
 
 int AuthenticationService::on_cleanup_timer(sd_event_source* source, std::uint64_t /*usec*/, void* userdata) {
