@@ -1,5 +1,6 @@
 option('install_dir', type: 'string', value: '', description: 'Set the folder, where all howdy components should be installed to')
 option('pam_dir', type: 'string', value: '/usr/lib/security', description: 'Set the pam_howdy destination directory')
+option('pam_unix_path', type: 'string', value: '', description: 'Set the full path of pam_unix.so (found automatically if empty)')
 option('py_sources_dir', type: 'string', value: '', description: 'Set the python sources directory')
 option('python_path', type: 'string', value: '', description: 'Set the path to the python executable')
  

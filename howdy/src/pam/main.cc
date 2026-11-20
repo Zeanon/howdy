@@ -6,6 +6,7 @@
 #include <INIReader.h>
 #include <clocale>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <glob.h>
 #include <libintl.h>
 #include <spawn.h>
@@ -20,7 +21,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <condition_variable>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -342,6 +345,38 @@ inline bool is_removed_face_option(const std::string& arg) {
 	return std::any_of(REMOVED.begin(), REMOVED.end(), [&](std::string_view option) { return arg.starts_with(option); });
 }
 
+// The configuration decides whether and how Howdy authenticates, so it is only used if nobody
+// but root can change it. The checks run on the opened file, so it can not be swapped in between.
+inline std::optional<std::string> read_trusted_config(const char* path) {
+	const int fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		syslog(LOG_ERR, "Failed to open the configuration file %s: %s", path, strerror(errno));
+		return std::nullopt;
+	}
+
+	struct stat info{};
+	std::optional<std::string> content;
+	if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
+		syslog(LOG_ERR, "The configuration file %s is not a regular file", path);
+	} else if (info.st_uid != 0 || (info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		syslog(LOG_ERR, "Ignoring the configuration file %s: it must belong to root and must not be writable by others", path);
+	} else {
+		std::string data;
+		std::array<char, 4096> buffer{};
+		ssize_t count = 0;
+		while ((count = read(fd, buffer.data(), buffer.size())) > 0) {
+			data.append(buffer.data(), static_cast<size_t>(count));
+		}
+		if (count < 0) {
+			syslog(LOG_ERR, "Failed to read the configuration file %s: %s", path, strerror(errno));
+		} else {
+			content = std::move(data);
+		}
+	}
+	close(fd);
+	return content;
+}
+
 /**
  * The main function, runs the identification and authentication
  * @param	pamh			The handle to interface directly with PAM
@@ -352,8 +387,13 @@ inline bool is_removed_face_option(const std::string& arg) {
  * @return					Returns a PAM return code
  */
 inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, bool ask_auth_tok) { // NOLINT(readability-function-cognitive-complexity)
-	INIReader config(CONFIG_FILE_PATH);
 	openlog("pam_howdy", 0, LOG_AUTHPRIV);
+
+	const auto config_content = read_trusted_config(CONFIG_FILE_PATH);
+	if (!config_content.has_value()) {
+		return PAM_SYSTEM_ERR;
+	}
+	const INIReader config(config_content->data(), config_content->size());
 
 	// Initialize gettext
 	setlocale(LC_ALL, "");
@@ -685,9 +725,9 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
 		pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
-		auto* handle = dlopen("/usr/lib/x86_64-linux-gnu/security/pam_unix.so", RTLD_NOW);
+		auto* handle = dlopen(PAM_UNIX_PATH, RTLD_NOW);
 		if (!handle) {
-			syslog(LOG_ERR, "Could not load pam_unix.so: %s", dlerror());
+			syslog(LOG_ERR, "Could not load %s: %s", PAM_UNIX_PATH, dlerror());
 
 			{
 				std::unique_lock<std::mutex> lock(mutx);

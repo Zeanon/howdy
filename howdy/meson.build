@@ -82,6 +82,20 @@ dbus_conf_data = configuration_data({
 # <pam module>
 pam_module_conf_data = configuration_data(paths_dict)
 pam_module_conf_data.set('config_file_path', config_path)
+
+# pam_unix is loaded by its full path, the directory depends on the distribution
+pam_unix_path = get_option('pam_unix_path')
+if pam_unix_path == ''
+    pam_unix_path = '/usr/lib/security/pam_unix.so'
+    foreach dir : ['/usr/lib/x86_64-linux-gnu/security', '/usr/lib64/security', '/usr/lib/aarch64-linux-gnu/security', '/usr/lib/security', '/lib/security']
+        if import('fs').exists(dir / 'pam_unix.so')
+            pam_unix_path = dir / 'pam_unix.so'
+            break
+        endif
+    endforeach
+    message('Using ' + pam_unix_path + ' as pam_unix, set pam_unix_path to change it')
+endif
+pam_module_conf_data.set('pam_unix_path', pam_unix_path)
 pam_config_dir = get_option('prefix') / get_option('datadir') / 'pam-configs'
 if (get_option('pam_config_dir') != '')
     pam_config_dir = get_option('pam_config_dir')
@@ -700,7 +714,7 @@ install_data(
 
 fs = import('fs')
 if get_option('install_config') and not fs.exists(config_path)
-    install_data('assets/config/config.ini', install_dir: confdir, install_mode: 'rwxr--r--', install_tag: 'config')
+    install_data('assets/config/config.ini', install_dir: confdir, install_mode: 'rw-r--r--', install_tag: 'config')
 endif
 
 install_data(
