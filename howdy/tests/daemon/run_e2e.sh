@@ -98,6 +98,25 @@ members=$(grep -oE "member=(Show|UpdateMessage|UpdateSubtext|Close)" "$T/monitor
 # Show carries the text "Face authentication...", the popup is only updated if a text changes
 expect "popup signal order" "$members" "Show UpdateSubtext Close"
 
+echo "--- untrusted model file"
+# The models decide who is let in, a file that others can change is not used
+start_daemon "${NOLIVE[@]}"
+cp "$T/genuine.dat" "$MODEL"
+chmod 666 "$MODEL"
+E "model writable by everybody" ERROR
+chmod 660 "$MODEL"
+E "model writable by the group" ERROR
+chmod 644 "$MODEL"
+E "model readable by others" SUCCESS
+chmod 600 "$MODEL"
+E "model of the owner only" SUCCESS
+mv "$MODEL" "$T/genuine-link.dat"
+ln -s "$T/genuine-link.dat" "$MODEL"
+E "model is a link" ERROR
+rm "$MODEL"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+
 echo "--- snapshot retention"
 # A snapshot of an earlier time is deleted when the daemon starts, of the failed
 # attempts only the newest ones are kept

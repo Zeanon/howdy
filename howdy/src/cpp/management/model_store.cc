@@ -7,6 +7,7 @@
 
 #include <sys/stat.h>
 
+#include "trusted_file.hh"
 #include "util.hh"
 
 namespace howdy {
@@ -66,16 +67,12 @@ void validate_new_model(const nlohmann::json& model) {
 
 // std::nullopt if the user has no models
 std::optional<nlohmann::json> load(const std::filesystem::path& path) {
-	std::error_code ec;
-	if (!std::filesystem::exists(path, ec)) {
+	const auto content = read_trusted_file(path);
+	if (!content.has_value()) {
 		return std::nullopt;
 	}
 
-	std::ifstream file(path);
-	if (!file) {
-		throw std::runtime_error("Could not read the face model file");
-	}
-	auto models = nlohmann::json::parse(file, nullptr, false);
+	auto models = nlohmann::json::parse(*content, nullptr, false);
 	if (models.is_discarded() || !models.is_array()) {
 		throw std::runtime_error("Face model file is invalid");
 	}

@@ -26,6 +26,7 @@ from .i18n import S
 from . import paths_factory
 from . import snapshot
 from .caller import CallerError, is_privileged, may_access, query_caller_uid
+from .file_util import read_trusted_file
 from .enroll_capture import flatten_models
 from .rotation import rotate_frame
 from .recorders.video_capture import VideoCapture, NoDeviceException
@@ -495,7 +496,10 @@ class HowdyAuthenticator:
 
 		# Try to load the face model from the models folder
 		try:
-			models = json.load(open(paths_factory.user_model_path(username)))
+			# The models decide who is let in, so only a file that nobody else can change is used
+			models = json.loads(
+				read_trusted_file(paths_factory.user_model_path(username))
+			)
 			encoding_size = 256 if self.use_openvino else 128
 			encodings, _ = flatten_models(models, encoding_size)
 		except FileNotFoundError:

@@ -1,7 +1,7 @@
 """Test of the Python daemons that needs no bus: the checks who calls them (the
 common caller checks, the authentication daemon: who may see, cancel and clear a
 request and who may start one, the management daemon with the polkit check of
-the cli package) and the retention of the snapshots.
+the cli package), the retention of the snapshots and which model files are used.
 
 Usage: python_callers.py <src/python dir> <work dir>
 
@@ -476,5 +476,94 @@ except OSError:
 check("a linked directory is refused", refused, True)
 check("and nothing in it is deleted", os.path.exists(make_file_path), True)
 os.unlink(DIRECTORY)
+
+print("--- which model files are used")
+import stat  # noqa: E402
+
+from howdy.file_util import read_trusted_file  # noqa: E402
+
+ROOT = os.path.join(WORK_DIR, "trusted")
+shutil.rmtree(ROOT, ignore_errors=True)
+os.makedirs(ROOT)
+os.chmod(ROOT, 0o755)
+
+
+def write(path, mode):
+	with open(path, "w") as handle:
+		handle.write("content")
+	os.chmod(path, mode)
+
+
+def read(path):
+	"""The content, 'missing', or 'refused: ' and the reason"""
+	try:
+		return read_trusted_file(path)
+	except FileNotFoundError:
+		return "missing"
+	except PermissionError as exc:
+		return "refused: " + str(exc).split(": ", 1)[1]
+
+
+NOT_WRITABLE = "it must belong to root and must not be writable by others"
+DIRECTORY_NOT_WRITABLE = (
+	"its directory must belong to root and must not be writable by others"
+)
+
+check("missing file", read(os.path.join(ROOT, "none.dat")), "missing")
+check("missing directory", read(os.path.join(ROOT, "none", "none.dat")), "missing")
+
+write(os.path.join(ROOT, "a.dat"), 0o600)
+check("file of the owner", read(os.path.join(ROOT, "a.dat")), "content")
+write(os.path.join(ROOT, "b.dat"), 0o644)
+check("readable by others is fine", read(os.path.join(ROOT, "b.dat")), "content")
+write(os.path.join(ROOT, "c.dat"), 0o660)
+check(
+	"writable by the group",
+	read(os.path.join(ROOT, "c.dat")),
+	"refused: " + NOT_WRITABLE,
+)
+write(os.path.join(ROOT, "d.dat"), 0o602)
+check(
+	"writable by others", read(os.path.join(ROOT, "d.dat")), "refused: " + NOT_WRITABLE
+)
+
+os.symlink(os.path.join(ROOT, "a.dat"), os.path.join(ROOT, "link.dat"))
+check(
+	"link to a good file", read(os.path.join(ROOT, "link.dat")), "refused: it is a link"
+)
+os.mkdir(os.path.join(ROOT, "dir.dat"))
+check(
+	"directory",
+	read(os.path.join(ROOT, "dir.dat")),
+	"refused: it is not a regular file",
+)
+
+os.makedirs(os.path.join(ROOT, "open"))
+write(os.path.join(ROOT, "open", "a.dat"), 0o600)
+for mode, name, want in (
+	(0o777, "directory writable by others", "refused: " + DIRECTORY_NOT_WRITABLE),
+	(0o775, "directory writable by the group", "refused: " + DIRECTORY_NOT_WRITABLE),
+	(0o711, "directory that can only be searched", "content"),
+):
+	os.chmod(os.path.join(ROOT, "open"), mode)
+	check(name, read(os.path.join(ROOT, "open", "a.dat")), want)
+
+# A directory that is a link is followed, the one it points to is checked
+os.symlink(os.path.join(ROOT, "open"), os.path.join(ROOT, "linked"))
+check("linked directory", read(os.path.join(ROOT, "linked", "a.dat")), "content")
+os.chmod(os.path.join(ROOT, "open"), 0o777)
+check(
+	"linked directory that is writable by others",
+	read(os.path.join(ROOT, "linked", "a.dat")),
+	"refused: " + DIRECTORY_NOT_WRITABLE,
+)
+
+# Root owns it, the user of the test is not root
+check("file of root", not read("/etc/hostname").startswith("refused"), True)
+check(
+	"the mode of a file is what the test set",
+	stat.S_IMODE(os.stat(os.path.join(ROOT, "c.dat")).st_mode),
+	0o660,
+)
 
 sys.exit(1 if failed else 0)

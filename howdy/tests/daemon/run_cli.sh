@@ -89,6 +89,17 @@ mcall Add s "$MODEL_JSON" > /dev/null
 expect "clear" "$(mcall Clear)" "b true"
 expect "clear removed the file" "$([ -e "$MODEL" ] && echo exists || echo gone)" gone
 
+echo "--- management daemon, untrusted model file"
+# The models decide who is let in, a file that others can write is not used
+mcall Add s "$MODEL_JSON" > /dev/null
+chmod 666 "$MODEL"
+expect_contains "list refuses a model file that others can write" "$(mcall List)" "Not using"
+expect_contains "add refuses it" "$(mcall Add s "$SECOND_JSON")" "Not using"
+expect_contains "remove refuses it" "$(mcall Remove s 0)" "Not using"
+chmod 600 "$MODEL"
+expect "list works again with the right mode" "$(mcall List)" 's "[{'
+mcall Clear > /dev/null
+
 echo "--- management daemon, invalid input"
 expect "ids continue after the last one" "$(mcall Add s "$MODEL_JSON")" "b true"
 expect "invalid json" "$(mcall Add s 'not json')" "Call failed: Model is not valid JSON"

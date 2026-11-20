@@ -6,7 +6,7 @@ import asyncio
 import traceback
 
 from . import paths_factory
-from .file_util import write_file_atomic
+from .file_util import read_trusted_file, write_file_atomic
 from .cli.auth import check_authorization
 from .caller import MissingSenderError, query_caller_uid
 
@@ -172,8 +172,7 @@ class ManagementInterface:
 
 				enc_file = paths_factory.user_model_path(username)
 				try:
-					with open(enc_file) as datafile:
-						encodings = json.load(datafile)
+					encodings = json.loads(read_trusted_file(enc_file))
 				except FileNotFoundError:
 					encodings = []
 
@@ -200,14 +199,13 @@ class ManagementInterface:
 			enc_file = paths_factory.user_model_path(username)
 
 			try:
-				with open(enc_file) as datafile:
-					encodings = json.load(datafile)
-					for i in range(len(encodings)):
-						encodings[i] = {
-							"time": encodings[i]["time"],
-							"label": encodings[i]["label"],
-							"id": encodings[i]["id"],
-						}
+				encodings = json.loads(read_trusted_file(enc_file))
+				for i in range(len(encodings)):
+					encodings[i] = {
+						"time": encodings[i]["time"],
+						"label": encodings[i]["label"],
+						"id": encodings[i]["id"],
+					}
 			except FileNotFoundError:
 				encodings = []
 
@@ -227,8 +225,7 @@ class ManagementInterface:
 				enc_file = paths_factory.user_model_path(username)
 
 				try:
-					with open(enc_file) as datafile:
-						encodings = json.load(datafile)
+					encodings = json.loads(read_trusted_file(enc_file))
 				except FileNotFoundError:
 					raise FileNotFoundError(f"No face model known for user {username}")
 

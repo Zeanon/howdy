@@ -17,6 +17,8 @@
 
 set -euo pipefail
 export LC_ALL=C
+# The daemons only use model files that others can not write, as root creates them
+umask 022
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$TEST_DIR/../../src/cpp" && pwd)"
@@ -102,6 +104,7 @@ fi
 BASE_SOURCES=(
 	"$SRC_DIR/common/util.cc"
 	"$SRC_DIR/common/caller.cc"
+	"$SRC_DIR/common/trusted_file.cc"
 	"$SRC_DIR/common/polkit.cc"
 	"$SRC_DIR/common/management_client.cc"
 )

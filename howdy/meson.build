@@ -222,6 +222,7 @@ if build_auth_daemon or build_management_daemon or build_cli
             native_paths_h,
             'src/cpp/common/util.cc',
             'src/cpp/common/caller.cc',
+            'src/cpp/common/trusted_file.cc',
             'src/cpp/common/polkit.cc',
             'src/cpp/common/management_client.cc',
         ],
@@ -592,8 +593,12 @@ if need_py
         ]
     endif
 
-    if need_py_management
+    # Reading the models and writing them
+    if need_py_auth or need_py_management
         py_top += 'src/python/common/file_util.py'
+    endif
+
+    if need_py_management
         py_top += configure_file(
             input: 'src/python/services/howdy_management_daemon.py',
             output: 'howdy_management_daemon.py',

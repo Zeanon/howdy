@@ -1,28 +1,25 @@
 #include "user_models.hh"
 
 #include <filesystem>
-#include <fstream>
 #include <stdexcept>
 
 #include <nlohmann/json.hpp>
 
 #include "paths.hh"
+#include "trusted_file.hh"
 
 namespace howdy {
 
 std::optional<UserModels> load_user_models(const std::string& username, std::size_t encoding_size) {
 	const auto path = std::filesystem::path(paths::USER_MODELS_DIR) / (username + ".dat");
 
-	std::ifstream file(path);
-	if (!file) {
-		std::error_code ec;
-		if (!std::filesystem::exists(path, ec)) {
-			return std::nullopt;
-		}
-		throw std::runtime_error("Could not open face model file " + path.string());
+	// The models decide who is let in, so only a file that nobody else can change is used
+	const auto content = read_trusted_file(path);
+	if (!content.has_value()) {
+		return std::nullopt;
 	}
 
-	const auto models = nlohmann::json::parse(file);
+	const auto models = nlohmann::json::parse(*content);
 	if (!models.is_array()) {
 		throw std::runtime_error("Face model file " + path.string() + " does not contain a list of models");
 	}
