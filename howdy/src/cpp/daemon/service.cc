@@ -227,9 +227,10 @@ void AuthenticationService::worker_loop() {
 		const std::lock_guard<std::mutex> lock(mutex_);
 		// Cancellation takes precedence over a late result.
 		request->status = request->control.cancel.load() ? Status::Cancelled : result;
-		request->finished = Clock::now();
+		const auto finished = Clock::now();
+		request->finished = finished;
 		if (!is_privileged(request->owner_uid, true) && authenticator_.start_cooldown().count() > 0) {
-			cooldown_until_[request->owner_uid] = *request->finished + authenticator_.start_cooldown();
+			cooldown_until_[request->owner_uid] = finished + authenticator_.start_cooldown();
 		}
 		if (active_request_ == request_id) {
 			active_request_.reset();
