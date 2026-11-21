@@ -17,9 +17,9 @@ if [[ " $* " == *" --reconfigure "* ]]; then
 fi
 
 meson compile -C "$BUILD_DIR"
-meson compile -C build configure-additional-howdy-authentication-override
-meson compile -C build configure-additional-install
-meson compile -C build configure-additional-bin
+meson compile -C "$BUILD_DIR" configure-additional-howdy-authentication-override
+meson compile -C "$BUILD_DIR" configure-additional-install
+meson compile -C "$BUILD_DIR" configure-additional-bin
 
 # Reads a path from the generated paths.py (key as in paths.py), which only
 # exists when the Python part is built, otherwise from paths.hh (constant name)
@@ -53,47 +53,37 @@ sudo bash -c '
     meson install -C "$1"
 
     systemctl daemon-reload
-    if ! systemctl is-enabled --quiet howdy-authentication.service; then
-        systemctl enable --now howdy-authentication.service
+
+    systemctl enable howdy-authentication.service
+    systemctl restart howdy-authentication.service
+
+    if systemctl is-active --quiet howdy-management.service; then
+        systemctl stop howdy-management.service
     fi
 
-    if systemctl is-active --quiet howdy-authentication.service; then
-        systemctl restart howdy-authentication.service
-    else
-        systemctl start howdy-authentication.service
-    fi
-
-    systemctl stop howdy-management.service
-
-    if ! systemctl --global is-enabled --quiet howdy-auth-popup.service; then
-        systemctl --global enable howdy-auth-popup.service
-    fi
+    systemctl --global enable howdy-auth-popup.service
 ' bash "$BUILD_DIR" "$MODELS_DIR"
 
 systemctl --user daemon-reload
-if systemctl --user is-active --quiet howdy-auth-popup.service; then
-    systemctl --user restart howdy-auth-popup.service
-else
-    systemctl --user start howdy-auth-popup.service
-fi
+systemctl --user restart howdy-auth-popup.service
 
 DLIB_DIR="$(read_path dlib_data_dir DLIB_DATA_DIR)"
-DLIB_MISSING=0
+DLIB_MISSING=false
 for model in \
     dlib_face_recognition_resnet_model_v1 \
     mmod_human_face_detector \
     shape_predictor_5_face_landmarks; do
     if [ ! -f "$DLIB_DIR/$model.dat" ]; then
-        DLIB_MISSING=1
+        DLIB_MISSING=true
     fi
 done
-if [ "$DLIB_MISSING" -eq 1 ]; then
+if $DLIB_MISSING; then
     echo
     echo -e "\033[38;5;208mPlease run 'sudo $DLIB_DIR/install.sh' if you plan on using dlib\e[0m"
 fi
 
 OPENVINO_DIR="$(read_path openvino_data_dir OPENVINO_DATA_DIR)"
-OPENVINO_MISSING=0
+OPENVINO_MISSING=false
 for model in \
     face-detection-adas-0001 \
     face-reidentification-retail-0095 \
@@ -101,10 +91,10 @@ for model in \
     damo-flir \
     facial-landmarks-35-adas-0002; do
     if [ ! -f "$OPENVINO_DIR/$model.xml" ]; then
-        OPENVINO_MISSING=1
+        OPENVINO_MISSING=true
     fi
 done
-if [ "$OPENVINO_MISSING" -eq 1 ]; then
+if $OPENVINO_MISSING; then
     echo
     echo -e "\033[38;5;208mPlease run 'sudo $OPENVINO_DIR/install.sh' if you plan on using OpenVINO\e[0m"
 fi
