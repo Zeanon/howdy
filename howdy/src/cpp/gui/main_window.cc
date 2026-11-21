@@ -101,7 +101,13 @@ MainWindow::MainWindow(const std::string& glade_path) {
 	gtk_widget_set_vexpand(tree_view_, TRUE);
 	int column_index = 0;
 	for (const char* title : {S("ID"), S("Created"), S("Label")}) {
-		GtkTreeViewColumn* column = gtk_tree_view_column_new_with_attributes(title, gtk_cell_renderer_text_new(), "text", column_index++, nullptr);
+		GtkCellRenderer* renderer = gtk_cell_renderer_text_new();
+		// The IDs are set in a little. As a padding of the cell, not as a space in the text: the text is
+		// the ID that is sent to remove the model, and the daemon compares the IDs as text.
+		if (column_index == 0) {
+			g_object_set(renderer, "xpad", 6, nullptr);
+		}
+		GtkTreeViewColumn* column = gtk_tree_view_column_new_with_attributes(title, renderer, "text", column_index++, nullptr);
 		gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view_), column);
 	}
 	list_store_ = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);

@@ -103,7 +103,12 @@ class MainWindow(gtk.Window):
 
 		# Set the columns
 		for i, column in enumerate([S("ID"), S("Created"), S("Label")]):
-			col = gtk.TreeViewColumn(column, gtk.CellRendererText(), text=i)
+			renderer = gtk.CellRendererText()
+			# The IDs are set in a little. As a padding of the cell, not as a space in the text: the text is
+			# the ID that is sent to remove the model, and the daemon compares the IDs as text.
+			if i == 0:
+				renderer.set_padding(6, 0)
+			col = gtk.TreeViewColumn(column, renderer, text=i)
 			self.treeview.append_column(col)
 
 		# Add the treeview
