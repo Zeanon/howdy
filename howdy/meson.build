@@ -277,11 +277,15 @@ if build_auth_daemon or build_cli
         endif
 
         if not openvino.found()
+            # The package is only looked for, not imported: importing openvino starts its telemetry,
+            # which creates ~/intel/openvino_ga_cid in the home of whoever runs meson
             openvino_probe = run_command(
                 py, '-I', '-c',
                 '\n'.join([
-                    'import glob, os, re, openvino',
-                    'root = os.path.dirname(openvino.__file__)',
+                    'import glob, importlib.util, os, re',
+                    'spec = importlib.util.find_spec("openvino")',
+                    'if spec is None or not spec.submodule_search_locations: raise SystemExit(1)',
+                    'root = list(spec.submodule_search_locations)[0]',
                     'libs = sorted(l for l in glob.glob(os.path.join(root, "libs", "libopenvino.so*"))',
                     '              if re.fullmatch(r"libopenvino\\.so(\\.\\d+)*", os.path.basename(l)))',
                     'print(os.path.join(root, "include"))',
@@ -297,7 +301,7 @@ if build_auth_daemon or build_cli
                 openvino = declare_dependency(
                     compile_args: ['-isystem', openvino_paths[0]],
                     link_args: [openvino_lib],
-                    version: run_command(py, '-I', '-c', 'import openvino; print(openvino.__version__.split("-")[0])', check: false).stdout().strip(),
+                    version: run_command(py, '-I', '-c', 'import importlib.metadata; print(importlib.metadata.version("openvino").split("-")[0])', check: false).stdout().strip(),
                 )
                 # The wheel is not in the library search path, the daemon
                 # needs to find it at runtime
