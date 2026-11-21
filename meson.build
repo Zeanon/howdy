@@ -45,7 +45,9 @@ dlibdatadir = get_option('dlib_data_dir') != '' ? get_option('dlib_data_dir') : 
 openvinodatadir = get_option('openvino_data_dir') != '' ? get_option('openvino_data_dir') : join_paths(get_option('prefix'), get_option('datadir'), 'howdy/openvino-models')
 openvinocachedir = get_option('openvino_cache_dir') != '' ? get_option('openvino_cache_dir') : '/var/cache/howdy/openvino'
 confdir = get_option('config_dir') != '' ? get_option('config_dir') : join_paths(get_option('prefix'), get_option('sysconfdir'), 'howdy')
-usermodelsdir = get_option('user_models_dir') != '' ? get_option('user_models_dir') : join_paths(confdir, 'models')
+# The face models are data that the daemon writes, so they are kept below /var/lib, not in the configuration,
+# which is often versioned or backed up
+usermodelsdir = get_option('user_models_dir') != '' ? get_option('user_models_dir') : '/var/lib/howdy/models'
 logpath = get_option('log_path')
 installdir = get_option('install_dir') != '' ? get_option('install_dir') : join_paths(get_option('prefix'), get_option('libdir'), 'Howdy')
 pythonpath = get_option('python_path') != '' ? get_option('python_path') : join_paths(installdir, '.venv/bin/python3')

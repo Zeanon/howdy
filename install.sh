@@ -36,10 +36,10 @@ MODELS_DIR="$(read_path user_models_dir USER_MODELS_DIR)"
 sudo bash -c '
     set -e
 
-    # The face models are only readable for root, but the directory has to be
-    # searchable: the PAM module checks with stat() whether a user has a model
+    # The face models are only for root, also the directory: the PAM module
+    # asks the daemon whether a user has a model, it does not look itself
     mkdir -p "$2"
-    chmod 0711 "$2"
+    chmod 0700 "$2"
 
     rm -rf /usr/local/lib/x86_64-linux-gnu/Howdy/.venv/lib/python3.14/site-packages/howdy
     rm -rf /usr/local/lib/x86_64-linux-gnu/Howdy/.venv/lib/python3.14/site-packages/howdy-gtk

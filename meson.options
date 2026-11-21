@@ -10,7 +10,7 @@ option('pam_config_dir', type: 'string', value: '/usr/share/pam-configs', descri
 option('dlib_data_dir', type: 'string', value: '', description: 'Set the dlib data directory')
 option('openvino_data_dir', type: 'string', value: '', description: 'Set the openvino data directory')
 option('openvino_cache_dir', type: 'string', value: '', description: 'Set the dir for the openvino cache for the model blobs')
-option('user_models_dir', type: 'string', value: '', description: 'Set the user models directory')
+option('user_models_dir', type: 'string', value: '', description: 'Set the user models directory (default: /var/lib/howdy/models)')
  
 option('log_path', type: 'string', value: '/var/log/howdy', description: 'Set the log file path')
  

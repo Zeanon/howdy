@@ -61,6 +61,17 @@ else
     log_directory_setting = 'ReadWritePaths=-' + logpath
 endif
 
+# The management daemon writes the face models. Below /var/lib systemd creates the first directory (only for
+# root, also if it exists with another mode) and makes it writable, the models directory in it is created by
+# the daemon. For another path the unit may write to it if it exists.
+models_state_dir = ''
+if usermodelsdir.startswith('/var/lib/') and usermodelsdir.substring(9).strip('/') != ''
+    models_state_dir = usermodelsdir.substring(9).strip('/').split('/')[0]
+    models_directory_setting = 'StateDirectory=' + models_state_dir + '\nStateDirectoryMode=0700'
+else
+    models_directory_setting = 'ReadWritePaths=-' + usermodelsdir
+endif
+
 service_conf_data = configuration_data({
     'authentication_exec': authentication_exec,
     'management_exec': management_exec,
@@ -69,6 +80,7 @@ service_conf_data = configuration_data({
     'openvino_cache_dir': openvinocachedir,
     'log_directory_setting': log_directory_setting,
     'user_models_dir': usermodelsdir,
+    'models_directory_setting': models_directory_setting,
     'howdy_authentication_service_name': howdy_authentication_service_name,
     'authentication_bus': dbus_authentication_bus,
     'management_bus': dbus_management_bus,
@@ -819,10 +831,9 @@ if get_option('cli') == 'python'
 endif
 
 
-# The directories the units may write to. Without them a unit with ReadWritePaths= does not start
-# (status 226/NAMESPACE), so they are there after the installation: the face models of the users
-# and the cache of OpenVINO, only for root.
-install_emptydir(usermodelsdir, install_mode: 'rwx------', install_tag: 'service')
+# The directories the units may write to, only for root, there after the installation: the one of the face
+# models (below /var/lib the first directory, systemd keeps it at 0700) and the cache of OpenVINO.
+install_emptydir(models_state_dir != '' ? '/var/lib' / models_state_dir : usermodelsdir, install_mode: 'rwx------', install_tag: 'service')
 install_emptydir(openvinocachedir, install_mode: 'rwx------', install_tag: 'service')
 
 authentication_service = configure_file(

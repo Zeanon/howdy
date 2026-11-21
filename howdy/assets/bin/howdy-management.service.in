@@ -41,8 +41,8 @@ SystemCallErrorNumber=EPERM
 UMask=0077
 LockPersonality=yes
 
-# Created at the installation, the unit still starts without it
-ReadWritePaths=-@user_models_dir@
+# Where the face models are kept
+@models_directory_setting@
 
 CapabilityBoundingSet=
 AmbientCapabilities=
