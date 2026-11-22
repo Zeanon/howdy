@@ -111,6 +111,17 @@ before="$(asked)"
 out="$(COMPARE_PAUSE=2.5 COMPARE_KEEPALIVE=0.5 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 2 euclidean 0.1 0.2 0.3)"
 expect "KeepAlive pings are answered with true" "$(grep -c "keepalive True" <<< "$out")" 5
 expect "and polkit is asked once for the two calls" "$(($(asked) - before))" 1
+# A user that calls Compare too often is told to slow down, before polkit is asked
+before="$(asked)"
+out="$(COMPARE_CONCURRENT=1 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 120 euclidean 0.1 0.2 0.3)"
+limited="$(grep -c "Compare.RateLimited" <<< "$out")"
+# (not more than 120 at once: the bus lets a connection wait for 128 answers)
+if [ "$limited" -ge 40 ]; then echo "PASS  too many calls are answered with RateLimited ($limited of 120)"; else echo "FAIL  only $limited of 120 calls were limited"; failed=1; fi
+expect "the others are answered" "$(grep -c "first" <<< "$out")" "$((120 - limited))"
+if [ "$(($(asked) - before))" -le 70 ]; then echo "PASS  and polkit is not asked for the limited calls ($(($(asked) - before)) times)"; else echo "FAIL  polkit was asked $(($(asked) - before)) times"; failed=1; fi
+sleep 2.5
+out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 1 euclidean 0.1 0.2 0.3)"
+expect_contains "after a pause it is answered again" "$out" "first"
 # A refusal is not remembered, the next connection asks again
 echo deny > "$T/polkit.mode"
 before="$(asked)"
@@ -194,6 +205,11 @@ if command -v gdbus > /dev/null; then
 else
 	echo "gdbus not found, skipping the check of the error names"
 fi
+
+echo "--- the limit of the comparisons"
+CXXFLAGS+=(-I"$SRC_DIR")
+link "$T/rate_limiter_test" "$TEST_DIR/rate_limiter_test.cc"
+"$T/rate_limiter_test" || failed=1
 
 echo "--- a call that is cancelled"
 # howdy test gives its call up when the window is closed, while the daemon may wait for a polkit

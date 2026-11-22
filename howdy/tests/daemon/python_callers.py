@@ -88,6 +88,7 @@ from howdy import howdy_management_daemon as management_module  # noqa: E402
 from howdy.caller import (  # noqa: E402
 	CallerError,
 	MissingSenderError,
+	RateLimiter,
 	is_privileged,
 	may_access,
 	query_caller_uid,
@@ -429,6 +430,32 @@ class PolkitBus:
 
 asyncio.run(management())
 
+print("--- management daemon, the limit of the comparisons")
+limiter = RateLimiter(30, 60)
+check(
+	"the burst is allowed at once", sum(limiter.allow(1000, 0) for _ in range(100)), 60
+)
+check("then it is refused", limiter.allow(1000, 0), False)
+check(
+	"a refused try takes nothing: a thirtieth of a second brings one",
+	limiter.allow(1000, 0.035),
+	True,
+)
+check("and only one", limiter.allow(1000, 0.036), False)
+check(
+	"another user has a bucket of its own",
+	sum(limiter.allow(1001, 0) for _ in range(100)),
+	60,
+)
+check(
+	"after a long pause the burst is allowed, not more",
+	sum(limiter.allow(1000, 3600) for _ in range(100)),
+	60,
+)
+limiter = RateLimiter(30, 2)
+check("the burst of two", sum(limiter.allow(1, 10) for _ in range(5)), 2)
+check("a time before adds nothing", limiter.allow(1, 5), False)
+
 print("--- management daemon, comparing a face")
 from dbus_next import Message  # noqa: E402
 
@@ -628,6 +655,24 @@ async def comparing():
 			"and the other one is kept", ":1.10" in interface.compare_authorized, True
 		)
 
+		# A user that calls Compare too often is told to slow down, before polkit is asked
+		polkit_refuses = False
+		interface.compare_authorized.clear()
+		interface.compare_limiter = RateLimiter(0.0001, 2)
+		count = len(polkit_calls)
+		replies = [await compare("sad", ["euclidean", [1.0]]) for _ in range(5)]
+		check(
+			"the burst is answered and then RateLimited",
+			[reply == RATE_LIMITED_ERROR for reply in replies],
+			[False, False, True, True, True],
+		)
+		check(
+			"polkit is asked for the answered calls only", len(polkit_calls) - count, 1
+		)
+		interface.compare_limiter = RateLimiter(
+			management_module.COMPARE_RATE_PER_SECOND, management_module.COMPARE_BURST
+		)
+
 		# A refusal is not remembered
 		polkit_refuses = True
 		interface.compare_authorized.clear()
@@ -649,6 +694,7 @@ async def comparing():
 
 
 COMPARE_ERROR = management_module.COMPARE_ERROR
+RATE_LIMITED_ERROR = management_module.COMPARE_RATE_LIMITED_ERROR
 NOT_AUTHORIZED_ERROR = management_module.NOT_AUTHORIZED_ERROR
 asyncio.run(comparing())
 

@@ -26,6 +26,12 @@ class CallCancelled : public std::runtime_error {
 	}
 };
 
+// The daemon says that this user calls compare_face() too often: wait a moment and go on
+class RateLimited : public std::runtime_error {
+  public:
+	using std::runtime_error::runtime_error;
+};
+
 // Asked while a call waits for its answer, true to give the call up
 using Cancelled = std::function<bool()>;
 

@@ -21,7 +21,7 @@ them needs root, a camera or the system bus.
 The CI runs `run_trusted_file.sh`, `run_model_crypto.sh`, `run_snapshot.sh`, `run_python.sh` and the part of `run_cli.sh` that checks the management daemon over a private D-Bus with `DAEMON_ONLY=1` (with `SKIP_IMAGES=1` and the Python of the system), the rest of `run_cli.sh` and the others need
 models, a camera stand-in or a display.
 
-`DAEMON_ONLY=1 howdy/tests/daemon/run_cli.sh` runs only the management daemon over the private bus and polkit (the D-Bus API, polkit, `Compare` and `KeepAlive`, and that a call that waits for a slow polkit can be given up in a short time, see `cancel_test.cc`), without the cli, a camera stand-in, models, images or `ffmpeg` (about 15 seconds).
+`DAEMON_ONLY=1 howdy/tests/daemon/run_cli.sh` runs only the management daemon over the private bus and polkit (the D-Bus API, polkit, `Compare` and `KeepAlive`, the limit of the comparisons, and that a call that waits for a slow polkit can be given up in a short time, see `cancel_test.cc`), without the cli, a camera stand-in, models, images or `ffmpeg` (about 15 seconds).
 
 `SLOW_TESTS=1 howdy/tests/daemon/run_cli.sh` additionally runs `howdy add` with
 the real timings (about a minute) and waits for the idle timeout of the

@@ -36,6 +36,8 @@ inline constexpr const char* MANAGEMENT_LIST_ERROR = "@management_interface@.Lis
 inline constexpr const char* MANAGEMENT_REMOVE_ERROR = "@management_interface@.Remove.Error";
 inline constexpr const char* MANAGEMENT_CLEAR_ERROR = "@management_interface@.Clear.Error";
 inline constexpr const char* MANAGEMENT_COMPARE_ERROR = "@management_interface@.Compare.Error";
+// Compare is called too often by this user, the client waits a moment and goes on
+inline constexpr const char* MANAGEMENT_COMPARE_RATE_LIMITED_ERROR = "@management_interface@.Compare.RateLimited";
 inline constexpr const char* MANAGEMENT_KEEPALIVE_ERROR = "@management_interface@.KeepAlive.Error";
 
 } // namespace howdy::paths

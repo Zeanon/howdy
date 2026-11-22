@@ -167,6 +167,20 @@ int ManagementService::handle(sd_bus_message* message) {
 
 		check_caller_may_manage(caller_uid, request->username);
 
+		// A user that calls Compare too often is told to slow down, before polkit is asked (a program
+		// that does not stop would otherwise have a password prompt for every call) or a model is read
+		if (method->name == "Compare" && !compare_limiter_.allow(caller_uid, std::chrono::steady_clock::now())) {
+			const auto now = std::chrono::steady_clock::now();
+			if (now - last_rate_limit_log_ > std::chrono::minutes(1)) {
+				last_rate_limit_log_ = now;
+				log(LOG_WARNING, "Compare is called too often by the user " + std::to_string(caller_uid) + ", slowing it down");
+			}
+			reply_error(message, paths::MANAGEMENT_COMPARE_RATE_LIMITED_ERROR, "Too many comparisons, please slow down");
+			--pending_;
+			arm_idle_timer();
+			return 1;
+		}
+
 		const char* sender = sd_bus_message_get_sender(message);
 		if (sender == nullptr) {
 			throw AuthorizationError("Missing D-Bus sender");

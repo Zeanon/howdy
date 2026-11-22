@@ -8,6 +8,7 @@
 #include <systemd/sd-event.h>
 
 #include "model_store.hh"
+#include "rate_limiter.hh"
 
 namespace howdy {
 
@@ -19,6 +20,8 @@ namespace howdy {
 //   Clear()               Clear(user)        -> b
 //   Compare(metric, face) Compare(user, metric, face) -> (b found, d value, s label)
 //   KeepAlive()                                       -> b (the authorization for Compare was kept)
+//
+// Compare answers with the error ...Compare.RateLimited if a user calls it too often.
 //
 // Without a user the models of the caller are used. Every call is checked
 // against polkit on behalf of the caller. Compare is called for every frame of
@@ -46,6 +49,13 @@ class ManagementService {
 	static constexpr std::chrono::seconds COMPARE_INITIAL_KEEPALIVE{2};
 	static constexpr std::chrono::seconds COMPARE_KEEPALIVE_EXTENSION{1};
 
+	// How often a user may call Compare: howdy test makes up to ten rounds a second with a call for
+	// every face, so this is a little more than it needs. Beyond that the answer is RateLimited, before
+	// polkit is asked or a model is read. The calls of a user are counted together (not for each
+	// connection: a program can open many), and KeepAlive does not count.
+	static constexpr double COMPARE_RATE_PER_SECOND = 30;
+	static constexpr double COMPARE_BURST = 60;
+
   private:
 	struct Request;
 
@@ -65,6 +75,8 @@ class ManagementService {
 	sd_event* event_;
 	ModelStore store_;
 	std::map<std::string, std::chrono::steady_clock::time_point> compare_authorized_;
+	RateLimiter compare_limiter_{COMPARE_RATE_PER_SECOND, COMPARE_BURST};
+	std::chrono::steady_clock::time_point last_rate_limit_log_{};
 	sd_bus_slot* slot_ = nullptr;
 	sd_event_source* idle_timer_ = nullptr;
 	int pending_ = 0;

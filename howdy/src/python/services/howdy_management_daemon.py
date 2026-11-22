@@ -16,7 +16,7 @@ from .file_util import (
 	write_model_file,
 )
 from .cli.auth import check_authorization
-from .caller import MissingSenderError, may_access, query_caller_uid
+from .caller import MissingSenderError, RateLimiter, may_access, query_caller_uid
 
 from dbus_next.aio import MessageBus
 from dbus_next import Message, MessageType, BusType
@@ -36,6 +36,8 @@ REMOVE_ERROR = "@management_interface@.Remove.Error"
 CLEAR_ERROR = "@management_interface@.Clear.Error"
 COMPARE_ERROR = "@management_interface@.Compare.Error"
 KEEPALIVE_ERROR = "@management_interface@.KeepAlive.Error"
+# Compare is called too often by this user, the client waits a moment and goes on
+COMPARE_RATE_LIMITED_ERROR = "@management_interface@.Compare.RateLimited"
 
 
 POLKIT_BUS = "org.freedesktop.PolicyKit1"
@@ -55,6 +57,13 @@ IDLE_TIMEOUT = 30
 COMPARE_INITIAL_KEEPALIVE = 2
 COMPARE_KEEPALIVE_EXTENSION = 1
 
+# How often a user may call Compare: howdy test makes up to ten rounds a second with a call for
+# every face, so this is a little more than it needs. Beyond that the answer is RateLimited, before
+# polkit is asked or a model is read. The calls of a user are counted together (not for each
+# connection: a program can open many), and KeepAlive does not count.
+COMPARE_RATE_PER_SECOND = 30
+COMPARE_BURST = 60
+
 
 class NotAuthorized(Exception):
 	"""The caller may not manage the face models"""
@@ -68,6 +77,8 @@ class ManagementInterface:
 		# Bus names that were authorized for Compare, with the time it ends. A bus name
 		# is never given to a second connection, so it can be remembered safely.
 		self.compare_authorized = {}
+		self.compare_limiter = RateLimiter(COMPARE_RATE_PER_SECOND, COMPARE_BURST)
+		self.last_rate_limit_log = None
 
 		self.idle_handle = None
 		self.shutdown_event = asyncio.Event()
@@ -297,6 +308,33 @@ class ManagementInterface:
 		"""Compare a face with the models of the user, which are not given out.
 		Reply: (found, value, label)"""
 		try:
+			# A user that calls Compare too often is told to slow down, before polkit is asked
+			# (a program that does not stop would otherwise have a password prompt for every
+			# call) or a model is read
+			try:
+				caller_uid = await query_caller_uid(self.bus, msg.sender)
+			except MissingSenderError as exc:
+				raise NotAuthorized(str(exc)) from exc
+			now = time.monotonic()
+			if not self.compare_limiter.allow(caller_uid, now):
+				if (
+					self.last_rate_limit_log is None
+					or now - self.last_rate_limit_log > 60
+				):
+					self.last_rate_limit_log = now
+					syslog.syslog(
+						syslog.LOG_WARNING,
+						f"Compare is called too often by the user {caller_uid}, slowing it down",
+					)
+				self.bus.send(
+					Message.new_error(
+						msg,
+						COMPARE_RATE_LIMITED_ERROR,
+						"Too many comparisons, please slow down",
+					)
+				)
+				return
+
 			username = await self.get_caller_for_compare(msg, 2)
 			metric, face = msg.body[-2], msg.body[-1]
 

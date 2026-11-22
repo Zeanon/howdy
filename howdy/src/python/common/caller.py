@@ -3,6 +3,27 @@ import os
 from dbus_next import Message, MessageType
 
 
+class RateLimiter:
+	"""A token bucket for each key (the user id of a caller). A bucket holds up to `burst`
+	tokens and is filled `rate_per_second` tokens a second, every use takes one. The time is an
+	argument so a test does not have to wait."""
+
+	def __init__(self, rate_per_second, burst):
+		self.rate = rate_per_second
+		self.burst = burst
+		self.buckets = {}
+
+	def allow(self, key, now):
+		"""Whether the key may do it now. A refused try takes nothing."""
+		tokens, last = self.buckets.get(key, (self.burst, now))
+		tokens = min(self.burst, tokens + max(now - last, 0) * self.rate)
+		if tokens < 1:
+			self.buckets[key] = (tokens, now)
+			return False
+		self.buckets[key] = (tokens - 1, now)
+		return True
+
+
 class CallerError(RuntimeError):
 	"""The caller of a method could not be identified"""
 

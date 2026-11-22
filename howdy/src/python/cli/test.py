@@ -60,6 +60,8 @@ COMPARE_INTERVAL = 0.1
 # Without a face to compare the authorization of the connection is kept alive this often in seconds
 # (the daemon keeps it for a second after each call, like the authentication daemon does for its requests)
 KEEPALIVE_INTERVAL = 0.5
+# How long the thread waits when the daemon says that the comparisons come too often, in seconds
+RATE_LIMIT_PAUSE = 0.2
 
 
 class CompareWorker:
@@ -182,6 +184,14 @@ class CompareWorker:
 					)
 				)
 				if reply.message_type == MessageType.ERROR:
+					if (
+						reply.error_name
+						== MANAGEMENT_INTERFACE + ".Compare.RateLimited"
+					):
+						# The daemon asks to slow down: wait a moment, the faces come again
+						# with the next frames
+						time.sleep(RATE_LIMIT_PAUSE)
+						break
 					raise RuntimeError(reply.body[0])
 				timeout = 10
 				authorized = True

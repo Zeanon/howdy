@@ -47,6 +47,8 @@ constexpr std::chrono::milliseconds COMPARE_INTERVAL{100};
 // Without a face to compare the authorization of the connection is kept alive this often (the daemon
 // keeps it for a second after each call, like the authentication daemon does for its requests)
 constexpr std::chrono::milliseconds KEEPALIVE_INTERVAL{500};
+// How long the thread waits when the daemon says that the comparisons come too often
+constexpr std::chrono::milliseconds RATE_LIMIT_PAUSE{200};
 
 constexpr const char* WINDOW_NAME = "Howdy Test";
 // The video of the window is shown this much larger than the frames of the camera
@@ -176,6 +178,13 @@ class CompareWorker {
 					found = compare_face(bus_.get(), user_, metric_, encoding, timeout_usec, [this] { return stop_.load(); });
 				} catch (const CallCancelled&) {
 					return;
+				} catch (const RateLimited&) {
+					// The daemon asks to slow down: wait a moment, the faces come again with the next frames
+					std::unique_lock<std::mutex> lock(mutex_);
+					if (wake_.wait_for(lock, RATE_LIMIT_PAUSE, [this] { return stop_.load(); })) {
+						return;
+					}
+					break;
 				} catch (const std::exception& exc) {
 					const std::lock_guard<std::mutex> lock(mutex_);
 					update_.state = State::Failed;
