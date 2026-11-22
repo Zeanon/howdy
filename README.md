@@ -120,6 +120,7 @@ Building Howdy needs a C++20 compiler, the following build tools and development
 - OpenCV 4
 - dlib, BLAS and LAPACK
 - nlohmann-json
+- OpenSSL (`libssl-dev`)
 - `wget` or `curl` and `bzip2` to download the models
 - `v4l-utils` to find your IR camera (recommended)
 
@@ -128,7 +129,7 @@ On Debian/Ubuntu:
 ```
 sudo apt-get update && sudo apt-get install -y \
 	git build-essential meson ninja-build pkg-config python3 python3-venv \
-	libpam0g-dev libevdev-dev libinih-dev libsystemd-dev libgtk-3-dev \
+	libpam0g-dev libevdev-dev libinih-dev libsystemd-dev libssl-dev libgtk-3-dev \
 	libopencv-dev libdlib-dev libblas-dev liblapack-dev nlohmann-json3-dev \
 	wget bzip2 v4l-utils
 ```
@@ -185,6 +186,9 @@ The environment has to exist **before** `meson setup`, because the interpreter i
 
    # Hotkey rubber stamp of the Python authentication daemon
    sudo $VENV_PIP install keyboard
+
+   # Encryption of the face models with the Python daemons (models_key_file option)
+   sudo $VENV_PIP install cryptography
    ```
 
    Install only what you use. If you only need the OpenVINO runtime for the C++ daemon, `openvino` is enough. PyGObject loads the GTK typelibs (`gir1.2-gtk-3.0`) from the system, those are data files, not Python code. `opencv-python` ships its own OpenCV, if you only need the daemon without `howdy test` windows, `opencv-python-headless` works as well.
@@ -235,6 +239,32 @@ At the end the script tells you to run the model installers if the face models a
 
 Howdy is installed to `/usr/local/lib/<multiarch>/Howdy`, the configuration to `/usr/local/etc/howdy`, the PAM module to `/usr/lib/security` and the models to `/usr/local/share/howdy`. All of these locations can be changed, see [Build options](#build-options).
 
+### Encrypting the face models
+
+The face models are stored as plain JSON, readable only by root. If you have a TPM 2.0 you can encrypt them (AES-256-GCM). The key is a systemd credential that is sealed to the TPM, so it never lies on the disk in the clear.
+
+**What this protects against, and what not.** The key is sealed to the TPM of this computer, **without PCRs**, so it is not tied to a boot state. The encrypted files are therefore useless when they are copied to *another* computer, or if only the disk is taken out. They are **not** protected against someone who has the computer itself: whoever boots it from a USB stick and is root there can read the credential from the disk and ask the TPM to unseal it, because nothing in the TPM checks what was booted. Also not against root on the running system, or an attacker who can change the boot chain. Against theft of the whole computer, encrypt the disk with LUKS and bind it to the TPM (`systemd-cryptenroll`), then the models are protected with everything else on it.
+
+```bash
+meson setup build -Dmodels_key_file=/var/lib/howdy/models-key.cred
+sudo systemd-creds has-tpm2   # must report "yes"
+```
+
+`install.sh` creates the sealed key if it does not exist yet, and both services get it with `LoadCredentialEncrypted=`. Without the option nothing changes.
+
+- **Migration:** models that already exist are still read. `./install.sh` encrypts all plain model files at the end, when `models_key_file` is set. `./install.sh --encrypt-models` does only that, without installing. A file it can not read as models is reported and left alone (the installation goes on), one that is already encrypted is only checked, and it can be run again at any time. It works with the C++ and with the Python management daemon. Plain files that were deleted earlier can not be wiped from an SSD reliably.
+- **Authenticated:** the file format (`HWDM`, version, nonce, ciphertext, tag) authenticates the user and file name, so a file of one user can not be passed off as the file of another and nobody can add encodings without the key.
+- **Recovery key:** When `install.sh` creates the key it shows it once, as 64 hex digits (`xxxxxxxx-xxxxxxxx-…`). It is not stored anywhere, write it down and keep it away from the computer. The recovery key is the key of the models itself, so whoever has it can read the models of a copied disk.
+- **After a TPM or firmware change** the key can not be unsealed any more and the services fail to start. Seal the recovery key to the new TPM and the models are kept:
+
+```bash
+./install.sh --restore-models-key
+```
+
+  Before it is sealed, the key is checked against the encrypted model files, a wrong key is refused and nothing changes (without an encrypted file there is nothing to check against). The old credential is kept as `models-key.cred.old`. Without the recovery key the only way is to delete the models and the credential and to enroll your face anew. The password stays the fallback.
+- **Python daemons** (`-Dauth_daemon=python`, `-Dmanagement_daemon=python`) need the Python package `cryptography` in the venv (`sudo /usr/local/lib/x86_64-linux-gnu/Howdy/.venv/bin/python3 -m pip install cryptography`; if the `pip` script of the venv does not run, its first line points to an old place of the venv, `python3 -m pip` does not need it).
+- **`howdy test`** needs no access to the models: it sends each face it finds to the management daemon, which compares it with the models of the user and answers with the best value and the label. The models are not given out. As for `howdy list`, polkit asks for your password once when `howdy test` starts, before the window opens (the same password prompt as for managing the models). The daemon remembers the connection, so it does not ask polkit for every frame. That is a keep-alive like the one of the authentication daemon: the yes of polkit counts for two seconds, and every comparison and every `KeepAlive` call of `howdy test` (it sends one every half second while there is no face in the picture) extends it to one second from then. If the calls stop (the window was closed, the program died), the authorization is gone a second later, and the next call asks polkit again. `howdy test` runs as a normal user, the key stays in the daemon. The window of `howdy test` always uses X (XWayland on a Wayland session, `QT_QPA_PLATFORM=xcb`), like the other windows of Howdy (`GDK_BACKEND`), because the native Wayland window of OpenCV is slow and the video stutters. The daemon is started by D-Bus on the first call and stays for 30 seconds after the last frame.
+
 ### Models
 
 The models are not part of the repository and have to be downloaded once. The installer scripts are placed next to the models directories during installation.
@@ -268,6 +298,7 @@ Options are passed to `meson setup` (or `meson configure build`), for example `m
 | `pam_unix_path` | found automatically | Full path of `pam_unix.so`, which `pam_howdy.so` uses for the password. Empty: searched in the usual directories of the distributions |
 | `config_dir` | `<prefix>/etc/howdy` | Configuration directory |
 | `user_models_dir` | `/var/lib/howdy/models` | Where the face models are stored. They are data of the daemon and not configuration (`/etc` is often versioned or backed up), so they are not below `config_dir`. Only for root (mode `0700`), below `/var/lib` systemd creates the directory. Models of an older installation have to be moved here once |
+| `models_key_file` | empty | Encrypts the face models. The path of a [systemd credential](https://systemd.io/CREDENTIALS/) with the key, e.g. `/var/lib/howdy/models-key.cred`, which is sealed to the TPM. Empty: the models stay plain JSON. See [Encrypting the face models](#encrypting-the-face-models) |
 | `dlib_data_dir` | `<prefix>/share/howdy/dlib-models` | dlib model directory |
 | `openvino_data_dir` | `<prefix>/share/howdy/openvino-models` | OpenVINO model directory |
 | `openvino_cache_dir` | `/var/cache/howdy/openvino` | Cache for the compiled OpenVINO model blobs |
