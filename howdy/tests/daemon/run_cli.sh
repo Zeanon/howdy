@@ -359,6 +359,29 @@ if [ "$HAS_XVFB" = 1 ]; then
 	expect_missing "test compares through the daemon" "$output" "Could not compare"
 	# The cli asks before the window opens, the daemon once for the connection, not for every frame
 	expect "polkit is asked twice during the test" "$(($(asked) - asked_before))" 2
+	# The video is shown 1.5 times larger than the frames of the camera (360x480 here)
+	if command -v xwininfo > /dev/null; then
+		size="$(xvfb-run -a bash -c '"$0" test > /dev/null 2>&1 & pid=$!
+			for _ in $(seq 40); do
+				sleep 0.5
+				xwininfo -name "Howdy Test" > /dev/null 2>&1 && break
+			done
+			# The window is made small and gets its size when the first frame is shown
+			sleep 3
+			xwininfo -name "Howdy Test" 2> /dev/null | grep -E "^ +(Width|Height):"
+			kill $pid 2> /dev/null' "$HOWDY" | tr -d ' \n')"
+		width="${size#Width:}"
+		width="${width%%Height:*}"
+		height="${size##*Height:}"
+		expect "the window is 1.5 times as wide as the video" "$width" 540
+		# The window has a tool bar of Qt above the video
+		if [ "${height:-0}" -ge 720 ] && [ "${height:-0}" -lt 840 ]; then
+			echo "PASS  and as high ($height with the tool bar)"
+		else
+			echo "FAIL  the height of the window is $height, expected 720 and the tool bar"
+			failed=1
+		fi
+	fi
 	# The password is asked before the camera is opened: the polkit prompt may start a face
 	# authentication (pam_howdy), which needs the camera. So a refusal comes before any camera error.
 	write_config /dev/does-not-exist

@@ -52,6 +52,9 @@ use_openvino = config.getboolean("face_authentication", "use_openvino", fallback
 metric = "dot" if use_openvino else "euclidean"
 
 
+# The video of the window is shown this much larger than the frames of the camera
+DISPLAY_SCALE = 1.5
+
 # The shortest time in seconds between two rounds of comparisons
 COMPARE_INTERVAL = 0.1
 # Without a face to compare the authorization of the connection is kept alive this often in seconds
@@ -570,7 +573,14 @@ try:
 		gsframe = cv2.flip(cv2.cvtColor(gsframe, cv2.COLOR_GRAY2BGR), 1)
 		cv2.addWeighted(overlay, alpha, gsframe, 1 - alpha, 0, gsframe)
 
-		# Show the image in a window
+		# Show the image in a window, enlarged
+		gsframe = cv2.resize(
+			gsframe,
+			None,
+			fx=DISPLAY_SCALE,
+			fy=DISPLAY_SCALE,
+			interpolation=cv2.INTER_CUBIC,
+		)
 		cv2.imshow("Howdy Test", gsframe)
 
 		# Quit on any keypress

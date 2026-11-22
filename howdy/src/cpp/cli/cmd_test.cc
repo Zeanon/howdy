@@ -49,6 +49,8 @@ constexpr std::chrono::milliseconds COMPARE_INTERVAL{100};
 constexpr std::chrono::milliseconds KEEPALIVE_INTERVAL{500};
 
 constexpr const char* WINDOW_NAME = "Howdy Test";
+// The video of the window is shown this much larger than the frames of the camera
+constexpr double DISPLAY_SCALE = 1.5;
 
 double certainty_to_probability(double certainty) {
 	const double c = std::max(0.0, std::min(1.0, certainty));
@@ -619,7 +621,8 @@ int run_test(const Options& options) {
 		cv::flip(gsframe, gsframe, 1);
 		cv::addWeighted(overlay, alpha, gsframe, 1 - alpha, 0, gsframe);
 
-		// Show the image in a window
+		// Show the image in a window, enlarged
+		cv::resize(gsframe, gsframe, cv::Size(), DISPLAY_SCALE, DISPLAY_SCALE, cv::INTER_CUBIC);
 		cv::imshow(WINDOW_NAME, gsframe);
 
 		if (quit_requested()) {
