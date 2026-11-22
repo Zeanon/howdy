@@ -714,7 +714,11 @@ if need_py
             ),
             'src/python/cli/set.py',
             'src/python/cli/snap.py',
-            'src/python/cli/test.py',
+            configure_file(
+                input: 'src/python/cli/test.py',
+                output: 'test.py',
+                configuration: dbus_conf_data,
+            ),
         ]
     endif
 

@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <numeric>
 #include <thread>
 #include <tuple>
@@ -19,9 +24,10 @@
 #include "config.hh"
 #include "face_backend.hh"
 #include "liveness.hh"
+#include "management_client.hh"
 #include "paths.hh"
+#include "polkit.hh"
 #include "rotation.hh"
-#include "user_models.hh"
 #include "util.hh"
 #include "video_capture.hh"
 
@@ -34,6 +40,13 @@ namespace howdy::cli {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+constexpr std::uint64_t COMPARE_FRAME_TIMEOUT_USEC = 10ULL * 1000000ULL;
+// The shortest time between two rounds of comparisons
+constexpr std::chrono::milliseconds COMPARE_INTERVAL{100};
+// Without a face to compare the authorization of the connection is kept alive this often (the daemon
+// keeps it for a second after each call, like the authentication daemon does for its requests)
+constexpr std::chrono::milliseconds KEEPALIVE_INTERVAL{500};
 
 constexpr const char* WINDOW_NAME = "Howdy Test";
 
@@ -65,6 +78,134 @@ void print_text(cv::Mat& overlay, int line_number, const std::string& text) {
 	cv::putText(overlay, text, cv::Point(10, overlay.rows - 10 - (10 * line_number)), cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
 }
 
+// Compares faces with the models through the management daemon, in a thread of its own: a call
+// takes a few milliseconds and more, and a frame must not wait for it (the camera would deliver
+// the same kind of frame over and over, see the IR emitter). The newest face of every position in
+// the frame is kept, the window draws the last answer. The bus is only used by the thread after
+// the constructor.
+class CompareWorker {
+  public:
+	enum class State : std::uint8_t { Running, NoModels, Failed };
+
+	struct Update {
+		State state = State::Running;
+		std::string error;
+		// The last answer for every position in the frame
+		std::map<std::size_t, FaceMatch> matches;
+	};
+
+	CompareWorker(BusPtr bus, std::string user, std::string metric) : bus_(std::move(bus)), user_(std::move(user)), metric_(std::move(metric)) {
+		thread_ = std::thread([this] { run(); });
+	}
+
+	~CompareWorker() {
+		{
+			const std::lock_guard<std::mutex> lock(mutex_);
+			stop_ = true;
+		}
+		wake_.notify_one();
+		thread_.join();
+	}
+
+	CompareWorker(const CompareWorker&) = delete;
+	CompareWorker& operator=(const CompareWorker&) = delete;
+	CompareWorker(CompareWorker&&) = delete;
+	CompareWorker& operator=(CompareWorker&&) = delete;
+
+	// Compare the face at this position of the frame, replaces one that did not start yet
+	void submit(std::size_t slot, Encoding encoding) {
+		{
+			const std::lock_guard<std::mutex> lock(mutex_);
+			pending_[slot] = std::move(encoding);
+		}
+		wake_.notify_one();
+	}
+
+	Update update() {
+		const std::lock_guard<std::mutex> lock(mutex_);
+		return update_;
+	}
+
+  private:
+	void run() {
+		// The first call may wait for the polkit password, a frame is not to wait long for the others
+		std::uint64_t timeout_usec = POLKIT_TIMEOUT_USEC;
+		auto next_allowed = Clock::now();
+		// The daemon only keeps the authorization after a comparison
+		bool authorized = false;
+		for (;;) {
+			std::map<std::size_t, Encoding> work;
+			bool ping = false;
+			{
+				std::unique_lock<std::mutex> lock(mutex_);
+				ping = !wake_.wait_for(lock, KEEPALIVE_INTERVAL, [this] { return stop_.load() || !pending_.empty(); });
+				if (stop_) {
+					return;
+				}
+				if (!ping) {
+					// Not more often than every COMPARE_INTERVAL: the label is up to date ten times a second,
+					// and the daemon and the bus do not take the time the frames need. Faces that come in
+					// meanwhile replace the waiting ones.
+					if (wake_.wait_until(lock, next_allowed, [this] { return stop_.load(); })) {
+						return;
+					}
+					work.swap(pending_);
+				}
+			}
+
+			if (ping) {
+				// No face for a while: keep the authorization alive. A failed ping is nothing to report, the
+				// next comparison tells if the daemon is gone.
+				if (authorized) {
+					try {
+						static_cast<void>(keep_alive(bus_.get(), COMPARE_FRAME_TIMEOUT_USEC, [this] { return stop_.load(); }));
+					} catch (const CallCancelled&) {
+						return;
+					} catch (const std::exception&) { // NOLINT(bugprone-empty-catch)
+					}
+				}
+				continue;
+			}
+			next_allowed = Clock::now() + COMPARE_INTERVAL;
+
+			for (auto& [slot, encoding] : work) {
+				std::optional<FaceMatch> found;
+				try {
+					found = compare_face(bus_.get(), user_, metric_, encoding, timeout_usec, [this] { return stop_.load(); });
+				} catch (const CallCancelled&) {
+					return;
+				} catch (const std::exception& exc) {
+					const std::lock_guard<std::mutex> lock(mutex_);
+					update_.state = State::Failed;
+					update_.error = exc.what();
+					return;
+				}
+				timeout_usec = COMPARE_FRAME_TIMEOUT_USEC;
+				authorized = true;
+
+				const std::lock_guard<std::mutex> lock(mutex_);
+				if (found.has_value()) {
+					update_.matches[slot] = std::move(*found);
+				} else {
+					update_.state = State::NoModels;
+					return;
+				}
+			}
+		}
+	}
+
+	BusPtr bus_;
+	std::string user_;
+	std::string metric_;
+	std::mutex mutex_;
+	std::condition_variable wake_;
+	std::map<std::size_t, Encoding> pending_;
+	Update update_;
+	// Set under the mutex (the condition variable needs that), read without by the calls that wait
+	std::atomic<bool> stop_{false};
+	std::thread thread_;
+};
+
 // Everything the test loop needs besides the camera
 struct TestContext {
 	std::unique_ptr<FaceBackend> backend;
@@ -82,13 +223,17 @@ struct TestContext {
 	TextureDetector texture_detector;
 	SimilarityDetector similarity_detector;
 
-	UserModels models;
+	// The models are not read here, the management daemon compares the faces with them
+	BusPtr bus;
+	std::unique_ptr<CompareWorker> compare;
+	// Off if the user has no model or the daemon can not be reached
+	bool compare_enabled = true;
 };
 
 // The best match of a face encoding with the stored models
 struct Match {
 	double value = 0;
-	std::size_t index = 0;
+	std::string label;
 	double certainty = 0;
 	bool accept = false;
 };
@@ -153,15 +298,6 @@ void setup_detectors(const Config& config, TestContext& context) {
 	context.micromotion_detector.init(static_cast<int>(config.get_int("face_authentication", "micromotion_detection_buffer_size", 8)));
 	context.texture_detector.init(static_cast<int>(config.get_int("face_authentication", "texture_detection_buffer_size", 5)));
 	context.similarity_detector.init(static_cast<int>(config.get_int("face_authentication", "similarity_detection_buffer_size", 8)));
-}
-
-// The models are only readable for root
-void load_models(const Options& options, TestContext& context) {
-	try {
-		context.models = load_user_models(options.user, context.backend->encoding_size()).value_or(UserModels{});
-	} catch (const std::exception& exc) {
-		std::cout << "Could not load the face models of " << options.user << " (" << exc.what() << "), no matches will be shown\n" << '\n';
-	}
 }
 
 // Counts the frames and the frames per second
@@ -253,39 +389,38 @@ void draw_status(cv::Mat& overlay, const FrameCounter& counter, double rec_tm) {
 	}
 }
 
-// Find the stored encoding that is the closest to the face
-Match find_match(const TestContext& context, const Encoding& face_encoding) {
-	const auto& encodings = context.models.encodings;
-	Match result;
+// The best match of the face at this position of the frame, as the management daemon answered it
+// for the last frame, std::nullopt if there is none yet. If the user has no model or the daemon can
+// not be asked, the comparison is switched off.
+std::optional<Match> find_match(TestContext& context, std::size_t slot, const Encoding& face_encoding) {
+	context.compare->submit(slot, face_encoding);
 
+	const auto update = context.compare->update();
+	if (update.state == CompareWorker::State::Failed) {
+		std::cout << "Could not compare the face with the face models (" << update.error << "), no matches will be shown\n" << '\n';
+		context.compare_enabled = false;
+		return std::nullopt;
+	}
+	if (update.state == CompareWorker::State::NoModels) {
+		context.compare_enabled = false;
+		return std::nullopt;
+	}
+
+	const auto found = update.matches.find(slot);
+	if (found == update.matches.end()) {
+		return std::nullopt;
+	}
+
+	Match result;
+	result.value = found->second.value;
+	result.label = found->second.label;
 	if (context.use_openvino) {
-		result.value = -std::numeric_limits<double>::infinity();
-		for (std::size_t i = 0; i < encodings.size(); ++i) {
-			const double dot = std::inner_product(encodings[i].begin(), encodings[i].end(), face_encoding.begin(), 0.0);
-			if (dot > result.value) {
-				result.value = dot;
-				result.index = i;
-			}
-		}
 		result.certainty = certainty_to_probability(1.0 - result.value);
 		result.accept = context.video_certainty < result.value && result.value < 1;
-		return result;
+	} else {
+		result.certainty = certainty_to_probability(result.value);
+		result.accept = context.video_certainty > result.value && result.value > 0;
 	}
-
-	result.value = std::numeric_limits<double>::infinity();
-	for (std::size_t i = 0; i < encodings.size(); ++i) {
-		double sum = 0;
-		for (std::size_t k = 0; k < face_encoding.size(); ++k) {
-			const double d = encodings[i][k] - face_encoding[k];
-			sum += d * d;
-		}
-		if (std::sqrt(sum) < result.value) {
-			result.value = std::sqrt(sum);
-			result.index = i;
-		}
-	}
-	result.certainty = certainty_to_probability(result.value);
-	result.accept = context.video_certainty > result.value && result.value > 0;
 	return result;
 }
 
@@ -310,7 +445,8 @@ void print_liveness(TestContext& context, const cv::Mat& frame, const cv::Mat& g
 // Compare the face with the models of the user and print the name next to it.
 // Returns false if the face can not be encoded, the color is green for a match.
 bool label_face(
-	TestContext& context, const cv::Mat& frame, const dlib::rectangle& loc, cv::Point center, cv::Size radius, cv::Mat& overlay, cv::Scalar& color) {
+	TestContext& context, std::size_t index, const cv::Mat& frame, const dlib::rectangle& loc, cv::Point center, cv::Size radius, cv::Mat& overlay,
+	cv::Scalar& color) {
 	const auto face_encoding = context.backend->encode(frame, loc);
 	if (!face_encoding.has_value()) {
 		return false;
@@ -320,15 +456,17 @@ bool label_face(
 	std::cout << "similarity: " << fixed(similarity * 100, 3) << '\n';
 	std::cout << "stale: " << (stale ? "True" : "False") << '\n';
 
-	const Match match = find_match(context, *face_encoding);
+	const auto found = find_match(context, index, *face_encoding);
+	if (!found.has_value()) {
+		return true;
+	}
+	const Match& match = *found;
 
 	const cv::Point text_position(static_cast<int>(center.x + (radius.width / 3.0)), center.y - radius.height);
 	if (match.accept) {
 		// Turn the ellipse green and print the name of the model next to it
 		color = cv::Scalar(0, 230, 0);
-		cv::putText(
-			overlay, context.models.labels[match.index] + " (" + fixed(match.certainty, 3) + ")", text_position, cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1,
-			cv::LINE_AA);
+		cv::putText(overlay, match.label + " (" + fixed(match.certainty, 3) + ")", text_position, cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv::LINE_AA);
 	} else {
 		// If no approved matches, show red text
 		cv::putText(overlay, "no match (" + fixed(match.certainty, 3) + ")", text_position, cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv::LINE_AA);
@@ -337,7 +475,7 @@ bool label_face(
 }
 
 // Paint an ellipse around a face, with the match result if the user has models
-void draw_face(TestContext& context, const cv::Mat& frame, const cv::Mat& gsframe, const dlib::rectangle& loc, cv::Mat& overlay) {
+void draw_face(TestContext& context, std::size_t index, const cv::Mat& frame, const cv::Mat& gsframe, const dlib::rectangle& loc, cv::Mat& overlay) {
 	print_liveness(context, frame, gsframe, loc);
 
 	// By default the ellipse around the face is red for no match
@@ -354,8 +492,10 @@ void draw_face(TestContext& context, const cv::Mat& frame, const cv::Mat& gsfram
 	const cv::Size radius(static_cast<int>(half_width * 1.2), static_cast<int>(half_height * 1.2));
 
 	// If we have models defined for the current user
-	if (!context.models.encodings.empty() && !label_face(context, frame, loc, center, radius, overlay, color)) {
-		return;
+	if (context.compare_enabled) {
+		if (!label_face(context, index, frame, loc, center, radius, overlay, color)) {
+			return;
+		}
 	}
 
 	// Draw the ellipse
@@ -379,8 +519,8 @@ double scan_frame(TestContext& context, const cv::Mat& frame, const cv::Mat& gsf
 #endif
 
 	// Loop though all faces and paint an ellipse around them
-	for (const auto& loc : face_locations) {
-		draw_face(context, frame, gsframe, loc, overlay);
+	for (std::size_t index = 0; index < face_locations.size(); ++index) {
+		draw_face(context, index, frame, gsframe, face_locations[index], overlay);
 	}
 
 	std::cout << "-------------------------------------------------------" << '\n';
@@ -405,6 +545,17 @@ bool quit_requested() {
 } // namespace
 
 int run_test(const Options& options) {
+	// The window of OpenCV (Qt) is slow on a native Wayland window, the video stutters, and smooth
+	// when it runs through XWayland. Like the other windows of Howdy (GDK_BACKEND) it always uses X.
+	setenv("QT_QPA_PLATFORM", "xcb", 1);
+
+	// Ask for the password first, before the camera is opened and the window appears, and not in the
+	// middle of a frame. The polkit prompt may start a face authentication (pam_howdy), which needs the
+	// camera and fails when the camera is already in use. The management daemon asks polkit for the
+	// comparison later, on behalf of this connection, which the answer is remembered for.
+	BusPtr bus = open_system_bus();
+	authorize(bus.get(), options);
+
 	// Read config from disk
 	const Config config((std::filesystem::path(paths::CONFIG_DIR) / "config.ini").string());
 
@@ -412,6 +563,7 @@ int run_test(const Options& options) {
 
 	// Read config values to use in the main loop
 	TestContext context;
+	context.bus = std::move(bus);
 	context.video_certainty = std::round(probability_to_certainty(config.get_float("face_authentication", "certainty", 75)) * 100000) / 100000;
 	context.dark_threshold = config.get_float("video", "dark_threshold", 60);
 	context.identical_threshold = config.get_float("face_authentication", "identical_threshold", 99.75) / 100;
@@ -424,7 +576,8 @@ int run_test(const Options& options) {
 
 	setup_backend(config, options, context);
 	setup_detectors(config, context);
-	load_models(options, context);
+	// The bus is the thread's from here on
+	context.compare = std::make_unique<CompareWorker>(std::move(context.bus), options.user, context.use_openvino ? "dot" : "euclidean");
 
 	const auto clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
 

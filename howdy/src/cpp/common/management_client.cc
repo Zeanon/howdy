@@ -52,6 +52,79 @@ MessagePtr call(sd_bus* bus, const char* member, const std::vector<const std::st
 	return reply;
 }
 
+// What the callback of an asynchronous call leaves
+struct AsyncResult {
+	bool done = false;
+	MessagePtr reply;
+	std::string error;
+};
+
+int on_async_reply(sd_bus_message* reply, void* userdata, sd_bus_error* /*ret_error*/) {
+	auto* result = static_cast<AsyncResult*>(userdata);
+	if (sd_bus_message_is_method_error(reply, nullptr) != 0) {
+		const sd_bus_error* error = sd_bus_message_get_error(reply);
+		result->error = error != nullptr && error->message != nullptr ? error->message : "The call failed";
+	} else {
+		result->reply.reset(sd_bus_message_ref(reply));
+	}
+	result->done = true;
+	return 0;
+}
+
+struct SlotDeleter {
+	void operator()(sd_bus_slot* slot) const {
+		sd_bus_slot_unref(slot);
+	}
+};
+
+// Send a call and wait for the answer. With a cancelled function the call is asynchronous and
+// it is asked about every 100 ms: dropping the slot drops the answer, so a caller that has to stop
+// is not held up by a call that waits long (the daemon asking polkit for a password).
+MessagePtr send(sd_bus* bus, sd_bus_message* message, std::uint64_t timeout_usec, const Cancelled& cancelled) {
+	if (!cancelled) {
+		sd_bus_error error = SD_BUS_ERROR_NULL;
+		sd_bus_message* raw_reply = nullptr;
+		const int r = sd_bus_call(bus, message, timeout_usec, &error, &raw_reply);
+		MessagePtr reply(raw_reply);
+		if (r < 0) {
+			const std::string text = error.message != nullptr ? error.message : std::strerror(-r);
+			sd_bus_error_free(&error);
+			throw std::runtime_error(text);
+		}
+		sd_bus_error_free(&error);
+		return reply;
+	}
+
+	AsyncResult result;
+	sd_bus_slot* raw_slot = nullptr;
+	int r = sd_bus_call_async(bus, &raw_slot, message, on_async_reply, &result, timeout_usec);
+	if (r < 0) {
+		throw std::runtime_error(std::string("Failed to send the call: ") + std::strerror(-r));
+	}
+	const std::unique_ptr<sd_bus_slot, SlotDeleter> slot(raw_slot);
+
+	constexpr std::uint64_t CANCEL_CHECK_USEC = 100000;
+	while (!result.done) {
+		if (cancelled()) {
+			throw CallCancelled();
+		}
+		r = sd_bus_process(bus, nullptr);
+		if (r < 0) {
+			throw std::runtime_error(std::string("Failed to process the bus: ") + std::strerror(-r));
+		}
+		if (r == 0 && !result.done) {
+			r = sd_bus_wait(bus, CANCEL_CHECK_USEC);
+			if (r < 0) {
+				throw std::runtime_error(std::string("Failed to wait for the bus: ") + std::strerror(-r));
+			}
+		}
+	}
+	if (!result.error.empty()) {
+		throw std::runtime_error(result.error);
+	}
+	return std::move(result.reply);
+}
+
 void expect_success(const MessagePtr& reply, const char* failure) {
 	int success = 0;
 	if (sd_bus_message_read(reply.get(), "b", &success) < 0 || success == 0) {
@@ -97,8 +170,9 @@ void clear_models(sd_bus* bus, const std::string& user) {
 	expect_success(call(bus, "Clear", {&user}), "Failed to clear models");
 }
 
-std::optional<FaceMatch>
-compare_face(sd_bus* bus, const std::string& user, const std::string& metric, const std::vector<double>& encoding, std::uint64_t timeout_usec) {
+std::optional<FaceMatch> compare_face(
+	sd_bus* bus, const std::string& user, const std::string& metric, const std::vector<double>& encoding, std::uint64_t timeout_usec,
+	const Cancelled& cancelled) {
 	sd_bus_message* raw = nullptr;
 	int r = sd_bus_message_new_method_call(bus, &raw, paths::MANAGEMENT_BUS, paths::MANAGEMENT_PATH, paths::MANAGEMENT_INTERFACE, "Compare");
 	if (r < 0) {
@@ -114,16 +188,7 @@ compare_face(sd_bus* bus, const std::string& user, const std::string& metric, co
 		throw std::runtime_error(std::string("Failed to create the call: ") + std::strerror(-r));
 	}
 
-	sd_bus_error error = SD_BUS_ERROR_NULL;
-	sd_bus_message* raw_reply = nullptr;
-	r = sd_bus_call(bus, raw, timeout_usec, &error, &raw_reply);
-	const MessagePtr reply(raw_reply);
-	if (r < 0) {
-		const std::string text = error.message != nullptr ? error.message : std::strerror(-r);
-		sd_bus_error_free(&error);
-		throw std::runtime_error(text);
-	}
-	sd_bus_error_free(&error);
+	const MessagePtr reply = send(bus, raw, timeout_usec, cancelled);
 
 	int found = 0;
 	double value = 0;
@@ -137,7 +202,7 @@ compare_face(sd_bus* bus, const std::string& user, const std::string& metric, co
 	return FaceMatch{value, label};
 }
 
-bool keep_alive(sd_bus* bus, std::uint64_t timeout_usec) {
+bool keep_alive(sd_bus* bus, std::uint64_t timeout_usec, const Cancelled& cancelled) {
 	sd_bus_message* raw = nullptr;
 	int r = sd_bus_message_new_method_call(bus, &raw, paths::MANAGEMENT_BUS, paths::MANAGEMENT_PATH, paths::MANAGEMENT_INTERFACE, "KeepAlive");
 	if (r < 0) {
@@ -145,16 +210,7 @@ bool keep_alive(sd_bus* bus, std::uint64_t timeout_usec) {
 	}
 	const MessagePtr message(raw);
 
-	sd_bus_error error = SD_BUS_ERROR_NULL;
-	sd_bus_message* raw_reply = nullptr;
-	r = sd_bus_call(bus, raw, timeout_usec, &error, &raw_reply);
-	const MessagePtr reply(raw_reply);
-	if (r < 0) {
-		const std::string text = error.message != nullptr ? error.message : std::strerror(-r);
-		sd_bus_error_free(&error);
-		throw std::runtime_error(text);
-	}
-	sd_bus_error_free(&error);
+	const MessagePtr reply = send(bus, raw, timeout_usec, cancelled);
 
 	int kept = 0;
 	if (sd_bus_message_read(reply.get(), "b", &kept) < 0) {

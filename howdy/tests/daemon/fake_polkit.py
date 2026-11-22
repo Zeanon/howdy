@@ -1,7 +1,8 @@
 # A stand-in for polkit on the private test bus.
 # Usage: fake_polkit.py <mode file> <log file>
 #
-# The mode file contains allow, deny or challenge and is read on every call.
+# The mode file contains allow, deny, challenge or slow (allow after five seconds) and is read
+# on every call.
 # Every call is logged as "<bus name of the client> <action id> <flags>".
 import sys
 import asyncio
@@ -18,7 +19,7 @@ class Authority(ServiceInterface):
 		super().__init__("org.freedesktop.PolicyKit1.Authority")
 
 	@method()
-	def CheckAuthorization(
+	async def CheckAuthorization(
 		self,
 		subject: "(sa{sv})",
 		action_id: "s",
@@ -32,6 +33,11 @@ class Authority(ServiceInterface):
 
 		with open(mode_file) as mode_data:
 			mode = mode_data.read().strip()
+
+		# slow: the answer comes after a few seconds, like a user who types the password
+		if mode == "slow":
+			await asyncio.sleep(5)
+			return [True, False, {}]
 
 		# (is_authorized, is_challenge, details)
 		return [mode == "allow", mode == "challenge", {}]

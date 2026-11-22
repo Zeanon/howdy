@@ -189,6 +189,23 @@ else
 	echo "gdbus not found, skipping the check of the error names"
 fi
 
+echo "--- a call that is cancelled"
+# howdy test gives its call up when the window is closed, while the daemon may wait for a polkit
+# that asks for a password. The client has to be free in a short time.
+link "$T/cancel_test" "${BASE_SOURCES[@]}" "$TEST_DIR/cancel_test.cc"
+mcall Add s "$MODEL_JSON" > /dev/null
+echo slow > "$T/polkit.mode"
+out="$("$T/cancel_test" "$USER_NAME" cancel)"
+expect_contains "a call that waits for polkit is cancelled" "$out" "cancelled "
+ms="${out##* }"
+if [ "${ms:-99999}" -lt 1500 ]; then echo "PASS  in a short time ($ms ms, polkit needs 5000)"; else echo "FAIL  it took $ms ms"; failed=1; fi
+out="$("$T/cancel_test" "$USER_NAME" wait)"
+expect_contains "a call that is not cancelled gets its answer" "$out" "answered first "
+echo allow > "$T/polkit.mode"
+out="$("$T/cancel_test" "$USER_NAME" error)"
+expect_contains "and an error of the daemon comes through" "$out" "error Unknown metric cosine"
+mcall Clear > /dev/null
+
 echo "--- cli"
 run "$HOWDY" version
 expect "version" "$output" "Howdy test"
@@ -333,11 +350,24 @@ if [ "$HAS_XVFB" = 1 ]; then
 	mcall Add s "$MODEL_JSON" > /dev/null
 	cp "$T/genuine.dat" "$MODEL"
 	# The window never closes by itself, stop it after a few seconds
+	asked_before="$(asked)"
 	run xvfb-run -a timeout 12 "$HOWDY" test
 	expect_contains "test shows the detection" "$output" "Opening a window with a test feed"
 	expect_contains "test prints the texture" "$output" "texture: "
 	expect_contains "test prints the movement" "$output" "Micro-movement: "
 	expect_contains "test compares the face" "$output" "similarity: "
+	expect_missing "test compares through the daemon" "$output" "Could not compare"
+	# The cli asks before the window opens, the daemon once for the connection, not for every frame
+	expect "polkit is asked twice during the test" "$(($(asked) - asked_before))" 2
+	# The password is asked before the camera is opened: the polkit prompt may start a face
+	# authentication (pam_howdy), which needs the camera. So a refusal comes before any camera error.
+	write_config /dev/does-not-exist
+	echo deny > "$T/polkit.mode"
+	run xvfb-run -a timeout 12 "$HOWDY" test
+	expect_contains "test asks polkit before it opens the camera" "$output" "Authorization failed: Polkit authorization denied"
+	expect_missing "and does not look for the camera before" "$output" "camera"
+	echo allow > "$T/polkit.mode"
+	write_config "$T/still.mp4"
 	mcall Clear > /dev/null
 else
 	echo "xvfb-run not found, skipping the tests that need a display"

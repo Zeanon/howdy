@@ -1,23 +1,36 @@
 # Show a window with the video stream and testing information
 
 # Import required modules
+import os
 import cv2
 import sys
 import dlib
-import json
 import time
+import threading
+import asyncio
 import builtins
 import configparser
 
 import numpy as np
 
+from dbus_next.aio import MessageBus
+from dbus_next import Message, MessageType, BusType
+
 from ..i18n import S  # type: ignore
+from .auth import check_authorization
 from .. import paths_factory  # type: ignore
 from .. import anti_spoof_core  # type: ignore
 from ..exit_codes import CompareResult  # type: ignore
-from ..enroll_capture import flatten_models  # type: ignore
 from ..rotation import fixed_rotation, rotate_frame  # type: ignore
 from ..recorders.video_capture import VideoCapture, NoDeviceException
+
+MANAGEMENT_BUS = "@management_bus@"
+MANAGEMENT_PATH = "@management_path@"
+MANAGEMENT_INTERFACE = "@management_interface@"
+
+# The window of OpenCV (Qt) is slow on a native Wayland window, the video stutters, and smooth when
+# it runs through XWayland. Like the other windows of Howdy (GDK_BACKEND) it always uses X.
+os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 # Read config from disk
 config = configparser.ConfigParser()
@@ -30,6 +43,158 @@ if config.get("video", "recording_plugin", fallback="opencv") != "opencv":
 		)
 	)
 	sys.exit(CompareResult.InvalidDevice)
+
+# The models are not read here, the management daemon compares the faces with them. Ask for the
+# password first, before the camera is opened: the polkit prompt may start a face authentication
+# (pam_howdy), which needs the camera, and it fails when the camera is already in use.
+user = builtins.howdy_args.user
+use_openvino = config.getboolean("face_authentication", "use_openvino", fallback=False)
+metric = "dot" if use_openvino else "euclidean"
+
+
+# The shortest time in seconds between two rounds of comparisons
+COMPARE_INTERVAL = 0.1
+# Without a face to compare the authorization of the connection is kept alive this often in seconds
+# (the daemon keeps it for a second after each call, like the authentication daemon does for its requests)
+KEEPALIVE_INTERVAL = 0.5
+
+
+class CompareWorker:
+	"""Compares faces with the models through the management daemon, in a thread of its
+	own: a call takes a few milliseconds and more, and a frame must not wait for it (the
+	camera would deliver the same kind of frame over and over, see the IR emitter). The
+	newest face of every position in the frame is kept, the window draws the last answer."""
+
+	def __init__(self):
+		self.lock = threading.Lock()
+		self.wake = threading.Event()
+		self.ready = threading.Event()
+		self.stop = False
+		self.pending = {}
+		# running, no_models or failed
+		self.state = "running"
+		self.error = ""
+		self.matches = {}
+		self.authorization_error = None
+		self.thread = threading.Thread(target=self.run, daemon=True)
+		self.thread.start()
+		self.ready.wait()
+
+	def submit(self, slot, face):
+		"""Compare the face at this position of the frame, replaces one that did not start yet"""
+		with self.lock:
+			self.pending[slot] = face
+		self.wake.set()
+
+	def snapshot(self):
+		with self.lock:
+			return self.state, self.error, dict(self.matches)
+
+	def close(self):
+		with self.lock:
+			self.stop = True
+		self.wake.set()
+
+	def run(self):
+		"""The thread must never end silently: the constructor waits for ready, and a thread
+		that died would leave the window without matches and without a message"""
+		try:
+			self.serve()
+		except Exception as exc:  # noqa: BLE001
+			with self.lock:
+				if self.ready.is_set():
+					self.state = "failed"
+					self.error = str(exc) or type(exc).__name__
+				else:
+					self.authorization_error = str(exc) or type(exc).__name__
+		finally:
+			self.ready.set()
+
+	def serve(self):
+		loop = asyncio.new_event_loop()
+		# dbus-next looks for the loop of the thread
+		asyncio.set_event_loop(loop)
+		bus = loop.run_until_complete(MessageBus(bus_type=BusType.SYSTEM).connect())
+		# Ask for the password now, before the window opens, and not in the middle of a
+		# frame. The management daemon asks polkit for the comparison later on behalf of
+		# this connection, which the answer is remembered for.
+		loop.run_until_complete(
+			check_authorization(bus=bus, caller_uid=os.geteuid(), target_user=user)
+		)
+		self.ready.set()
+
+		# The first call may wait for the polkit password, a frame is not to wait long for the others
+		timeout = 300
+		next_allowed = time.monotonic()
+		# The daemon only keeps the authorization after a comparison
+		authorized = False
+		while True:
+			if not self.wake.wait(timeout=KEEPALIVE_INTERVAL):
+				# No face for a while: keep the authorization alive. A failed ping is nothing to
+				# report, the next comparison tells if the daemon is gone.
+				if authorized:
+					try:
+						loop.run_until_complete(
+							asyncio.wait_for(
+								bus.call(
+									Message(
+										destination=MANAGEMENT_BUS,
+										path=MANAGEMENT_PATH,
+										interface=MANAGEMENT_INTERFACE,
+										member="KeepAlive",
+									)
+								),
+								timeout=10,
+							)
+						)
+					except Exception:  # noqa: BLE001, S110
+						pass
+				continue
+			# Not more often than every COMPARE_INTERVAL: the label is up to date ten times a
+			# second, and the daemon and the bus do not take the time the frames need. Faces that
+			# come in meanwhile replace the waiting ones.
+			time.sleep(max(next_allowed - time.monotonic(), 0))
+			with self.lock:
+				if self.stop:
+					return
+				work, self.pending = self.pending, {}
+				self.wake.clear()
+			next_allowed = time.monotonic() + COMPARE_INTERVAL
+
+			for slot, face in work.items():
+				# An error of the call ends the thread, run() records it
+				reply = loop.run_until_complete(
+					asyncio.wait_for(
+						bus.call(
+							Message(
+								destination=MANAGEMENT_BUS,
+								path=MANAGEMENT_PATH,
+								interface=MANAGEMENT_INTERFACE,
+								member="Compare",
+								signature="ssad",
+								body=[user, metric, face],
+							)
+						),
+						timeout=timeout,
+					)
+				)
+				if reply.message_type == MessageType.ERROR:
+					raise RuntimeError(reply.body[0])
+				timeout = 10
+				authorized = True
+
+				found, value, label = reply.body
+				with self.lock:
+					if not found:
+						self.state = "no_models"
+						return
+					self.matches[slot] = (value, label)
+
+
+compare_worker = CompareWorker()
+if compare_worker.authorization_error is not None:
+	print(f"Authorization failed: {compare_worker.authorization_error}")
+	sys.exit(1)
 
 rotate = fixed_rotation(config.getint("video", "rotate", fallback=0))
 try:
@@ -102,7 +267,6 @@ def print_text(line_number, text):
 
 
 use_cnn = config.getboolean("face_authentication", "use_cnn", fallback=False)
-use_openvino = config.getboolean("face_authentication", "use_openvino", fallback=False)
 
 if use_openvino:
 	try:
@@ -148,16 +312,28 @@ else:
 texture_detector = anti_spoof_core.TextureDetector()
 similarity_detector = anti_spoof_core.SimilarityDetector()
 
-encodings = []
-models = None
+# Off if the user has no model or the daemon can not be reached
+compare_enabled = True
 
-try:
-	user = builtins.howdy_args.user
-	models = json.load(open(paths_factory.user_model_path(user)))
-	encoding_size = 256 if use_openvino else 128
-	encodings, model_owner = flatten_models(models, encoding_size)
-except FileNotFoundError:
-	pass
+
+def compare(slot, face_encoding):
+	"""(value, label) of the best match for the face at this position of the frame, as
+	the management daemon answered it for the last frame, None if there is none yet. The
+	comparison is switched off if the user has no model, and if the daemon can not be asked"""
+	global compare_enabled
+	compare_worker.submit(slot, [float(number) for number in face_encoding])
+	state, error, matches = compare_worker.snapshot()
+	if state == "failed":
+		print(
+			f"Could not compare the face with the face models ({error}), no matches will be shown\n"
+		)
+		compare_enabled = False
+		return None
+	if state == "no_models":
+		compare_enabled = False
+		return None
+	return matches.get(slot)
+
 
 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
@@ -291,7 +467,7 @@ try:
 			print(f"spoof: {round(spoof_detector(frame) * 100, 3)}%")  # Anpassen
 
 			# Loop though all faces and paint a ellipse around them
-			for loc in face_locations:
+			for slot, loc in enumerate(face_locations):
 				if use_cnn and not use_openvino:
 					loc = loc.rect
 
@@ -322,7 +498,7 @@ try:
 				r_vertical = int(half_height * 1.2)
 
 				# If we have models defined for the current user
-				if models:
+				if compare_enabled:
 					if use_openvino:
 						face_encoding = face_encoder.encode(frame, loc)
 						if face_encoding is None:
@@ -333,9 +509,10 @@ try:
 						if similarity is not None:
 							print(f"similarity: {similarity * 100:.3f}")
 						print(f"stale: {stale}")
-						matches = np.dot(np.array(encodings), face_encoding)
-						match_index = np.argmax(matches)
-						match = matches[match_index]
+						found = compare(slot, face_encoding)
+						if found is None:
+							continue
+						match, label = found
 						certainty = certainty_to_probability(1.0 - match)
 						accept = video_certainty < match < 1
 					else:
@@ -345,9 +522,10 @@ try:
 								frame, face_landmark, 1
 							)
 						)
-						matches = np.linalg.norm(encodings - face_encoding, axis=1)
-						match_index = np.argmin(matches)
-						match = matches[match_index]
+						found = compare(slot, face_encoding)
+						if found is None:
+							continue
+						match, label = found
 						certainty = certainty_to_probability(match)
 						accept = video_certainty > match > 0
 
@@ -357,7 +535,7 @@ try:
 						color = (0, 230, 0)  # BGR
 
 						# Print the name of the model next to the ellipse
-						ellipse_text = f"{models[model_owner[match_index]]['label']} ({certainty:.3f})"
+						ellipse_text = f"{label} ({certainty:.3f})"
 						cv2.putText(
 							overlay,
 							ellipse_text,
