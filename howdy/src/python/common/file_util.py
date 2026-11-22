@@ -232,4 +232,27 @@ def encrypt_all_models(directory):
 	return encrypted, already, failures
 
 
+def verify_models_key(directory, key):
+	"""Whether a key (32 bytes) decrypts the encrypted model files, used to check a
+	recovery key before it replaces the sealed one. Plain files are not looked at.
+	Returns (files that it decrypts, failures)."""
+	matching, failures = 0, []
+	try:
+		names = sorted(os.listdir(directory))
+	except FileNotFoundError:
+		return matching, failures
+	for name in names:
+		if not name.endswith(".dat"):
+			continue
+		try:
+			content = read_trusted_bytes(os.path.join(directory, name))
+			if not is_encrypted_model_file(content):
+				continue
+			decrypt_model_file(key, name[: -len(".dat")], content)
+			matching += 1
+		except (OSError, ValueError, RuntimeError) as exc:
+			failures.append(f"{name}: {exc}")
+	return matching, failures
+
+
 # </face model encryption>

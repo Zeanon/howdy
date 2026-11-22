@@ -120,6 +120,12 @@ int main(int argc, char** argv) {
 	check("a second run changes nothing", store.encrypt_all().encrypted == 0);
 	fs::remove(root / "models/dave.dat");
 
+	// The check of a recovery key
+	const auto right = store.verify_key(key);
+	check("the right key decrypts the files", right.matching == 3 && right.failures.empty());
+	const auto wrong = store.verify_key(std::string(32, 'x'));
+	check("another key is reported for each file", wrong.matching == 0 && wrong.failures.size() == 3);
+
 	// The key is gone (another TPM): refused, and never read as plain
 	unsetenv("CREDENTIALS_DIRECTORY");
 	check("without the key an encrypted file is refused", error_of([&] { (void)store.list("alice"); }).find("credential") != std::string::npos);

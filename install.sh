@@ -35,6 +35,14 @@ MODELS_DIR="$(read_path user_models_dir USER_MODELS_DIR)"
 # Empty without -Dmodels_key_file: the models are not encrypted
 MODELS_KEY_FILE="$(read_path models_key_file MODELS_KEY_FILE)"
 
+# Seals the key (64 hex digits on stdin, never as an argument) to the TPM
+seal_models_key() {
+    sudo mkdir -p "$(dirname "$MODELS_KEY_FILE")"
+    python3 -I -c 'import sys; sys.stdout.buffer.write(bytes.fromhex(sys.stdin.read().strip()))' |
+        sudo systemd-creds encrypt --with-key=tpm2 --name=models-key - "$MODELS_KEY_FILE"
+    sudo chmod 0600 "$MODELS_KEY_FILE"
+}
+
 # Encrypts the face models that are still plain JSON. The key is only handed out to
 # units, so the daemon runs as a transient one. Returns the status of the daemon.
 # The command of the management daemon as the unit starts it (the C++ binary or the
@@ -56,6 +64,31 @@ encrypt_models() {
         "${MANAGEMENT_COMMAND[@]}" --encrypt-models
 }
 
+# Does the recovery key (64 hex digits in $RECOVERY_KEY) decrypt the encrypted models? A wrong
+# key would be sealed without anybody noticing, until the models are needed. The C++ daemon
+# of this build is used, the installed one may be older and not know the check.
+verify_recovery_key() {
+    management_command
+    if [ "$(basename "${MANAGEMENT_COMMAND[0]}")" = howdy-management-daemon ]; then
+        MANAGEMENT_COMMAND=("$BUILD_DIR/howdy/howdy-management-daemon")
+    fi
+    local status=0
+    printf '%s\n' "$RECOVERY_KEY" | sudo "${MANAGEMENT_COMMAND[@]}" --verify-key || status=$?
+    case "$status" in
+        0) ;;
+        3) echo "There is nothing to check the key against, the models are not encrypted yet" ;;
+        2)
+            # An installed Python daemon that does not know the check yet
+            read -rp "The installed daemon can not check the key. Seal it anyway? [y/N] " answer
+            [[ "$answer" =~ ^[yY]$ ]] || exit 1
+            ;;
+        *)
+            echo "The recovery key does not decrypt the face models, it is not sealed. Is it the right one?" >&2
+            exit 1
+            ;;
+    esac
+}
+
 # ./install.sh --encrypt-models only does that, without installing
 if [[ " $* " == *" --encrypt-models "* ]]; then
     if [ -z "$MODELS_KEY_FILE" ] || ! sudo test -e "$MODELS_KEY_FILE"; then
@@ -64,6 +97,39 @@ if [[ " $* " == *" --encrypt-models "* ]]; then
     fi
     encrypt_models
     exit $?
+fi
+
+# The key of the model encryption. A new key is only made if there is none: with a
+# new key the encrypted models could not be read any more. The recovery key is the
+# key itself, so the models survive a TPM or firmware change (--restore-models-key)
+if [ -n "$MODELS_KEY_FILE" ]; then
+    if [[ " $* " == *" --restore-models-key "* ]]; then
+        read -rsp "Recovery key of the face models: " RECOVERY_KEY
+        echo
+        RECOVERY_KEY="$(printf '%s' "$RECOVERY_KEY" | tr -d ' -' | tr 'A-F' 'a-f')"
+        if ! [[ "$RECOVERY_KEY" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "The recovery key must be 64 hex digits" >&2
+            exit 1
+        fi
+        verify_recovery_key
+        if sudo test -e "$MODELS_KEY_FILE"; then
+            sudo mv "$MODELS_KEY_FILE" "$MODELS_KEY_FILE.old"
+            echo "The old credential was kept as $MODELS_KEY_FILE.old"
+        fi
+        printf '%s' "$RECOVERY_KEY" | seal_models_key
+        echo "The key is sealed to this TPM again"
+    elif ! sudo test -e "$MODELS_KEY_FILE"; then
+        RECOVERY_KEY="$(openssl rand -hex 32)"
+        printf '%s' "$RECOVERY_KEY" | seal_models_key
+        echo
+        echo -e "\033[38;5;208mRecovery key of the face models, write it down and keep it away from this computer.\e[0m"
+        echo "It is not stored anywhere and shown only now. Without it the models are lost"
+        echo "after a TPM or firmware change. Restore with: ./install.sh --restore-models-key"
+        echo
+        echo "    $(printf '%s' "$RECOVERY_KEY" | sed -E 's/(.{8})/\1-/g; s/-$//')"
+        echo
+    fi
+    unset RECOVERY_KEY
 fi
 
 sudo bash -c '

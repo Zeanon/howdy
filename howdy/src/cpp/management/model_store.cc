@@ -237,6 +237,38 @@ EncryptionReport ModelStore::encrypt_all() const {
 	return report;
 }
 
+KeyCheck ModelStore::verify_key(const std::string& key) const {
+	KeyCheck check;
+	std::error_code ec;
+	if (!std::filesystem::is_directory(directory_, ec)) {
+		return check;
+	}
+	std::vector<std::filesystem::path> files;
+	for (const auto& entry : std::filesystem::directory_iterator(directory_, ec)) {
+		if (entry.path().extension() == ".dat") {
+			files.push_back(entry.path());
+		}
+	}
+	if (ec) {
+		throw std::runtime_error("Could not list the models directory: " + ec.message());
+	}
+	std::ranges::sort(files);
+
+	for (const auto& path : files) {
+		try {
+			const auto content = read_trusted_file(path);
+			if (!content.has_value() || !is_encrypted_model_file(*content)) {
+				continue;
+			}
+			static_cast<void>(decrypt_model_file(key, path.stem().string(), *content));
+			++check.matching;
+		} catch (const std::exception& exc) {
+			check.failures.push_back(path.filename().string() + ": " + exc.what());
+		}
+	}
+	return check;
+}
+
 void ModelStore::clear(const std::string& username) const {
 	const auto path = path_for(username);
 

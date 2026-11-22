@@ -19,6 +19,14 @@ struct EncryptionReport {
 	std::vector<std::string> failures;
 };
 
+// What verify_key() found
+struct KeyCheck {
+	// Encrypted files that the key decrypts
+	std::size_t matching = 0;
+	// One message per encrypted file that it does not decrypt
+	std::vector<std::string> failures;
+};
+
 class ModelStore {
   public:
 	explicit ModelStore(std::filesystem::path directory);
@@ -38,6 +46,10 @@ class ModelStore {
 	// throws std::runtime_error without it. Each new file is read back before it
 	// replaces the old one, an encrypted file is only checked to be readable.
 	[[nodiscard]] EncryptionReport encrypt_all() const;
+
+	// Whether a key (32 bytes) decrypts the encrypted model files, used to check a recovery key
+	// before it replaces the sealed one. Plain files are not looked at.
+	[[nodiscard]] KeyCheck verify_key(const std::string& key) const;
 
   private:
 	[[nodiscard]] std::filesystem::path path_for(const std::string& username) const;

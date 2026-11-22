@@ -624,6 +624,7 @@ else:
 		encrypt_model_file,
 		is_encrypted_model_file,
 		read_model_file,
+		verify_models_key,
 		write_model_file,
 	)
 
@@ -767,6 +768,15 @@ else:
 		is not None,
 		True,
 	)
+	# frank.dat is the file of carol, it does not decrypt for another name
+	matching, failures = verify_models_key(MODELS, KEY)
+	check(
+		"the right key decrypts the files",
+		(matching, [f.split(":")[0] for f in failures]),
+		(2, ["frank.dat"]),
+	)
+	matching, failures = verify_models_key(MODELS, b"x" * 32)
+	check("another key is reported for each file", (matching, len(failures)), (0, 3))
 	set_key(b"short")
 	check(
 		"a key of a wrong size is refused",

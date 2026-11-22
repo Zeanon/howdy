@@ -10,6 +10,7 @@ from . import paths_factory
 from .file_util import (
 	encrypt_all_models,
 	read_model_file,
+	verify_models_key,
 	write_model_file,
 )
 from .cli.auth import check_authorization
@@ -319,10 +320,38 @@ def encrypt_models():
 	return 1 if failures else 0
 
 
+def verify_key():
+	"""--verify-key: does the key on stdin (64 hex digits) decrypt the models?
+	0 yes, 1 no, 3 nothing to check it against"""
+	try:
+		text = sys.stdin.readline().strip()
+		if len(text) != 64:
+			raise ValueError("the key must be 64 hex digits")
+		matching, failures = verify_models_key(
+			str(paths_factory.user_models_dir_path()), bytes.fromhex(text)
+		)
+	except (OSError, ValueError, RuntimeError) as exc:
+		print(f"Failed to check the key: {exc}", file=sys.stderr)
+		return 1
+	for failure in failures:
+		print(f"Does not decrypt: {failure}", file=sys.stderr)
+	if failures:
+		return 1
+	if matching == 0:
+		print("There is no encrypted model file to check the key against")
+		return 3
+	print(f"The key decrypts {matching} model file(s)")
+	return 0
+
+
 if __name__ == "__main__":
+	if sys.argv[1:] == ["--verify-key"]:
+		sys.exit(verify_key())
 	if sys.argv[1:] == ["--encrypt-models"]:
 		sys.exit(encrypt_models())
 	if len(sys.argv) != 1:
-		print(f"Usage: {sys.argv[0]} [--encrypt-models]", file=sys.stderr)
+		print(
+			f"Usage: {sys.argv[0]} [--encrypt-models | --verify-key]", file=sys.stderr
+		)
 		sys.exit(2)
 	asyncio.run(main())

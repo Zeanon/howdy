@@ -4,11 +4,14 @@
 // face models of a user. The model files are only accessible for root, polkit
 // decides who may manage the models of a user.
 
+#include <algorithm>
+#include <cctype>
 #include <csignal>
 #include <cstring>
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -53,14 +56,48 @@ int encrypt_models() {
 	}
 }
 
+// --verify-key: does the key on stdin (64 hex digits) decrypt the models? 0 yes, 1 no, 3 nothing to check it against
+int verify_key() {
+	try {
+		std::string text;
+		std::getline(std::cin, text);
+		std::string key;
+		if (text.size() != 64 || !std::ranges::all_of(text, [](unsigned char c) { return std::isxdigit(c) != 0; })) {
+			throw std::runtime_error("the key must be 64 hex digits");
+		}
+		for (std::size_t i = 0; i < text.size(); i += 2) {
+			key.push_back(static_cast<char>(std::stoi(text.substr(i, 2), nullptr, 16)));
+		}
+		const auto check = howdy::ModelStore(howdy::paths::USER_MODELS_DIR).verify_key(key);
+		for (const auto& failure : check.failures) {
+			std::cerr << "Does not decrypt: " << failure << "\n";
+		}
+		if (!check.failures.empty()) {
+			return 1;
+		}
+		if (check.matching == 0) {
+			std::cout << "There is no encrypted model file to check the key against\n";
+			return 3;
+		}
+		std::cout << "The key decrypts " << check.matching << " model file(s)\n";
+		return 0;
+	} catch (const std::exception& exc) {
+		std::cerr << "Failed to check the key: " << exc.what() << "\n";
+		return 1;
+	}
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
 	if (argc == 2 && std::string_view(argv[1]) == "--encrypt-models") {
 		return encrypt_models();
 	}
+	if (argc == 2 && std::string_view(argv[1]) == "--verify-key") {
+		return verify_key();
+	}
 	if (argc != 1) {
-		std::cerr << "Usage: " << argv[0] << " [--encrypt-models]\n";
+		std::cerr << "Usage: " << argv[0] << " [--encrypt-models | --verify-key]\n";
 		return 2;
 	}
 	openlog("howdy-management", LOG_PID, LOG_AUTH);
