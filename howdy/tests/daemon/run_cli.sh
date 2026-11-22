@@ -3,6 +3,8 @@
 # stand-in for polkit answers the authorization requests, the camera is a
 # video made from a still image. No root and no system bus access is needed.
 #
+#   DAEMON_ONLY=1  only the management daemon over the bus and polkit (no cli, no camera
+#                  stand-in, no models, no images, no ffmpeg): what the CI runs
 #   SLOW_TESTS=1   additionally runs `howdy add` with the real timings
 #                  (about a minute) and waits for the idle timeout of the
 #                  management daemon
@@ -11,15 +13,19 @@
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/bus.sh"
 
+DAEMON_ONLY="${DAEMON_ONLY:-0}"
 for tool in ffmpeg unshare; do
+	[ "$DAEMON_ONLY" = 1 ] && continue
 	command -v "$tool" > /dev/null || { echo "Missing $tool"; exit 1; }
 done
 HAS_XVFB=0
 command -v xvfb-run > /dev/null && HAS_XVFB=1
 
 link_management "$T/management"
-link_cli "$T/howdy"
-link "$T/enroll_test" "${BASE_SOURCES[@]}" "${CORE_SOURCES[@]}" "$SRC_DIR/cli/enroll_dialog.cc" "$TEST_DIR/enroll_test.cc"
+if [ "$DAEMON_ONLY" != 1 ]; then
+	link_cli "$T/howdy"
+	link "$T/enroll_test" "${BASE_SOURCES[@]}" "${CORE_SOURCES[@]}" "$SRC_DIR/cli/enroll_dialog.cc" "$TEST_DIR/enroll_test.cc"
+fi
 
 USER_NAME="$(id -un)"
 MODEL="$T/models/$USER_NAME.dat"
@@ -29,7 +35,7 @@ export TZ=UTC
 # --- Test data
 
 rm -f "$T/models"/*.dat
-make_test_videos
+[ "$DAEMON_ONLY" = 1 ] || make_test_videos
 
 write_config() {
 	"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$CONFIG_TEMPLATE" "$T/etc/config.ini" \
@@ -205,6 +211,12 @@ echo allow > "$T/polkit.mode"
 out="$("$T/cancel_test" "$USER_NAME" error)"
 expect_contains "and an error of the daemon comes through" "$out" "error Unknown metric cosine"
 mcall Clear > /dev/null
+
+if [ "$DAEMON_ONLY" = 1 ]; then
+	echo
+	[ "$failed" = 0 ] && echo "All tests passed" || echo "Some tests FAILED, logs in $T"
+	exit "$failed"
+fi
 
 echo "--- cli"
 run "$HOWDY" version
