@@ -620,6 +620,7 @@ except ImportError:
 else:
 	from howdy.file_util import (
 		decrypt_model_file,
+		encrypt_all_models,
 		encrypt_model_file,
 		is_encrypted_model_file,
 		read_model_file,
@@ -726,8 +727,32 @@ else:
 	write_model_file(os.path.join(MODELS, "erin.dat"), "erin", PLAIN.decode())
 	with open(os.path.join(MODELS, "erin.dat"), "rb") as handle:
 		check("without a key the file stays plain", handle.read(), PLAIN)
+	check(
+		"without a key nothing is encrypted",
+		"credential" in (refused(lambda: encrypt_all_models(MODELS)) or ""),
+		True,
+	)
 
 	set_key(KEY)
+	encrypted, already, failures = encrypt_all_models(MODELS)
+	check("the plain files are encrypted", (encrypted, already), (2, 0))
+	check(
+		"an invalid file is reported", [f.split(":")[0] for f in failures], ["dave.dat"]
+	)
+	with open(os.path.join(MODELS, "dave.dat"), "rb") as handle:
+		check("and it is unchanged", handle.read(), b"not json")
+	with open(os.path.join(MODELS, "carol.dat"), "rb") as handle:
+		check(
+			"the file on the disk is encrypted",
+			is_encrypted_model_file(handle.read()),
+			True,
+		)
+	check(
+		"it is read as before",
+		read_model_file(os.path.join(MODELS, "carol.dat"), "carol"),
+		PLAIN.decode(),
+	)
+	check("a second run changes nothing", encrypt_all_models(MODELS)[:2], (0, 2))
 	write_model_file(os.path.join(MODELS, "carol.dat"), "carol", PLAIN.decode())
 	with open(os.path.join(MODELS, "carol.dat"), "rb") as handle:
 		check(

@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include "model_crypto.hh"
+#include "trusted_file.hh"
 #include "util.hh"
 
 namespace howdy {
@@ -178,6 +179,62 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 	} else {
 		save(path, username, remaining);
 	}
+}
+
+EncryptionReport ModelStore::encrypt_all() const {
+	const auto key = load_models_key();
+	if (!key.has_value()) {
+		throw std::runtime_error("There is no " + std::string(MODELS_KEY_CREDENTIAL) + " credential, the models can not be encrypted");
+	}
+
+	EncryptionReport report;
+	std::error_code ec;
+	if (!std::filesystem::is_directory(directory_, ec)) {
+		return report;
+	}
+	std::vector<std::filesystem::path> files;
+	for (const auto& entry : std::filesystem::directory_iterator(directory_, ec)) {
+		if (entry.path().extension() == ".dat") {
+			files.push_back(entry.path());
+		}
+	}
+	if (ec) {
+		throw std::runtime_error("Could not list the models directory: " + ec.message());
+	}
+	std::ranges::sort(files);
+
+	for (const auto& path : files) {
+		try {
+			const std::string username = path.stem().string();
+			// Also checks the name
+			static_cast<void>(path_for(username));
+
+			// A link or a file of somebody else is refused here
+			const auto content = read_trusted_file(path);
+			if (!content.has_value()) {
+				continue;
+			}
+			if (is_encrypted_model_file(*content)) {
+				static_cast<void>(decrypt_model_file(*key, username, *content));
+				++report.already_encrypted;
+				continue;
+			}
+			// Do not encrypt what the daemons could not read
+			const auto models = nlohmann::json::parse(*content, nullptr, false);
+			if (models.is_discarded() || !models.is_array()) {
+				throw std::runtime_error("the file is invalid");
+			}
+
+			write_model_file(path, username, *content);
+			if (read_model_file(path, username) != *content) {
+				throw std::runtime_error("the encrypted file does not read back");
+			}
+			++report.encrypted;
+		} catch (const std::exception& exc) {
+			report.failures.push_back(path.filename().string() + ": " + exc.what());
+		}
+	}
+	return report;
 }
 
 void ModelStore::clear(const std::string& username) const {

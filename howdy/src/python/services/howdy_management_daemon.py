@@ -1,4 +1,5 @@
 import os
+import sys
 import pwd
 import json
 import syslog
@@ -6,7 +7,11 @@ import asyncio
 import traceback
 
 from . import paths_factory
-from .file_util import read_model_file, write_model_file
+from .file_util import (
+	encrypt_all_models,
+	read_model_file,
+	write_model_file,
+)
 from .cli.auth import check_authorization
 from .caller import MissingSenderError, query_caller_uid
 
@@ -299,5 +304,25 @@ async def main():
 	bus.disconnect()
 
 
+def encrypt_models():
+	"""--encrypt-models: encrypt the models that are still plain JSON, without the bus"""
+	try:
+		encrypted, already, failures = encrypt_all_models(
+			str(paths_factory.user_models_dir_path())
+		)
+	except (OSError, ValueError, TypeError, RuntimeError) as exc:
+		print(f"Failed to encrypt the models: {exc}", file=sys.stderr)
+		return 1
+	print(f"{encrypted} model file(s) encrypted, {already} already encrypted")
+	for failure in failures:
+		print(f"Not encrypted: {failure}", file=sys.stderr)
+	return 1 if failures else 0
+
+
 if __name__ == "__main__":
+	if sys.argv[1:] == ["--encrypt-models"]:
+		sys.exit(encrypt_models())
+	if len(sys.argv) != 1:
+		print(f"Usage: {sys.argv[0]} [--encrypt-models]", file=sys.stderr)
+		sys.exit(2)
 	asyncio.run(main())

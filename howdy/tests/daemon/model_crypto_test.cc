@@ -107,6 +107,19 @@ int main(int argc, char** argv) {
 		"remove keeps it encrypted",
 		howdy::is_encrypted_model_file(slurp(root / "models/alice.dat")) && store.list("alice").find("\"id\":0") == std::string::npos);
 
+	// The helper command: plain files are converted, the rest is left alone
+	spit(root / "models/carol.dat", plain);
+	chmod((root / "models/carol.dat").c_str(), 0600);
+	spit(root / "models/dave.dat", "not json");
+	chmod((root / "models/dave.dat").c_str(), 0600);
+	const auto report = store.encrypt_all();
+	check("a plain file is encrypted", report.encrypted == 1 && howdy::is_encrypted_model_file(slurp(root / "models/carol.dat")));
+	check("an encrypted file is counted", report.already_encrypted == 2);
+	check("an invalid file is reported and unchanged", report.failures.size() == 1 && slurp(root / "models/dave.dat") == "not json");
+	check("the encrypted file is read as before", store.list("carol").find("\"label\":\"a\"") != std::string::npos);
+	check("a second run changes nothing", store.encrypt_all().encrypted == 0);
+	fs::remove(root / "models/dave.dat");
+
 	// The key is gone (another TPM): refused, and never read as plain
 	unsetenv("CREDENTIALS_DIRECTORY");
 	check("without the key an encrypted file is refused", error_of([&] { (void)store.list("alice"); }).find("credential") != std::string::npos);
@@ -115,6 +128,9 @@ int main(int argc, char** argv) {
 	spit(root / "creds/models-key", "short");
 	chmod((root / "creds/models-key").c_str(), 0400);
 	check("a key of a wrong size is refused", error_of([&] { (void)store.list("alice"); }).find("32 bytes") != std::string::npos);
+
+	unsetenv("CREDENTIALS_DIRECTORY");
+	check("without a key nothing is encrypted", error_of([&] { (void)store.encrypt_all(); }).find("credential") != std::string::npos);
 
 	fs::remove_all(root);
 	return failed ? 1 : 0;

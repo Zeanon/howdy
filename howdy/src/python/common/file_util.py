@@ -190,4 +190,46 @@ def write_model_file(path, username, plain):
 		write_file_atomic(path, encrypt_model_file(key, username, plain.encode()))
 
 
+def encrypt_all_models(directory):
+	"""Encrypt the model files that are still plain JSON, as the C++ ModelStore does:
+	a new file is read back before it replaces the old one, an encrypted file is only
+	checked to be readable. Needs the key. Returns (encrypted, already encrypted,
+	failures), a failure is one message per file that is left unchanged."""
+	key = load_models_key()
+	if key is None:
+		raise RuntimeError(
+			f"There is no {MODELS_KEY_CREDENTIAL} credential, the models can not be encrypted"
+		)
+
+	encrypted, already, failures = 0, 0, []
+	try:
+		names = sorted(os.listdir(directory))
+	except FileNotFoundError:
+		return encrypted, already, failures
+
+	for name in names:
+		if not name.endswith(".dat"):
+			continue
+		path = os.path.join(directory, name)
+		username = name[: -len(".dat")]
+		try:
+			# A link or a file of somebody else is refused here
+			content = read_trusted_bytes(path)
+			if is_encrypted_model_file(content):
+				decrypt_model_file(key, username, content)
+				already += 1
+				continue
+			# Do not encrypt what the daemons could not read
+			if not isinstance(json.loads(content), list):
+				raise TypeError("the file is invalid")
+
+			write_model_file(path, username, content.decode())
+			if read_model_file(path, username).encode() != content:
+				raise ValueError("the encrypted file does not read back")
+			encrypted += 1
+		except (OSError, ValueError, TypeError, RuntimeError) as exc:
+			failures.append(f"{name}: {exc}")
+	return encrypted, already, failures
+
+
 # </face model encryption>

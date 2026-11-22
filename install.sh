@@ -32,6 +32,39 @@ read_path() {
 }
 
 MODELS_DIR="$(read_path user_models_dir USER_MODELS_DIR)"
+# Empty without -Dmodels_key_file: the models are not encrypted
+MODELS_KEY_FILE="$(read_path models_key_file MODELS_KEY_FILE)"
+
+# Encrypts the face models that are still plain JSON. The key is only handed out to
+# units, so the daemon runs as a transient one. Returns the status of the daemon.
+# The command of the management daemon as the unit starts it (the C++ binary or the
+# Python module), both take the same arguments. Fills MANAGEMENT_COMMAND.
+management_command() {
+    mapfile -d '' MANAGEMENT_COMMAND < <(python3 -I -c 'import shlex, sys; [sys.stdout.write(a + "\0") for a in shlex.split(sys.argv[1])]' \
+        "$(sed -n 's/^ExecStart=//p' "$BUILD_DIR/howdy/howdy-management.service")")
+    [ "${#MANAGEMENT_COMMAND[@]}" -gt 0 ]
+}
+
+encrypt_models() {
+    management_command
+    if ! command -v "${MANAGEMENT_COMMAND[0]}" > /dev/null; then
+        echo "The management daemon is not installed yet, run ./install.sh first" >&2
+        return 1
+    fi
+    sudo systemd-run --quiet --pipe --wait --collect \
+        -p "LoadCredentialEncrypted=models-key:$MODELS_KEY_FILE" -p UMask=0077 -p LimitCORE=0 \
+        "${MANAGEMENT_COMMAND[@]}" --encrypt-models
+}
+
+# ./install.sh --encrypt-models only does that, without installing
+if [[ " $* " == *" --encrypt-models "* ]]; then
+    if [ -z "$MODELS_KEY_FILE" ] || ! sudo test -e "$MODELS_KEY_FILE"; then
+        echo "There is no key credential, build with -Dmodels_key_file and run ./install.sh first" >&2
+        exit 1
+    fi
+    encrypt_models
+    exit $?
+fi
 
 sudo bash -c '
     set -e
@@ -63,6 +96,12 @@ sudo bash -c '
 
     systemctl --global enable howdy-auth-popup.service
 ' bash "$BUILD_DIR" "$MODELS_DIR"
+
+# Models of the time before the encryption are encrypted now. A failure (for example a
+# file that is not valid) is reported, but does not stop the installation
+if [ -n "$MODELS_KEY_FILE" ]; then
+    encrypt_models || echo -e "\033[38;5;208mNot all face models could be encrypted, see above\e[0m"
+fi
 
 systemctl --user daemon-reload
 systemctl --user restart howdy-auth-popup.service
