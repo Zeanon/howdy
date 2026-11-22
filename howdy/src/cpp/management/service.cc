@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "caller.hh"
 #include "paths.hh"
@@ -30,11 +31,13 @@ struct Method {
 // from other failures
 constexpr const char* NOT_AUTHORIZED_ERROR = paths::MANAGEMENT_NOT_AUTHORIZED_ERROR;
 
-constexpr std::array<Method, 4> METHODS{{
+constexpr std::array<Method, 6> METHODS{{
 	{"Add", "s", paths::MANAGEMENT_ADD_ERROR, "Failed to add face model"},
 	{"List", "", paths::MANAGEMENT_LIST_ERROR, "Failed to list face models"},
 	{"Remove", "s", paths::MANAGEMENT_REMOVE_ERROR, "Failed to remove face model"},
 	{"Clear", "", paths::MANAGEMENT_CLEAR_ERROR, "Failed to clear face models"},
+	{"Compare", "sad", paths::MANAGEMENT_COMPARE_ERROR, "Failed to compare the face"},
+	{"KeepAlive", "", paths::MANAGEMENT_KEEPALIVE_ERROR, "Failed to keep the authorization alive"},
 }};
 
 void check(int r, const char* what) {
@@ -55,6 +58,20 @@ const Method* find_method(const char* interface, const char* member) {
 	return nullptr;
 }
 
+// The array of doubles of a call
+void read_encoding(sd_bus_message* message, std::vector<double>& encoding) {
+	const void* data = nullptr;
+	std::size_t size = 0;
+	check(sd_bus_message_read_array(message, 'd', &data, &size), "Failed to read the face");
+	if (size % sizeof(double) != 0) {
+		throw std::runtime_error("Invalid face encoding");
+	}
+	encoding.resize(size / sizeof(double));
+	if (size != 0) {
+		std::memcpy(encoding.data(), data, size);
+	}
+}
+
 void reply_error(sd_bus_message* message, const char* name, const std::string& text) {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_error_set(&error, name, text.c_str());
@@ -72,6 +89,10 @@ struct ManagementService::Request {
 	std::string username;
 	// Model (Add) or id (Remove), unused for the others
 	std::string argument;
+	// Compare: the face
+	std::vector<double> encoding;
+	// The bus name of the caller, for Compare
+	std::string sender;
 };
 
 ManagementService::ManagementService(sd_bus* bus, sd_event* event, ModelStore store) : bus_(bus), event_(event), store_(std::move(store)) {
@@ -116,7 +137,7 @@ int ManagementService::handle(sd_bus_message* message) {
 	++pending_;
 	sd_event_source_set_enabled(idle_timer_, SD_EVENT_OFF);
 
-	auto request = std::make_unique<Request>(Request{this, message, method, "", ""});
+	auto request = std::make_unique<Request>(Request{this, message, method, "", "", {}, ""});
 	try {
 		if (with_user) {
 			const char* user = nullptr;
@@ -127,6 +148,9 @@ int ManagementService::handle(sd_bus_message* message) {
 			const char* argument = nullptr;
 			check(sd_bus_message_read(message, "s", &argument), "Failed to read the argument");
 			request->argument = argument;
+		}
+		if (method->name == "Compare") {
+			read_encoding(message, request->encoding);
 		}
 
 		// The caller is identified by the bus, not by what it claims
@@ -146,6 +170,27 @@ int ManagementService::handle(sd_bus_message* message) {
 		const char* sender = sd_bus_message_get_sender(message);
 		if (sender == nullptr) {
 			throw AuthorizationError("Missing D-Bus sender");
+		}
+
+		// KeepAlive only extends what polkit allowed to this connection, it allows nothing itself
+		if (method->name == "KeepAlive") {
+			request->sender = sender;
+			execute(*request);
+			--pending_;
+			arm_idle_timer();
+			return 1;
+		}
+
+		// Compare is called for every frame of howdy test: polkit is asked on the first call
+		// of a connection only, the caller was checked to be root or the user above
+		if (method->name == "Compare") {
+			request->sender = sender;
+			if (compare_authorized(request->sender)) {
+				execute(*request);
+				--pending_;
+				arm_idle_timer();
+				return 1;
+			}
 		}
 
 		sd_bus_message* call = new_check_authorization_call(bus_, sender);
@@ -177,6 +222,9 @@ int ManagementService::on_authorization(sd_bus_message* reply, void* userdata, s
 
 	try {
 		evaluate_check_authorization_reply(reply);
+		if (request->method->name == "Compare") {
+			self->remember_compare(request->sender);
+		}
 		self->execute(*request);
 	} catch (const AuthorizationError& exc) {
 		log(LOG_ERR, std::string(request->method->failure) + ": " + exc.what());
@@ -207,10 +255,43 @@ void ManagementService::execute(const Request& request) {
 	} else if (name == "Remove") {
 		store_.remove(request.username, request.argument);
 		check(sd_bus_reply_method_return(request.message, "b", 1), "Failed to send the reply");
+	} else if (name == "KeepAlive") {
+		check(sd_bus_reply_method_return(request.message, "b", compare_authorized(request.sender) ? 1 : 0), "Failed to send the reply");
+	} else if (name == "Compare") {
+		Metric metric{};
+		if (request.argument == "euclidean") {
+			metric = Metric::Euclidean;
+		} else if (request.argument == "dot") {
+			metric = Metric::Dot;
+		} else {
+			throw std::runtime_error("Unknown metric " + request.argument);
+		}
+		const auto match = store_.compare(request.username, metric, request.encoding);
+		check(
+			sd_bus_reply_method_return(
+				request.message, "bds", match.has_value() ? 1 : 0, match.has_value() ? match->value : 0.0, match.has_value() ? match->label.c_str() : ""),
+			"Failed to send the reply");
 	} else {
 		store_.clear(request.username);
 		check(sd_bus_reply_method_return(request.message, "b", 1), "Failed to send the reply");
 	}
+}
+
+bool ManagementService::compare_authorized(const std::string& sender) {
+	const auto now = std::chrono::steady_clock::now();
+	std::erase_if(compare_authorized_, [&](const auto& entry) { return entry.second < now; });
+
+	const auto found = compare_authorized_.find(sender);
+	if (found == compare_authorized_.end()) {
+		return false;
+	}
+	// Used again, so it stays
+	found->second = now + COMPARE_KEEPALIVE_EXTENSION;
+	return true;
+}
+
+void ManagementService::remember_compare(const std::string& sender) {
+	compare_authorized_[sender] = std::chrono::steady_clock::now() + COMPARE_INITIAL_KEEPALIVE;
 }
 
 void ManagementService::arm_idle_timer() {

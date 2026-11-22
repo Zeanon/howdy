@@ -1,5 +1,6 @@
 // Test of the encryption of the face model files: the format, what is refused,
 // and the ModelStore with and without the key credential.
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -119,6 +120,23 @@ int main(int argc, char** argv) {
 	check("the encrypted file is read as before", store.list("carol").find("\"label\":\"a\"") != std::string::npos);
 	check("a second run changes nothing", store.encrypt_all().encrypted == 0);
 	fs::remove(root / "models/dave.dat");
+
+	// The comparison of a face, which gives out only the best value and the label
+	const howdy::ModelStore faces(root / "faces");
+	fs::create_directories(root / "faces");
+	chmod((root / "faces").c_str(), 0700);
+	faces.add("gina", {{"time", 1}, {"label", "near"}, {"data", {{1.0, 0.0, 0.0, 0.0}, {0.0, 1.0, 0.0, 0.0}}}});
+	faces.add("gina", {{"time", 2}, {"label", "far"}, {"data", {{5.0, 5.0, 5.0, 5.0}}}});
+	faces.add("gina", {{"time", 3}, {"label", "other backend"}, {"data", {{1.0, 2.0}}}});
+	const auto euclid = faces.compare("gina", howdy::Metric::Euclidean, {0.0, 0.9, 0.0, 0.0});
+	check("the closest encoding wins", euclid.has_value() && euclid->label == "near" && std::abs(euclid->value - 0.1) < 1e-9);
+	const auto dot = faces.compare("gina", howdy::Metric::Dot, {0.0, 0.5, 0.0, 0.0});
+	check("with the dot product the largest wins", dot.has_value() && dot->label == "far" && std::abs(dot->value - 2.5) < 1e-9);
+	const auto sum = faces.compare("gina", howdy::Metric::Dot, {1.0, 1.0, 1.0, 1.0});
+	check("the dot product adds all values", sum.has_value() && sum->label == "far" && std::abs(sum->value - 20.0) < 1e-9);
+	check("models of another size are skipped", !faces.compare("gina", howdy::Metric::Euclidean, {1.0, 2.0, 3.0}).has_value());
+	check("a user without models has no match", !faces.compare("nobody", howdy::Metric::Euclidean, {1.0}).has_value());
+	check("an empty face is refused", !error_of([&] { (void)faces.compare("gina", howdy::Metric::Euclidean, {}); }).empty());
 
 	// The check of a recovery key
 	const auto right = store.verify_key(key);

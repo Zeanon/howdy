@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import errno
 import stat
 
@@ -256,3 +257,40 @@ def verify_models_key(directory, key):
 
 
 # </face model encryption>
+
+
+MAX_ENCODING_VALUES = 512
+
+
+def compare_face(models, metric, face):
+	"""The best match of a face with the models of a user, as (value, label), None if the
+	user has no encoding of that size. The metric is "euclidean" (dlib, the smaller the
+	better) or "dot" (OpenVINO, the larger the better). Models with another encoding
+	size are skipped as a whole, like flatten_models() does."""
+	if metric not in ("euclidean", "dot"):
+		raise ValueError(f"Unknown metric {metric}")
+	if not face or len(face) > MAX_ENCODING_VALUES:
+		raise ValueError("Invalid face encoding")
+
+	best = None
+	for model in models:
+		if not isinstance(model, dict):
+			continue
+		data = model.get("data")
+		if not isinstance(data, list) or not all(
+			isinstance(encoding, list)
+			and len(encoding) == len(face)
+			and all(isinstance(number, (int, float)) for number in encoding)
+			for encoding in data
+		):
+			continue
+		for encoding in data:
+			if metric == "dot":
+				value = sum(a * b for a, b in zip(encoding, face))
+				better = best is None or value > best[0]
+			else:
+				value = math.sqrt(sum((a - b) ** 2 for a, b in zip(encoding, face)))
+				better = best is None or value < best[0]
+			if better:
+				best = (value, str(model.get("label", "")))
+	return best

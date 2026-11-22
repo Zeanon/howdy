@@ -11,6 +11,7 @@ so neither a bus nor polkit is needed.
 """
 
 import asyncio
+import json
 import os
 import pwd
 import re
@@ -427,6 +428,229 @@ class PolkitBus:
 
 
 asyncio.run(management())
+
+print("--- management daemon, comparing a face")
+from dbus_next import Message  # noqa: E402
+
+from howdy import paths_factory  # noqa: E402
+from howdy.file_util import compare_face  # noqa: E402
+
+NEAR = {"label": "near", "data": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]}
+FAR = {"label": "far", "data": [[5.0, 5.0, 5.0, 5.0]]}
+OTHER_SIZE = {"label": "other backend", "data": [[1.0, 2.0]]}
+MODELS = [NEAR, FAR, OTHER_SIZE]
+
+
+def best(metric, face):
+	try:
+		return compare_face(MODELS, metric, face)
+	except ValueError as exc:
+		return str(exc)
+
+
+check("the closest encoding wins", best("euclidean", [0.0, 0.9, 0.0, 0.0])[1], "near")
+check(
+	"and its distance is given",
+	round(best("euclidean", [0.0, 0.9, 0.0, 0.0])[0], 9),
+	0.1,
+)
+check("the largest dot product wins", best("dot", [0.0, 0.5, 0.0, 0.0]), (2.5, "far"))
+check(
+	"the dot product adds all values", best("dot", [1.0, 1.0, 1.0, 1.0]), (20.0, "far")
+)
+check("models of another size are skipped", best("euclidean", [1.0, 2.0, 3.0]), None)
+check("an unknown metric is refused", best("cosine", [1.0]), "Unknown metric cosine")
+check("an empty face is refused", best("euclidean", []), "Invalid face encoding")
+
+
+class Recorder(Bus):
+	"""A bus that keeps what the daemon sends"""
+
+	def __init__(self, uids):
+		super().__init__(uids)
+		self.sent = []
+
+	def send(self, message):
+		self.sent.append(message)
+
+
+async def comparing():
+	own = pwd.getpwuid(DAEMON).pw_name
+	models_dir = os.path.join(WORK_DIR, "models")
+	shutil.rmtree(models_dir, ignore_errors=True)
+	os.makedirs(models_dir, mode=0o700)
+	os.chmod(models_dir, 0o700)
+
+	polkit_calls = []
+	polkit_refuses = False
+
+	async def polkit(**kwargs):
+		polkit_calls.append(kwargs["bus_name"])
+		if polkit_refuses:
+			raise PermissionError("Polkit authorization denied")
+
+	original = management_module.check_authorization
+	management_module.check_authorization = polkit
+
+	bus = Recorder({":1.9": DAEMON, ":1.10": DAEMON})
+	interface = management_module.ManagementInterface(bus)
+
+	async def compare(signature, body, sender=":1.9"):
+		"""The reply of Compare: its body, or the name of its error"""
+		bus.sent.clear()
+		call = Message(
+			destination="org.example.d", path="/p", interface="org.example.I", member="Compare",
+			signature=signature, body=body, sender=sender, serial=1,
+		)  # fmt: skip
+		await interface.compare(call)
+		reply = bus.sent[0]
+		if reply.message_type == MessageType.ERROR:
+			return reply.error_name
+		return reply.body
+
+	try:
+		check(
+			"a user without models has no match",
+			await compare("sad", ["euclidean", [1.0]]),
+			[False, 0.0, ""],
+		)
+
+		path = paths_factory.user_model_path(own)
+		with open(path, "w") as handle:
+			json.dump(MODELS, handle)
+		os.chmod(path, 0o600)
+
+		found = await compare("sad", ["euclidean", [0.0, 0.9, 0.0, 0.0]])
+		check(
+			"the face is compared with the own models",
+			(found[0], found[2]),
+			(True, "near"),
+		)
+		found = await compare("ssad", [own, "dot", [1.0, 1.0, 1.0, 1.0]])
+		check("with the user name", (found[0], found[1], found[2]), (True, 20.0, "far"))
+		check(
+			"the daemon skips models of another size",
+			(await compare("sad", ["euclidean", [1.0, 2.0, 3.0]]))[0],
+			False,
+		)
+		check(
+			"an unknown metric is an error",
+			await compare("sad", ["cosine", [1.0]]),
+			COMPARE_ERROR,
+		)
+		if DAEMON != 0:
+			check(
+				"the models of another user are refused",
+				await compare("ssad", ["root", "euclidean", [1.0]]),
+				NOT_AUTHORIZED_ERROR,
+			)
+
+		# Polkit is asked on the first call of a connection only
+		check(
+			"polkit is asked once for the calls of a connection",
+			polkit_calls,
+			[":1.9"] * 1,
+		)
+		await compare("sad", ["euclidean", [1.0]], sender=":1.10")
+		await compare("sad", ["euclidean", [1.0]], sender=":1.10")
+		check("another connection is asked itself", polkit_calls, [":1.9", ":1.10"])
+
+		# The remembered connection is only let in for the user it may manage
+		if DAEMON != 0:
+			check(
+				"a remembered connection may not compare the models of another user",
+				await compare("ssad", ["root", "euclidean", [1.0]]),
+				NOT_AUTHORIZED_ERROR,
+			)
+
+		# The keep-alive: two seconds after polkit said yes, then one second after each call
+		interface.compare_authorized.pop(":1.9", None)
+		await compare("sad", ["euclidean", [1.0]])
+		left = interface.compare_authorized[":1.9"] - time.monotonic()
+		check(
+			"two seconds after polkit said yes",
+			management_module.COMPARE_KEEPALIVE_EXTENSION
+			< left
+			<= management_module.COMPARE_INITIAL_KEEPALIVE,
+			True,
+		)
+		await compare("sad", ["euclidean", [1.0]])
+		check(
+			"and every call extends it to one second",
+			interface.compare_authorized[":1.9"] - time.monotonic()
+			<= management_module.COMPARE_KEEPALIVE_EXTENSION,
+			True,
+		)
+
+		async def keep_alive(sender=":1.9"):
+			bus.sent.clear()
+			call = Message(
+				destination="org.example.d",
+				path="/p",
+				interface="org.example.I",
+				member="KeepAlive",
+				sender=sender,
+				serial=1,
+			)
+			await interface.keep_alive(call)
+			return bus.sent[0].body
+
+		interface.compare_authorized[":1.9"] = time.monotonic() + 0.2
+		check(
+			"KeepAlive is kept for an authorized connection", await keep_alive(), [True]
+		)
+		check(
+			"and extends it to one second",
+			0.5
+			< interface.compare_authorized[":1.9"] - time.monotonic()
+			<= management_module.COMPARE_KEEPALIVE_EXTENSION,
+			True,
+		)
+		interface.compare_authorized[":1.9"] = time.monotonic() - 1
+		check("KeepAlive is not kept after it ran out", await keep_alive(), [False])
+		check("and does not authorize", ":1.9" in interface.compare_authorized, True)
+		del interface.compare_authorized[":1.9"]
+		check(
+			"KeepAlive of an unknown connection is not kept",
+			await keep_alive(":1.77"),
+			[False],
+		)
+		check(
+			"and does not authorize it",
+			":1.77" in interface.compare_authorized,
+			False,
+		)
+		# After the time it stays authorized without comparing, polkit is asked again
+		interface.compare_authorized[":1.9"] = time.monotonic() - 1
+		await compare("sad", ["euclidean", [1.0]])
+		check("an expired connection is asked again", polkit_calls[-1], ":1.9")
+		check(
+			"and the other one is kept", ":1.10" in interface.compare_authorized, True
+		)
+
+		# A refusal is not remembered
+		polkit_refuses = True
+		interface.compare_authorized.clear()
+		count = len(polkit_calls)
+		for _ in range(2):
+			check(
+				"a refusal by polkit",
+				await compare("sad", ["euclidean", [1.0]]),
+				NOT_AUTHORIZED_ERROR,
+			)
+		check("is asked again every time", len(polkit_calls) - count, 2)
+		check(
+			"no sender",
+			await compare("sad", ["euclidean", [1.0]], sender=None),
+			NOT_AUTHORIZED_ERROR,
+		)
+	finally:
+		management_module.check_authorization = original
+
+
+COMPARE_ERROR = management_module.COMPARE_ERROR
+NOT_AUTHORIZED_ERROR = management_module.NOT_AUTHORIZED_ERROR
+asyncio.run(comparing())
 
 print("--- retention of the snapshots")
 from howdy import paths_factory, snapshot  # noqa: E402

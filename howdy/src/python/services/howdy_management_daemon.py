@@ -1,6 +1,7 @@
 import os
 import sys
 import pwd
+import time
 import json
 import syslog
 import asyncio
@@ -8,13 +9,14 @@ import traceback
 
 from . import paths_factory
 from .file_util import (
+	compare_face,
 	encrypt_all_models,
 	read_model_file,
 	verify_models_key,
 	write_model_file,
 )
 from .cli.auth import check_authorization
-from .caller import MissingSenderError, query_caller_uid
+from .caller import MissingSenderError, may_access, query_caller_uid
 
 from dbus_next.aio import MessageBus
 from dbus_next import Message, MessageType, BusType
@@ -32,6 +34,8 @@ ADD_ERROR = "@management_interface@.Add.Error"
 LIST_ERROR = "@management_interface@.List.Error"
 REMOVE_ERROR = "@management_interface@.Remove.Error"
 CLEAR_ERROR = "@management_interface@.Clear.Error"
+COMPARE_ERROR = "@management_interface@.Compare.Error"
+KEEPALIVE_ERROR = "@management_interface@.KeepAlive.Error"
 
 
 POLKIT_BUS = "org.freedesktop.PolicyKit1"
@@ -44,6 +48,13 @@ POLKIT_ALLOW_USER_INTERACTION = 1
 
 IDLE_TIMEOUT = 30
 
+# A keep-alive like the one of the authentication daemon: a connection that polkit authorized for
+# Compare stays authorized for COMPARE_INITIAL_KEEPALIVE seconds, and every Compare or KeepAlive
+# call of the connection extends that to COMPARE_KEEPALIVE_EXTENSION seconds from then. Without a
+# call it is asked again. KeepAlive only extends what polkit allowed before, it allows nothing itself.
+COMPARE_INITIAL_KEEPALIVE = 2
+COMPARE_KEEPALIVE_EXTENSION = 1
+
 
 class NotAuthorized(Exception):
 	"""The caller may not manage the face models"""
@@ -54,6 +65,9 @@ class ManagementInterface:
 		self.bus = bus
 		self.tasks = set()
 		self.user_locks = {}
+		# Bus names that were authorized for Compare, with the time it ends. A bus name
+		# is never given to a second connection, so it can be remembered safely.
+		self.compare_authorized = {}
 
 		self.idle_handle = None
 		self.shutdown_event = asyncio.Event()
@@ -64,6 +78,8 @@ class ManagementInterface:
 			"List": ("", self.list),
 			"Remove": ("s", self.remove),
 			"Clear": ("", self.clear),
+			"Compare": ("sad", self.compare),
+			"KeepAlive": ("", self.keep_alive),
 		}
 
 	def cancel_idle_timer(self):
@@ -150,6 +166,46 @@ class ManagementInterface:
 			raise NotAuthorized(str(exc)) from exc
 		return username
 
+	async def get_caller_for_compare(self, msg, min_len):
+		"""Compare is called for every frame of howdy test, so polkit is asked on the
+		first call of a connection only. After that only root and the user are let in
+		for as long as the connection keeps comparing."""
+		now = time.monotonic()
+		self.compare_authorized = {
+			name: end for name, end in self.compare_authorized.items() if end > now
+		}
+
+		if msg.sender in self.compare_authorized:
+			username = await self.get_caller_without_polkit(msg, min_len)
+			self.compare_authorized[msg.sender] = now + COMPARE_KEEPALIVE_EXTENSION
+			return username
+
+		username = await self.get_caller(msg, min_len)
+		self.compare_authorized[msg.sender] = (
+			time.monotonic() + COMPARE_INITIAL_KEEPALIVE
+		)
+		return username
+
+	async def get_caller_without_polkit(self, msg, min_len):
+		"""Like get_caller, but only root and the user are let in, polkit is not asked"""
+		try:
+			caller_uid = await query_caller_uid(self.bus, msg.sender)
+		except MissingSenderError as exc:
+			raise NotAuthorized(str(exc)) from exc
+
+		if len(msg.body) > min_len:
+			username = msg.body[0]
+		else:
+			username = pwd.getpwuid(caller_uid).pw_name
+
+		try:
+			target_uid = pwd.getpwnam(username).pw_uid
+		except KeyError:
+			raise ValueError(f"Unknown user: {username}") from None
+		if not may_access(caller_uid, target_uid):
+			raise NotAuthorized(f"Not authorized to modify models for user {username}")
+		return username
+
 	def reply_failure(self, msg, exc, error, failure):
 		"""Log a failed call and answer it with the error of its method, a refused
 		authorization with NotAuthorized"""
@@ -220,6 +276,46 @@ class ManagementInterface:
 
 		except Exception as exc:
 			self.reply_failure(msg, exc, LIST_ERROR, "Failed to list face models")
+
+	async def keep_alive(self, msg):
+		"""Extend the authorization a connection got for Compare, see COMPARE_INITIAL_KEEPALIVE.
+		It allows nothing itself. Reply: whether the connection was still authorized"""
+		try:
+			now = time.monotonic()
+			end = self.compare_authorized.get(msg.sender)
+			kept = end is not None and end > now
+			if kept:
+				self.compare_authorized[msg.sender] = now + COMPARE_KEEPALIVE_EXTENSION
+			self.bus.send(Message.new_method_return(msg, "b", [kept]))
+
+		except Exception as exc:
+			self.reply_failure(
+				msg, exc, KEEPALIVE_ERROR, "Failed to keep the authorization alive"
+			)
+
+	async def compare(self, msg):
+		"""Compare a face with the models of the user, which are not given out.
+		Reply: (found, value, label)"""
+		try:
+			username = await self.get_caller_for_compare(msg, 2)
+			metric, face = msg.body[-2], msg.body[-1]
+
+			try:
+				models = json.loads(
+					read_model_file(paths_factory.user_model_path(username), username)
+				)
+			except FileNotFoundError:
+				models = []
+
+			if not isinstance(models, list):
+				raise TypeError("Face model file is invalid")
+
+			match = compare_face(models, metric, face)
+			body = [False, 0.0, ""] if match is None else [True, match[0], match[1]]
+			self.bus.send(Message.new_method_return(msg, "bds", body))
+
+		except Exception as exc:
+			self.reply_failure(msg, exc, COMPARE_ERROR, "Failed to compare the face")
 
 	async def remove(self, msg):
 		try:

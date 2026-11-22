@@ -1,6 +1,7 @@
 #include "model_store.hh"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
@@ -235,6 +236,51 @@ EncryptionReport ModelStore::encrypt_all() const {
 		}
 	}
 	return report;
+}
+
+std::optional<FaceMatch> ModelStore::compare(const std::string& username, Metric metric, const std::vector<double>& face) const {
+	if (face.empty() || face.size() > MAX_ENCODING_VALUES) {
+		throw std::runtime_error("Invalid face encoding");
+	}
+	const auto models = load(path_for(username), username);
+	if (!models.has_value()) {
+		return std::nullopt;
+	}
+
+	std::optional<FaceMatch> best;
+	for (const auto& model : *models) {
+		const auto data = model.find("data");
+		if (data == model.end() || !data->is_array()) {
+			continue;
+		}
+		// A model is used completely or not at all, models of the other backend have another size
+		const bool matching =
+			std::ranges::all_of(*data, [&](const nlohmann::json& encoding) { return is_number_list(encoding) && encoding.size() == face.size(); });
+		if (!matching) {
+			continue;
+		}
+		const std::string label = model.value("label", std::string());
+
+		for (const auto& encoding : *data) {
+			double value = 0;
+			if (metric == Metric::Dot) {
+				for (std::size_t k = 0; k < face.size(); ++k) {
+					value += encoding[k].get<double>() * face[k];
+				}
+			} else {
+				for (std::size_t k = 0; k < face.size(); ++k) {
+					const double difference = encoding[k].get<double>() - face[k];
+					value += difference * difference;
+				}
+				value = std::sqrt(value);
+			}
+			const bool better = !best.has_value() || (metric == Metric::Dot ? value > best->value : value < best->value);
+			if (better) {
+				best = FaceMatch{value, label};
+			}
+		}
+	}
+	return best;
 }
 
 KeyCheck ModelStore::verify_key(const std::string& key) const {

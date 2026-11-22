@@ -1,16 +1,21 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
+#include "face_match.hh"
+
 namespace howdy {
 
-// The face model file of a user: a JSON list of models, each one holding
-// "id", "time", "label" and "data", the list of stored encodings. All
-// methods throw std::runtime_error with a message fit for the user.
+// How the face is compared with the stored encodings: dlib encodings by their
+// euclidean distance (the smaller the better), OpenVINO encodings by the dot
+// product (the larger the better)
+enum class Metric { Euclidean, Dot };
+
 // What encrypt_all() did
 struct EncryptionReport {
 	std::size_t encrypted = 0;
@@ -27,6 +32,9 @@ struct KeyCheck {
 	std::vector<std::string> failures;
 };
 
+// The face model file of a user: a JSON list of models, each one holding
+// "id", "time", "label" and "data", the list of stored encodings. All
+// methods throw std::runtime_error with a message fit for the user.
 class ModelStore {
   public:
 	explicit ModelStore(std::filesystem::path directory);
@@ -46,6 +54,10 @@ class ModelStore {
 	// throws std::runtime_error without it. Each new file is read back before it
 	// replaces the old one, an encrypted file is only checked to be readable.
 	[[nodiscard]] EncryptionReport encrypt_all() const;
+
+	// Compare a face with the encodings of the user that have its size. std::nullopt if the
+	// user has none. The encodings are not given out, only the best value and the label.
+	[[nodiscard]] std::optional<FaceMatch> compare(const std::string& username, Metric metric, const std::vector<double>& face) const;
 
 	// Whether a key (32 bytes) decrypts the encrypted model files, used to check a recovery key
 	// before it replaces the sealed one. Plain files are not looked at.

@@ -77,6 +77,41 @@ expect_contains "list has the second model" "$out" 'id\":1'
 expect_contains "list has the labels" "$out" 'label\":\"second'
 expect "list without a user" "$(mcall List)" 's "[{'
 if grep -q '"data"' <<< "$out"; then echo "FAIL  list leaks the encodings"; failed=1; else echo "PASS  list does not leak the encodings"; fi
+# The daemon compares a face with the models, so that howdy test needs no access to them
+expect_contains "compare finds the closest model" "$(mcall Compare ssad "$USER_NAME" euclidean 3 0.1 0.2 0.5)" '"first"'
+expect_contains "compare gives the distance" "$(mcall Compare sad euclidean 3 0.1 0.2 0.3)" "bds true 0 \"first\""
+expect_contains "compare with the dot product takes the largest" "$(mcall Compare sad dot 3 1 1 1)" '"second"'
+expect "compare skips models of another size" "$(mcall Compare sad euclidean 2 0.1 0.2)" 'bds false 0 ""'
+expect_contains "compare refuses an unknown metric" "$(mcall Compare sad cosine 3 0.1 0.2 0.3)" "Unknown metric cosine"
+expect_contains "compare refuses an empty face" "$(mcall Compare sad euclidean 0)" "Invalid face encoding"
+expect_contains "compare for another user is refused" "$(mcall Compare ssad root euclidean 3 0.1 0.2 0.3)" "Not authorized"
+# It is called for every frame: polkit is asked on the first call of a connection only
+asked() { grep -c "org.boltgolt.howdy.Management" "$T/polkit.log" || true; }
+before="$(asked)"
+out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 4 euclidean 0.1 0.2 0.3)"
+expect "compare on one connection finds the model every time" "$(grep -c "first" <<< "$out")" 4
+expect "polkit is asked once for four calls" "$(($(asked) - before))" 1
+# The keep-alive, like the one of the authentication daemon: two seconds after polkit said yes, and
+# every call of the connection extends it to one second from then
+expect "KeepAlive of a connection that never compared is not kept" "$(mcall KeepAlive)" "b false"
+before="$(asked)"
+out="$(COMPARE_PAUSE=1.5 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 3 euclidean 0.1 0.2 0.3)"
+expect "compare finds the model after a pause" "$(grep -c "first" <<< "$out")" 3
+expect "polkit is asked again when the keep-alive ran out (two seconds, then one)" "$(($(asked) - before))" 2
+before="$(asked)"
+out="$(COMPARE_PAUSE=2.5 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 2 euclidean 0.1 0.2 0.3)"
+expect "polkit is asked again after more than two seconds without a call" "$(($(asked) - before))" 2
+before="$(asked)"
+out="$(COMPARE_PAUSE=2.5 COMPARE_KEEPALIVE=0.5 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 2 euclidean 0.1 0.2 0.3)"
+expect "KeepAlive pings are answered with true" "$(grep -c "keepalive True" <<< "$out")" 5
+expect "and polkit is asked once for the two calls" "$(($(asked) - before))" 1
+# A refusal is not remembered, the next connection asks again
+echo deny > "$T/polkit.mode"
+before="$(asked)"
+out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 3 euclidean 0.1 0.2 0.3)"
+expect "polkit can refuse compare" "$(grep -c "org.boltgolt.howdy.Management.NotAuthorized" <<< "$out")" 3
+expect "a refusal is asked again every time" "$(($(asked) - before))" 3
+echo allow > "$T/polkit.mode"
 expect "remove" "$(mcall Remove ss "$USER_NAME" 0)" "b true"
 expect_contains "removed model is gone" "$(mcall List s "$USER_NAME")" 'id\":1'
 expect "remove unknown id" "$(mcall Remove ss "$USER_NAME" 9)" "Call failed: No model with ID 9 exists for $USER_NAME"

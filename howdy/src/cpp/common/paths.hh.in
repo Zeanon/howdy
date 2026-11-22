@@ -35,5 +35,7 @@ inline constexpr const char* MANAGEMENT_ADD_ERROR = "@management_interface@.Add.
 inline constexpr const char* MANAGEMENT_LIST_ERROR = "@management_interface@.List.Error";
 inline constexpr const char* MANAGEMENT_REMOVE_ERROR = "@management_interface@.Remove.Error";
 inline constexpr const char* MANAGEMENT_CLEAR_ERROR = "@management_interface@.Clear.Error";
+inline constexpr const char* MANAGEMENT_COMPARE_ERROR = "@management_interface@.Compare.Error";
+inline constexpr const char* MANAGEMENT_KEEPALIVE_ERROR = "@management_interface@.KeepAlive.Error";
 
 } // namespace howdy::paths
