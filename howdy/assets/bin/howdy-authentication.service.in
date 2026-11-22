@@ -49,6 +49,9 @@ ReadWritePaths=-@openvino_cache_dir@
 # Where the snapshots are saved
 @log_directory_setting@
 
+# The key of the face model encryption, sealed to the TPM (empty without the option)
+@models_key_setting@
+
 CapabilityBoundingSet=
 AmbientCapabilities=
 

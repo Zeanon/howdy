@@ -612,4 +612,156 @@ check(
 	0o660,
 )
 
+print("--- encryption of the face models")
+try:
+	import cryptography  # noqa: F401
+except ImportError:
+	print("SKIP  the Python package 'cryptography' is not installed")
+else:
+	from howdy.file_util import (
+		decrypt_model_file,
+		encrypt_model_file,
+		is_encrypted_model_file,
+		read_model_file,
+		write_model_file,
+	)
+
+	KEY = b"k" * 32
+	PLAIN = b'[{"id":0}]'
+	# Made by the C++ implementation (model_crypto.cc) for the user alice, so the
+	# two implementations keep to the same format
+	CPP_FILE = bytes.fromhex(
+		"4857444d0125fa9a8ef95061bc5adc8552fab1619d3804bc6140675dbafb19344ebcc151889bc50a6ec591"
+	)
+
+	def refused(call):
+		try:
+			call()
+		except (ValueError, RuntimeError) as exc:
+			return str(exc)
+		return None
+
+	check(
+		"a file of the C++ daemon is decrypted",
+		decrypt_model_file(KEY, "alice", CPP_FILE),
+		PLAIN,
+	)
+	sealed = encrypt_model_file(KEY, "alice", PLAIN)
+	check(
+		"a file is recognized",
+		(is_encrypted_model_file(sealed), is_encrypted_model_file(PLAIN)),
+		(True, False),
+	)
+	check("no plain text in the file", b"id" in sealed, False)
+	check("it is decrypted again", decrypt_model_file(KEY, "alice", sealed), PLAIN)
+	check(
+		"the nonce is new each time",
+		encrypt_model_file(KEY, "alice", PLAIN) != sealed,
+		True,
+	)
+	check(
+		"another user is refused",
+		refused(lambda: decrypt_model_file(KEY, "bob", sealed)) is not None,
+		True,
+	)
+	check(
+		"another key is refused",
+		refused(lambda: decrypt_model_file(b"x" * 32, "alice", sealed)) is not None,
+		True,
+	)
+	changed = bytearray(sealed)
+	changed[-20] ^= 1
+	check(
+		"a changed file is refused",
+		refused(lambda: decrypt_model_file(KEY, "alice", bytes(changed))) is not None,
+		True,
+	)
+	check(
+		"a truncated file is refused",
+		refused(lambda: decrypt_model_file(KEY, "alice", sealed[:-1])) is not None,
+		True,
+	)
+	check(
+		"an unknown version is refused",
+		"version"
+		in (
+			refused(
+				lambda: decrypt_model_file(
+					KEY, "alice", sealed[:4] + b"\x02" + sealed[5:]
+				)
+			)
+			or ""
+		),
+		True,
+	)
+
+	# The files and the key credential, as a service gets them
+	CRYPTO = os.path.join(WORK_DIR, "crypto")
+	shutil.rmtree(CRYPTO, ignore_errors=True)
+	for sub in ("", "models", "creds"):
+		os.makedirs(os.path.join(CRYPTO, sub), exist_ok=True)
+		os.chmod(os.path.join(CRYPTO, sub), 0o700)
+	MODELS = os.path.join(CRYPTO, "models")
+
+	def put(path, content):
+		with open(path, "wb") as handle:
+			handle.write(content)
+		os.chmod(path, 0o600)
+
+	def set_key(key):
+		path = os.path.join(CRYPTO, "creds", "models-key")
+		if os.path.exists(path):
+			os.chmod(path, 0o600)
+		put(path, key)
+		os.environ["CREDENTIALS_DIRECTORY"] = os.path.join(CRYPTO, "creds")
+
+	os.environ.pop("CREDENTIALS_DIRECTORY", None)
+	put(os.path.join(MODELS, "carol.dat"), PLAIN)
+	put(os.path.join(MODELS, "dave.dat"), b"not json")
+	check(
+		"without a key a plain file is read",
+		read_model_file(os.path.join(MODELS, "carol.dat"), "carol"),
+		PLAIN.decode(),
+	)
+	write_model_file(os.path.join(MODELS, "erin.dat"), "erin", PLAIN.decode())
+	with open(os.path.join(MODELS, "erin.dat"), "rb") as handle:
+		check("without a key the file stays plain", handle.read(), PLAIN)
+
+	set_key(KEY)
+	write_model_file(os.path.join(MODELS, "carol.dat"), "carol", PLAIN.decode())
+	with open(os.path.join(MODELS, "carol.dat"), "rb") as handle:
+		check(
+			"with a key a file is written encrypted",
+			is_encrypted_model_file(handle.read()),
+			True,
+		)
+	shutil.copy(os.path.join(MODELS, "carol.dat"), os.path.join(MODELS, "frank.dat"))
+	check(
+		"the file of another user is refused",
+		refused(lambda: read_model_file(os.path.join(MODELS, "frank.dat"), "frank"))
+		is not None,
+		True,
+	)
+	set_key(b"short")
+	check(
+		"a key of a wrong size is refused",
+		"32 bytes"
+		in (
+			refused(lambda: read_model_file(os.path.join(MODELS, "carol.dat"), "carol"))
+			or ""
+		),
+		True,
+	)
+	os.environ.pop("CREDENTIALS_DIRECTORY", None)
+	check(
+		"without the key an encrypted file is refused",
+		"credential"
+		in (
+			refused(lambda: read_model_file(os.path.join(MODELS, "carol.dat"), "carol"))
+			or ""
+		),
+		True,
+	)
+
+
 sys.exit(1 if failed else 0)

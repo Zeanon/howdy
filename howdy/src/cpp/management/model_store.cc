@@ -7,7 +7,7 @@
 
 #include <sys/stat.h>
 
-#include "trusted_file.hh"
+#include "model_crypto.hh"
 #include "util.hh"
 
 namespace howdy {
@@ -18,7 +18,6 @@ namespace {
 // face model. The PAM module does not look for the model itself, it asks the
 // daemon, which runs as root.
 constexpr mode_t MODELS_DIR_MODE = 0700;
-constexpr mode_t MODEL_FILE_MODE = 0600;
 
 // A user may only fill so much of the disk of root. The limits are far above
 // what howdy needs: a model has up to 13 encodings with 128 (dlib) or 256
@@ -64,8 +63,8 @@ void validate_new_model(const nlohmann::json& model) {
 }
 
 // std::nullopt if the user has no models
-std::optional<nlohmann::json> load(const std::filesystem::path& path) {
-	const auto content = read_trusted_file(path);
+std::optional<nlohmann::json> load(const std::filesystem::path& path, const std::string& username) {
+	const auto content = read_model_file(path, username);
 	if (!content.has_value()) {
 		return std::nullopt;
 	}
@@ -82,8 +81,8 @@ std::optional<nlohmann::json> load(const std::filesystem::path& path) {
 	return models;
 }
 
-void save(const std::filesystem::path& path, const nlohmann::json& models) {
-	write_file_atomic(path, models.dump(), MODEL_FILE_MODE);
+void save(const std::filesystem::path& path, const std::string& username, const nlohmann::json& models) {
+	write_model_file(path, username, models.dump());
 }
 
 } // namespace
@@ -115,7 +114,7 @@ void ModelStore::add(const std::string& username, nlohmann::json model) const {
 	// Also for a directory of an older version that others could search
 	chmod(directory_.c_str(), MODELS_DIR_MODE);
 
-	auto models = load(path).value_or(nlohmann::json::array());
+	auto models = load(path, username).value_or(nlohmann::json::array());
 	if (models.size() >= MAX_MODELS_PER_USER) {
 		throw std::runtime_error("Too many face models, please remove one first");
 	}
@@ -131,11 +130,11 @@ void ModelStore::add(const std::string& username, nlohmann::json model) const {
 	model["id"] = id;
 
 	models.push_back(std::move(model));
-	save(path, models);
+	save(path, username, models);
 }
 
 std::string ModelStore::list(const std::string& username) const {
-	const auto models = load(path_for(username));
+	const auto models = load(path_for(username), username);
 
 	auto result = nlohmann::json::array();
 	if (models.has_value()) {
@@ -151,7 +150,7 @@ std::string ModelStore::list(const std::string& username) const {
 
 void ModelStore::remove(const std::string& username, const std::string& model_id) const {
 	const auto path = path_for(username);
-	const auto models = load(path);
+	const auto models = load(path, username);
 	if (!models.has_value()) {
 		throw std::runtime_error("No face model known for user " + username);
 	}
@@ -177,7 +176,7 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 			throw std::runtime_error("Could not remove the face model file: " + ec.message());
 		}
 	} else {
-		save(path, remaining);
+		save(path, username, remaining);
 	}
 }
 

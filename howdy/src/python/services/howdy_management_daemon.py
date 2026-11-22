@@ -6,7 +6,7 @@ import asyncio
 import traceback
 
 from . import paths_factory
-from .file_util import read_trusted_file, write_file_atomic
+from .file_util import read_model_file, write_model_file
 from .cli.auth import check_authorization
 from .caller import MissingSenderError, query_caller_uid
 
@@ -173,7 +173,7 @@ class ManagementInterface:
 
 				enc_file = paths_factory.user_model_path(username)
 				try:
-					encodings = json.loads(read_trusted_file(enc_file))
+					encodings = json.loads(read_model_file(enc_file, username))
 				except FileNotFoundError:
 					encodings = []
 
@@ -186,7 +186,7 @@ class ManagementInterface:
 
 				encodings.append(model)
 
-				write_file_atomic(enc_file, json.dumps(encodings))
+				write_model_file(enc_file, username, json.dumps(encodings))
 
 			self.bus.send(Message.new_method_return(msg, "b", [True]))
 
@@ -200,7 +200,7 @@ class ManagementInterface:
 			enc_file = paths_factory.user_model_path(username)
 
 			try:
-				encodings = json.loads(read_trusted_file(enc_file))
+				encodings = json.loads(read_model_file(enc_file, username))
 				for i in range(len(encodings)):
 					encodings[i] = {
 						"time": encodings[i]["time"],
@@ -226,7 +226,7 @@ class ManagementInterface:
 				enc_file = paths_factory.user_model_path(username)
 
 				try:
-					encodings = json.loads(read_trusted_file(enc_file))
+					encodings = json.loads(read_model_file(enc_file, username))
 				except FileNotFoundError:
 					raise FileNotFoundError(f"No face model known for user {username}")
 
@@ -243,7 +243,7 @@ class ManagementInterface:
 				if len(remaining) == 0:
 					os.remove(enc_file)
 				else:
-					write_file_atomic(enc_file, json.dumps(remaining))
+					write_model_file(enc_file, username, json.dumps(remaining))
 
 				self.bus.send(Message.new_method_return(msg, "b", [True]))
 

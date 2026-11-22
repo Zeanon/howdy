@@ -11,6 +11,8 @@ inline constexpr const char* DLIB_DATA_DIR = "@dlib_data_dir@";
 inline constexpr const char* OPENVINO_DATA_DIR = "@openvino_data_dir@";
 inline constexpr const char* OPENVINO_CACHE_DIR = "@openvino_cache_dir@";
 inline constexpr const char* USER_MODELS_DIR = "@user_models_dir@";
+// Credential of the key of the face model encryption, empty: no encryption
+inline constexpr const char* MODELS_KEY_FILE = "@models_key_file@";
 inline constexpr const char* LOG_PATH = "@log_path@";
 inline constexpr const char* DATA_DIR = "@data_dir@";
 // The glade files and the logos of the window

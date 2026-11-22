@@ -12,6 +12,8 @@ option('openvino_data_dir', type: 'string', value: '', description: 'Set the ope
 option('openvino_cache_dir', type: 'string', value: '', description: 'Set the dir for the openvino cache for the model blobs')
 option('user_models_dir', type: 'string', value: '', description: 'Set the user models directory (default: /var/lib/howdy/models)')
  
+option('models_key_file', type: 'string', value: '/var/lib/howdy/models-key.cred', description: 'Encrypt the face models with a key that is sealed to the TPM: path of the systemd credential (made by systemd-creds encrypt --with-key=tpm2), e.g. /var/lib/howdy/models-key.cred. Empty: the models are not encrypted')
+
 option('log_path', type: 'string', value: '/var/log/howdy', description: 'Set the log file path')
  
 option('install_config', type: 'boolean', value: true, description: 'Install Howdy config file')

@@ -44,6 +44,9 @@ LockPersonality=yes
 # Where the face models are kept
 @models_directory_setting@
 
+# The key of the face model encryption, sealed to the TPM (empty without the option)
+@models_key_setting@
+
 CapabilityBoundingSet=
 AmbientCapabilities=
 

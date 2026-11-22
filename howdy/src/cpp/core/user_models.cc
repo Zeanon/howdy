@@ -6,7 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include "paths.hh"
-#include "trusted_file.hh"
+#include "model_crypto.hh"
 
 namespace howdy {
 
@@ -14,7 +14,7 @@ std::optional<UserModels> load_user_models(const std::string& username, std::siz
 	const auto path = std::filesystem::path(paths::USER_MODELS_DIR) / (username + ".dat");
 
 	// The models decide who is let in, so only a file that nobody else can change is used
-	const auto content = read_trusted_file(path);
+	const auto content = read_model_file(path, username);
 	if (!content.has_value()) {
 		return std::nullopt;
 	}

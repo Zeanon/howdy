@@ -47,6 +47,7 @@ configure() {
 		-e "s|@version@|test|g" \
 		-e "s|@config_dir@|$T/etc|g" \
 		-e "s|@user_models_dir@|$T/models|g" \
+		-e "s|@models_key_file@||g" \
 		-e "s|@openvino_cache_dir@|$T/cache|g" \
 		-e "s|@dlib_data_dir@|$DLIB_DATA_DIR|g" \
 		-e "s|@openvino_data_dir@|$OPENVINO_DATA_DIR|g" \
@@ -80,8 +81,8 @@ touch "$WORK_DIR/pyhowdy/howdy/__init__.py"
 
 # Third party headers as system includes, OpenCV warns a lot with C++20
 system_includes() { sed -E 's/(^| )-I/\1-isystem /g'; }
-read -r -a PKG_CFLAGS <<< "$(pkg-config --cflags dlib-1 opencv4 nlohmann_json INIReader libsystemd libevdev gtk+-3.0 | system_includes)"
-read -r -a PKG_LIBS <<< "$(pkg-config --libs dlib-1 opencv4 INIReader libsystemd libevdev gtk+-3.0)"
+read -r -a PKG_CFLAGS <<< "$(pkg-config --cflags dlib-1 opencv4 nlohmann_json INIReader libsystemd libevdev gtk+-3.0 openssl | system_includes)"
+read -r -a PKG_LIBS <<< "$(pkg-config --libs dlib-1 opencv4 INIReader libsystemd libevdev gtk+-3.0 openssl)"
 
 SANITIZER_LINK=()
 [ "${SANITIZE:-0}" = 1 ] && SANITIZER_LINK=(-fsanitize=address,undefined)
@@ -106,6 +107,7 @@ BASE_SOURCES=(
 	"$SRC_DIR/common/util.cc"
 	"$SRC_DIR/common/caller.cc"
 	"$SRC_DIR/common/trusted_file.cc"
+	"$SRC_DIR/common/model_crypto.cc"
 	"$SRC_DIR/common/polkit.cc"
 	"$SRC_DIR/common/management_client.cc"
 )

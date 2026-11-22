@@ -48,6 +48,8 @@ confdir = get_option('config_dir') != '' ? get_option('config_dir') : join_paths
 # The face models are data that the daemon writes, so they are kept below /var/lib, not in the configuration,
 # which is often versioned or backed up
 usermodelsdir = get_option('user_models_dir') != '' ? get_option('user_models_dir') : '/var/lib/howdy/models'
+# Opt in: the key of the face model encryption, a systemd credential sealed to the TPM
+modelskeyfile = get_option('models_key_file')
 logpath = get_option('log_path')
 installdir = get_option('install_dir') != '' ? get_option('install_dir') : join_paths(get_option('prefix'), get_option('libdir'), 'Howdy')
 pythonpath = get_option('python_path') != '' ? get_option('python_path') : join_paths(installdir, '.venv/bin/python3')
@@ -74,6 +76,7 @@ paths_dict = {
     'openvino_data_dir': openvinodatadir,
     'openvino_cache_dir': openvinocachedir,
     'user_models_dir': usermodelsdir,
+    'models_key_file': modelskeyfile,
     'log_path': logpath,
     'python_path': pythonpath,
 }

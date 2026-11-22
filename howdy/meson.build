@@ -72,7 +72,15 @@ else
     models_directory_setting = 'ReadWritePaths=-' + usermodelsdir
 endif
 
+# The unit would not start without the credential, so the line is only there if the option is set
+if modelskeyfile != ''
+    models_key_setting = 'LoadCredentialEncrypted=models-key:' + modelskeyfile
+else
+    models_key_setting = ''
+endif
+
 service_conf_data = configuration_data({
+    'models_key_setting': models_key_setting,
     'authentication_exec': authentication_exec,
     'management_exec': management_exec,
     'popup_exec': popup_exec,
@@ -232,6 +240,7 @@ if build_auth_daemon or build_management_daemon or build_cli
     )
 
     nlohmann_json = dependency('nlohmann_json', include_type: 'system')
+    openssl = dependency('openssl', version: '>=1.1.1')
     native_inc = include_directories('src/cpp/core', 'src/cpp/common')
     native_options = ['cpp_std=c++20']
 
@@ -244,17 +253,18 @@ if build_auth_daemon or build_management_daemon or build_cli
             'src/cpp/common/util.cc',
             'src/cpp/common/caller.cc',
             'src/cpp/common/trusted_file.cc',
+            'src/cpp/common/model_crypto.cc',
             'src/cpp/common/polkit.cc',
             'src/cpp/common/management_client.cc',
         ],
         include_directories: native_inc,
-        dependencies: [systemd_dep, nlohmann_json],
+        dependencies: [systemd_dep, nlohmann_json, openssl],
         override_options: native_options,
     )
     base_dep = declare_dependency(
         link_with: base_lib,
         include_directories: native_inc,
-        dependencies: [systemd_dep, nlohmann_json],
+        dependencies: [systemd_dep, nlohmann_json, openssl],
     )
 endif
 
