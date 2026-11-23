@@ -1,6 +1,7 @@
 #include "model_store.hh"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <fstream>
 #include <optional>
@@ -28,6 +29,17 @@ constexpr std::size_t MAX_LABEL_BYTES = 256;
 constexpr std::size_t MAX_ENCODINGS_PER_MODEL = 64;
 constexpr std::size_t MAX_ENCODING_VALUES = 512;
 constexpr std::size_t MAX_MODELS_PER_USER = 64;
+
+// The id the client sent, if it is a plain number
+std::optional<long long> parse_integer(const std::string& text) {
+	long long value = 0;
+	const auto* end = text.data() + text.size();
+	const auto [pointer, error] = std::from_chars(text.data(), end, value);
+	if (text.empty() || error != std::errc{} || pointer != end) {
+		return std::nullopt;
+	}
+	return value;
+}
 
 bool is_number_list(const nlohmann::json& value) {
 	if (!value.is_array()) {
@@ -178,6 +190,16 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 			throw std::runtime_error("Could not remove the face model file: " + ec.message());
 		}
 	} else {
+		// The models behind the removed one move up, so the ids stay without gaps
+		const auto removed = parse_integer(model_id);
+		if (removed.has_value()) {
+			for (auto& model : remaining) {
+				auto id = model.find("id");
+				if (id != model.end() && id->is_number_integer() && id->get<long long>() > *removed) {
+					*id = id->get<long long>() - 1;
+				}
+			}
+		}
 		save(path, username, remaining);
 	}
 }

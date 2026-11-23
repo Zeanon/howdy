@@ -383,6 +383,15 @@ class ManagementInterface:
 				if len(remaining) == 0:
 					os.remove(enc_file)
 				else:
+					# The models behind the removed one move up, so the ids stay without gaps
+					try:
+						removed = int(model_id)
+					except ValueError:
+						removed = None
+					if removed is not None:
+						for enc in remaining:
+							if isinstance(enc.get("id"), int) and enc["id"] > removed:
+								enc["id"] -= 1
 					write_model_file(enc_file, username, json.dumps(remaining))
 
 				self.bus.send(Message.new_method_return(msg, "b", [True]))

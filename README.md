@@ -456,7 +456,7 @@ Use `howdy --help` or `man howdy` for the full list.
 | `disable` | Disable or enable Howdy |
 | `gui` | Open the configuration window (also started as `howdy-gtk`). `--force-onboarding` starts the setup wizard. |
 | `list` | List all saved face models for a user |
-| `remove` | Remove a specific model for a user |
+| `remove` | Remove a specific model for a user. The models behind it move up, so the IDs stay without gaps |
 | `set` | Change a config option |
 | `snapshot` | Take a snapshot of your camera input |
 | `test` | Test the camera and recognition methods |

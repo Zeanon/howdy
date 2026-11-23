@@ -130,9 +130,9 @@ expect "polkit can refuse compare" "$(grep -c "org.boltgolt.howdy.Management.Not
 expect "a refusal is asked again every time" "$(($(asked) - before))" 3
 echo allow > "$T/polkit.mode"
 expect "remove" "$(mcall Remove ss "$USER_NAME" 0)" "b true"
-expect_contains "removed model is gone" "$(mcall List s "$USER_NAME")" 'id\":1'
+expect_contains "the model behind it moves up" "$(mcall List s "$USER_NAME")" 'id\":0'
 expect "remove unknown id" "$(mcall Remove ss "$USER_NAME" 9)" "Call failed: No model with ID 9 exists for $USER_NAME"
-expect "remove the last model" "$(mcall Remove s 1)" "b true"
+expect "remove the last model" "$(mcall Remove s 0)" "b true"
 expect "file is removed with the last model" "$([ -e "$MODEL" ] && echo exists || echo gone)" gone
 expect "remove without models" "$(mcall Remove ss "$USER_NAME" 0)" "Call failed: No face model known for user $USER_NAME"
 expect "clear without models" "$(mcall Clear s "$USER_NAME")" "Call failed: $USER_NAME has no models or they have already been cleared"
@@ -272,7 +272,7 @@ expect_contains "remove declined" "$output" 'This will remove the model called "
 expect_contains "remove declined, aborted" "$output" 'Interpreting as a "NO", aborting'
 run "$HOWDY" remove 0 -y
 expect "remove" "$output" "Removed model 0"
-run bash -c "echo y | '$HOWDY' remove 1"
+run bash -c "echo y | '$HOWDY' remove 0"
 expect_contains "remove last model, confirmed" "$output" "Removed last model, howdy disabled for user"
 
 mcall Add s "$MODEL_JSON" > /dev/null
