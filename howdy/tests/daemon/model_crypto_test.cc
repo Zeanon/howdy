@@ -103,10 +103,11 @@ int main(int argc, char** argv) {
 												}).empty());
 	spit(root / "models/alice.dat", stored);
 	chmod((root / "models/alice.dat").c_str(), 0600);
-	store.remove("alice", "0");
+	store.remove("alice", "0", "a", "1");
+	// The other model moved up
 	check(
 		"remove keeps it encrypted",
-		howdy::is_encrypted_model_file(slurp(root / "models/alice.dat")) && store.list("alice").find("\"id\":0") == std::string::npos);
+		howdy::is_encrypted_model_file(slurp(root / "models/alice.dat")) && store.list("alice").find("\"id\":1") == std::string::npos);
 
 	// The helper command: plain files are converted, the rest is left alone
 	spit(root / "models/carol.dat", plain);
