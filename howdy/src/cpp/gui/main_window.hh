@@ -87,17 +87,24 @@ class MainWindow {
 	void reload_models(std::function<void()> done = {}, bool denied_is_fatal = false);
 	// An empty name keeps the default one
 	void add_model(const std::string& name, std::function<void()> done = {});
-	void delete_model(const std::string& id, std::function<void()> done = {});
+	// The model is only changed if it still has the label that is shown (expected_label), the
+	// ids move up when a model is removed
+	void delete_model(const std::string& id, const std::string& expected_label, std::function<void()> done = {});
+	void rename_model(const std::string& id, const std::string& expected_label, const std::string& label, std::function<void()> done = {});
 
   private:
 	static void on_page_switch(GtkNotebook* notebook, GtkWidget* page, guint page_number, gpointer data);
 	static void on_model_add(GtkButton* button, gpointer data);
-	static void on_model_delete(GtkButton* button, gpointer data);
+	static gboolean on_tree_button_press(GtkWidget* widget, GdkEventButton* event, gpointer data);
+	static gboolean on_tree_popup_menu(GtkWidget* widget, gpointer data);
 	static gboolean on_about_link(GtkLabel* label, gchar* uri, gpointer data);
 	static void on_destroy(GtkWidget* widget, gpointer data);
 
 	void ask_for_model_name();
 	void ask_to_delete_model();
+	void ask_to_rename_model();
+	void build_model_menu();
+	void show_model_menu(GdkRectangle rect);
 	void set_busy(bool busy);
 	[[nodiscard]] std::string next_model_name() const;
 	static std::string session_user_name();
@@ -107,6 +114,9 @@ class MainWindow {
 	GtkWidget* window_ = nullptr;
 	GtkWidget* tree_view_ = nullptr;
 	GtkListStore* list_store_ = nullptr;
+	// What a right click on a model offers. A popover, a menu would grab the pointer and
+	// swallow the click on the close button of the window.
+	GtkWidget* model_popover_ = nullptr;
 	std::unique_ptr<VideoPreview> video_;
 	ManagementClient client_;
 	std::string user_ = session_user_name();

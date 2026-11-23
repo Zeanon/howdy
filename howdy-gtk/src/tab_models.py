@@ -3,6 +3,7 @@ import builtins
 
 from gi.repository import Gtk as gtk
 from gi.repository import GLib as glib
+from gi.repository import Gdk as gdk
 
 os.environ["GDK_BACKEND"] = "x11"
 
@@ -171,8 +172,119 @@ def on_model_delete(self, button):
 			try:
 				from howdy.cli import remove  # type: ignore
 
-				remove.run()
+				remove.run(expected_label=name)
 			except Exception as exc:
 				on_error(S("Error while deleting model"), str(exc), self.window)
 			finally:
 				self.load_model_list()
+
+
+def on_model_rename(self, widget=None):
+	selection = self.treeview.get_selection()
+	listmodel, rowlist = selection.get_selected_rows()
+
+	if len(rowlist) != 1:
+		return
+
+	tree_iter = listmodel.get_iter(rowlist[0])
+	model_id = listmodel.get_value(tree_iter, 0)
+	current = listmodel.get_value(tree_iter, 2)
+
+	dialog = gtk.MessageDialog(
+		parent=self.window,
+		flags=gtk.DialogFlags.MODAL,
+		type=gtk.MessageType.QUESTION,
+		buttons=gtk.ButtonsType.OK_CANCEL,
+	)
+	dialog.set_default_response(gtk.ResponseType.OK)
+	dialog.set_title(S("Rename Model"))
+	dialog.set_markup(S("Please enter a new name for the model, 24 characters max"))
+
+	# Create the input field with the current name
+	entry = gtk.Entry()
+	entry.set_max_length(24)
+	entry.set_text(current)
+	entry.connect("activate", lambda _: dialog.response(gtk.ResponseType.OK))
+
+	hbox = gtk.Box(orientation=gtk.Orientation.HORIZONTAL, spacing=5)
+	hbox.pack_start(gtk.Label(label=S("Model name:")), False, False, 5)
+	hbox.pack_start(entry, True, True, 5)
+	dialog.get_content_area().pack_start(hbox, True, True, 5)
+	dialog.show_all()
+
+	response = dialog.run()
+	# The list is comma separated for machines
+	name = entry.get_text().strip().replace(",", "")
+	dialog.destroy()
+
+	if response != gtk.ResponseType.OK or not name or name == current:
+		return
+
+	builtins.howdy_args = Args(
+		y=True,
+		gui=True,
+		plain=True,
+		user=self.active_user,
+		arguments=[model_id, name],
+	)
+
+	try:
+		from howdy.cli import rename  # type: ignore
+
+		rename.run(expected_label=current)
+	except Exception as exc:  # noqa: BLE001
+		on_error(S("Error while renaming model"), str(exc), self.window)
+	finally:
+		self.load_model_list()
+
+
+def on_tree_button_press(self, treeview, event):
+	"""Right click on a model: offer to rename or delete it"""
+	if event.type != gdk.EventType.BUTTON_PRESS:
+		return False
+
+	# Any other click on the list closes the menu, it does not grab anything
+	self.model_popover.hide()
+	if event.button != 3:
+		return False
+
+	# The model under the pointer is the one the menu is about
+	found = treeview.get_path_at_pos(int(event.x), int(event.y))
+	if found is None:
+		return False
+	treeview.set_cursor(found[0], None, False)
+
+	x, y = treeview.convert_bin_window_to_widget_coords(int(event.x), int(event.y))
+	show_model_menu(self, x, y)
+	return True
+
+
+def on_tree_popup_menu(self, treeview):
+	"""The menu key of the keyboard"""
+	listmodel, tree_iter = treeview.get_selection().get_selected()
+	if tree_iter is None:
+		return False
+
+	# Below the selected model
+	area = treeview.get_cell_area(listmodel.get_path(tree_iter), None)
+	show_model_menu(self, area.x, area.y)
+	return True
+
+
+def show_model_menu(self, x, y):
+	rect = gdk.Rectangle()
+	rect.x, rect.y, rect.width, rect.height = x, y, 1, 1
+	self.model_popover.set_pointing_to(rect)
+	self.model_popover.popup()
+
+
+def on_tree_closes_menu(self, *args):
+	"""The menu goes away with anything else that happens: the focus leaving the
+	list, a key"""
+	self.model_popover.hide()
+	return False
+
+
+def on_model_menu_item(self, item, handler):
+	self.model_popover.hide()
+	handler(item)

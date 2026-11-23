@@ -62,8 +62,7 @@ MainWindow::MainWindow(const std::string& glade_path) {
 	}
 
 	gtk_builder_add_callback_symbols(
-		builder_, "on_page_switch", G_CALLBACK(on_page_switch), "on_model_add", G_CALLBACK(on_model_add), "on_model_delete", G_CALLBACK(on_model_delete),
-		"on_about_link", G_CALLBACK(on_about_link), nullptr);
+		builder_, "on_page_switch", G_CALLBACK(on_page_switch), "on_model_add", G_CALLBACK(on_model_add), "on_about_link", G_CALLBACK(on_about_link), nullptr);
 	gtk_builder_connect_signals(builder_, this);
 
 	window_ = GTK_WIDGET(gtk_builder_get_object(builder_, "mainwindow"));
@@ -114,6 +113,8 @@ MainWindow::MainWindow(const std::string& glade_path) {
 	gtk_tree_view_set_model(GTK_TREE_VIEW(tree_view_), GTK_TREE_MODEL(list_store_));
 	gtk_container_add(GTK_CONTAINER(gtk_builder_get_object(builder_, "modellistbox")), tree_view_);
 
+	build_model_menu();
+
 	video_ = std::make_unique<VideoPreview>(builder_);
 
 	on_error_ = [this](const std::string& title, const std::string& detail) {
@@ -162,8 +163,115 @@ void MainWindow::on_model_add(GtkButton* /*button*/, gpointer data) {
 	static_cast<MainWindow*>(data)->ask_for_model_name();
 }
 
-void MainWindow::on_model_delete(GtkButton* /*button*/, gpointer data) {
-	static_cast<MainWindow*>(data)->ask_to_delete_model();
+gboolean MainWindow::on_tree_button_press(GtkWidget* widget, GdkEventButton* event, gpointer data) {
+	auto* self = static_cast<MainWindow*>(data);
+	if (event->type != GDK_BUTTON_PRESS) {
+		return FALSE;
+	}
+
+	// Any other click on the list closes the menu, it does not grab anything
+	gtk_widget_hide(self->model_popover_);
+	if (event->button != GDK_BUTTON_SECONDARY) {
+		return FALSE;
+	}
+
+	// The model under the pointer is the one the menu is about
+	GtkTreePath* path = nullptr;
+	if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), static_cast<gint>(event->x), static_cast<gint>(event->y), &path, nullptr, nullptr, nullptr) == 0) {
+		return FALSE;
+	}
+	gtk_tree_view_set_cursor(GTK_TREE_VIEW(widget), path, nullptr, FALSE);
+	gtk_tree_path_free(path);
+
+	if (!self->busy_) {
+		GdkRectangle rect{0, 0, 1, 1};
+		gtk_tree_view_convert_bin_window_to_widget_coords(GTK_TREE_VIEW(widget), static_cast<gint>(event->x), static_cast<gint>(event->y), &rect.x, &rect.y);
+		self->show_model_menu(rect);
+	}
+	return TRUE;
+}
+
+// The menu key of the keyboard
+gboolean MainWindow::on_tree_popup_menu(GtkWidget* widget, gpointer data) {
+	auto* self = static_cast<MainWindow*>(data);
+	GtkTreeModel* model = nullptr;
+	GtkTreeIter iter;
+	if (gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(widget)), &model, &iter) == 0 || self->busy_) {
+		return FALSE;
+	}
+
+	// Below the selected model
+	GtkTreePath* path = gtk_tree_model_get_path(model, &iter);
+	GdkRectangle rect;
+	gtk_tree_view_get_cell_area(GTK_TREE_VIEW(widget), path, nullptr, &rect);
+	gtk_tree_path_free(path);
+	rect.width = 1;
+	self->show_model_menu(rect);
+	return TRUE;
+}
+
+void MainWindow::show_model_menu(GdkRectangle rect) {
+	gtk_popover_set_pointing_to(GTK_POPOVER(model_popover_), &rect);
+	gtk_popover_popup(GTK_POPOVER(model_popover_));
+}
+
+void MainWindow::build_model_menu() {
+	// Not modal: a modal popover or a menu grabs the pointer, and then the click on the close
+	// button of the window only closes the menu
+	model_popover_ = gtk_popover_new(tree_view_);
+	gtk_popover_set_modal(GTK_POPOVER(model_popover_), FALSE);
+
+	GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_container_set_border_width(GTK_CONTAINER(box), 4);
+	gtk_container_add(GTK_CONTAINER(model_popover_), box);
+
+	const auto add_item = [&](const char* label, const char* icon_name, void (*handler)(GtkButton*, gpointer)) {
+		// A flat button with the icon in front of the text, like the entries of a menu
+		GtkWidget* item = gtk_button_new();
+		gtk_button_set_relief(GTK_BUTTON(item), GTK_RELIEF_NONE);
+		GtkWidget* content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+		gtk_box_pack_start(GTK_BOX(content), gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_MENU), FALSE, FALSE, 0);
+		GtkWidget* text = gtk_label_new(label);
+		gtk_label_set_xalign(GTK_LABEL(text), 0.0F);
+		gtk_box_pack_start(GTK_BOX(content), text, TRUE, TRUE, 0);
+		gtk_container_add(GTK_CONTAINER(item), content);
+		// The list keeps the focus, losing it closes the menu
+		gtk_widget_set_focus_on_click(item, FALSE);
+		g_signal_connect(item, "clicked", G_CALLBACK(handler), this);
+		gtk_box_pack_start(GTK_BOX(box), item, FALSE, FALSE, 0);
+	};
+	add_item(
+		S("Rename"), "document-edit-symbolic", +[](GtkButton* /*item*/, gpointer data) {
+			auto* self = static_cast<MainWindow*>(data);
+			gtk_widget_hide(self->model_popover_);
+			self->ask_to_rename_model();
+		});
+	add_item(
+		S("Delete"), "edit-delete-symbolic", +[](GtkButton* /*item*/, gpointer data) {
+			auto* self = static_cast<MainWindow*>(data);
+			gtk_widget_hide(self->model_popover_);
+			self->ask_to_delete_model();
+		});
+	gtk_widget_show_all(box);
+
+	g_signal_connect(tree_view_, "button-press-event", G_CALLBACK(on_tree_button_press), this);
+	g_signal_connect(tree_view_, "popup-menu", G_CALLBACK(on_tree_popup_menu), this);
+
+	// The menu goes away with anything else that happens: the focus leaving the list, a key,
+	// another tab
+	const auto close_on_event = +[](GtkWidget* /*widget*/, GdkEvent* /*event*/, gpointer data) -> gboolean {
+		gtk_widget_hide(static_cast<MainWindow*>(data)->model_popover_);
+		return FALSE;
+	};
+	g_signal_connect(tree_view_, "focus-out-event", G_CALLBACK(close_on_event), this);
+	g_signal_connect(tree_view_, "key-press-event", G_CALLBACK(close_on_event), this);
+	g_signal_connect(window_, "focus-out-event", G_CALLBACK(close_on_event), this);
+	g_signal_connect(
+		gtk_builder_get_object(builder_, "notebook"), "switch-page",
+		G_CALLBACK(+[](GtkNotebook* /*notebook*/, GtkWidget* /*page*/, guint /*number*/, gpointer data) {
+			gtk_widget_hide(static_cast<MainWindow*>(data)->model_popover_);
+		}),
+		this);
 }
 
 gboolean MainWindow::on_about_link(GtkLabel* /*label*/, gchar* uri, gpointer data) {
@@ -228,6 +336,56 @@ void MainWindow::ask_for_model_name() {
 	}
 }
 
+void MainWindow::ask_to_rename_model() {
+	if (busy_) {
+		return;
+	}
+
+	GtkTreeModel* model = nullptr;
+	GtkTreeIter iter;
+	if (gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_view_)), &model, &iter) == 0) {
+		return;
+	}
+
+	gchar* id = nullptr;
+	gchar* label = nullptr;
+	gtk_tree_model_get(model, &iter, 0, &id, 2, &label, -1);
+	const std::string model_id = id;
+	const std::string current = label;
+	g_free(id);
+	g_free(label);
+
+	GtkWidget* dialog = gtk_message_dialog_new(
+		GTK_WINDOW(window_), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_OK_CANCEL, "%s",
+		S("Please enter a new name for the model, 24 characters max"));
+	gtk_window_set_title(GTK_WINDOW(dialog), S("Rename Model"));
+	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
+
+	GtkWidget* entry = gtk_entry_new();
+	gtk_entry_set_max_length(GTK_ENTRY(entry), 24);
+	gtk_entry_set_text(GTK_ENTRY(entry), current.c_str());
+	// Enter in the field confirms the dialog
+	g_signal_connect(
+		entry, "activate", G_CALLBACK(+[](GtkWidget* /*entry*/, gpointer dialog_data) { gtk_dialog_response(GTK_DIALOG(dialog_data), GTK_RESPONSE_OK); }),
+		dialog);
+
+	GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+	gtk_box_pack_start(GTK_BOX(box), gtk_label_new(S("Model name:")), FALSE, FALSE, 5);
+	gtk_box_pack_start(GTK_BOX(box), entry, TRUE, TRUE, 5);
+	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), box, TRUE, TRUE, 5);
+	gtk_widget_show_all(dialog);
+
+	const gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+	std::string name = trim(gtk_entry_get_text(GTK_ENTRY(entry)));
+	gtk_widget_destroy(dialog);
+
+	// The list is comma separated for machines
+	std::erase(name, ',');
+	if (response == GTK_RESPONSE_OK && !name.empty() && name != current) {
+		rename_model(model_id, current, name);
+	}
+}
+
 void MainWindow::ask_to_delete_model() {
 	if (busy_) {
 		return;
@@ -243,6 +401,7 @@ void MainWindow::ask_to_delete_model() {
 	gchar* label = nullptr;
 	gtk_tree_model_get(model, &iter, 0, &id, 2, &label, -1);
 	const std::string model_id = id;
+	const std::string model_label = label;
 	const std::string text = std::string("Are you sure you want to delete model ") + id + " (" + label + ")?";
 	g_free(id);
 	g_free(label);
@@ -253,7 +412,7 @@ void MainWindow::ask_to_delete_model() {
 	gtk_widget_destroy(dialog);
 
 	if (response == GTK_RESPONSE_OK) {
-		delete_model(model_id);
+		delete_model(model_id, model_label);
 	}
 }
 
@@ -350,10 +509,10 @@ void MainWindow::add_model(const std::string& name, std::function<void()> done) 
 	});
 }
 
-void MainWindow::delete_model(const std::string& id, std::function<void()> done) {
+void MainWindow::delete_model(const std::string& id, const std::string& expected_label, std::function<void()> done) {
 	set_busy(true);
 	const auto alive = alive_;
-	client_.remove(user_, id, [this, alive, done = std::move(done)](const ManagementResult& result) {
+	client_.remove(user_, id, expected_label, [this, alive, done = std::move(done)](const ManagementResult& result) {
 		if (!*alive) {
 			return;
 		}
@@ -361,6 +520,22 @@ void MainWindow::delete_model(const std::string& id, std::function<void()> done)
 
 		if (!result.ok) {
 			error(S("Error while deleting model"), result.error);
+		}
+		reload_models(done);
+	});
+}
+
+void MainWindow::rename_model(const std::string& id, const std::string& expected_label, const std::string& label, std::function<void()> done) {
+	set_busy(true);
+	const auto alive = alive_;
+	client_.rename(user_, id, expected_label, label, [this, alive, done = std::move(done)](const ManagementResult& result) {
+		if (!*alive) {
+			return;
+		}
+		set_busy(false);
+
+		if (!result.ok) {
+			error(S("Error while renaming model"), result.error);
 		}
 		reload_models(done);
 	});

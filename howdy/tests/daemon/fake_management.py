@@ -7,6 +7,7 @@
 #   list-error     List fails
 #   add-error      Add fails
 #   remove-error   Remove fails
+#   rename-error   Rename fails
 # Every call is logged as "<bus name of the caller> <method> <user>".
 import sys
 import json
@@ -19,6 +20,10 @@ models_file, mode_file, log_file = sys.argv[1:4]
 
 PATH = "/org/boltgolt/howdy/Management"
 INTERFACE = "org.boltgolt.howdy.Management"
+
+
+def label_changed(model_id, expected):
+	return f'Model {model_id} is not called "{expected}" any more, please reload the list'
 
 
 def load():
@@ -66,6 +71,8 @@ def handler(msg):
 		return error(msg, "The model could not be saved")
 	if current == "remove-error" and msg.member == "Remove":
 		return error(msg, "No model with ID")
+	if current == "rename-error" and msg.member == "Rename":
+		return error(msg, "The model could not be renamed")
 
 	models = load()
 
@@ -83,11 +90,24 @@ def handler(msg):
 		return Message.new_method_return(msg, "b", [True])
 
 	if msg.member == "Remove":
+		for model in models:
+			if str(model["id"]) == msg.body[1] and model["label"] != msg.body[2]:
+				return error(msg, label_changed(msg.body[1], msg.body[2]))
 		remaining = [m for m in models if str(m["id"]) != msg.body[1]]
 		if len(remaining) == len(models):
 			return error(msg, f"No model with ID {msg.body[1]} exists")
 		save(remaining)
 		return Message.new_method_return(msg, "b", [True])
+
+	if msg.member == "Rename":
+		for model in models:
+			if str(model["id"]) == msg.body[1]:
+				if model["label"] != msg.body[2]:
+					return error(msg, label_changed(msg.body[1], msg.body[2]))
+				model["label"] = msg.body[3]
+				save(models)
+				return Message.new_method_return(msg, "b", [True])
+		return error(msg, f"No model with ID {msg.body[1]} exists")
 
 	return None
 

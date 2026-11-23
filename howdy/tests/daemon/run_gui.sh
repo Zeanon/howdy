@@ -121,6 +121,13 @@ expect_contains "no camera is reported" "$output" "error: Error while adding mod
 expect_contains "the window is usable after a failure" "$output" "busy after failure: no"
 expect_contains "no face is reported" "$output" "error: Error while adding model: | No face detected, aborting"
 expect_contains "a model the daemon refuses is reported" "$output" "error: Error while adding model: | The model could not be saved"
+expect_contains "a model is renamed" "$daemon_calls" " Rename $USER_NAME"
+expect_contains "the new name is shown" "$(sed -n '/step: rename$/,/step: rename fails/p' <<< "$output")" "model: 1|"
+expect_contains "the name is the new one" "$(sed -n '/step: rename$/,/step: rename fails/p' <<< "$output")" "|Renamed"
+expect_contains "a failed rename is reported" "$output" "error: Error while renaming model | The model could not be renamed"
+expect_contains "a rename with an old list is refused" "$output" 'error: Error while renaming model | Model 1 is not called "Another name" any more'
+expect_contains "a delete with an old list is refused" "$output" 'error: Error while deleting model | Model 1 is not called "Another name" any more'
+expect_contains "the model is kept then" "$(sed -n '/step: the list is out of date$/,/step: the video tab/p' <<< "$output")" "|Renamed"
 expect_contains "a failed delete is reported" "$output" "error: Error while deleting model | No model with ID"
 expect_contains "the camera of the config is shown" "$output" "camera: video42 | Can't open camera | opencv"
 expect_contains "a refusal later is an error and not fatal" "$output" "error: Failed to load the face models | Polkit authorization denied"
@@ -137,7 +144,7 @@ expect_contains "ends normally" "$output" "finished"
 if [ -z "$calls" ]; then echo "PASS  no program was started"; else echo "FAIL  a program was started: $calls"; failed=1; fi
 callers="$(cut -d' ' -f1 "$FAKE_DAEMON_LOG" | sort -u | wc -l)"
 expect "all calls come from one connection" "$callers" "1"
-expect_contains "list, add and remove were all called" "$(cut -d' ' -f2 "$FAKE_DAEMON_LOG" | sort -u | tr '\n' ' ')" "Add List Remove"
+expect_contains "list, add and remove were all called" "$(cut -d' ' -f2 "$FAKE_DAEMON_LOG" | sort -u | tr '\n' ' ')" "Add List Remove Rename"
 
 # What was saved is a model of the face: the first model was deleted, the
 # second one (the default name) is what the daemon has
