@@ -11,7 +11,7 @@ namespace howdy::cli {
 
 struct Options {
 	std::string command;
-	// The arguments of add, disable, remove and set
+	// The arguments of add, disable, remove, rename and set
 	std::vector<std::string> arguments;
 	// The user the command works on
 	std::string user;
@@ -57,6 +57,9 @@ void say(const Options& options, const std::string& line);
 // Print the question and read the answer from stdin, an empty string on EOF
 std::string ask(const std::string& prompt);
 
+// The first characters of the text (not bytes), for the label of a model
+std::string truncate_characters(const std::string& text, std::size_t limit);
+
 // Ask a yes/no question that defaults to no
 bool confirm(const std::string& prompt);
 
@@ -76,6 +79,7 @@ void authorize(sd_bus* bus, const Options& options);
 // Commands, return the exit code and throw CliError
 int run_list(const Options& options);
 int run_remove(const Options& options);
+int run_rename(const Options& options);
 int run_clear(const Options& options);
 int run_add(const Options& options);
 int run_config(const Options& options, const std::vector<std::string>& original_arguments);

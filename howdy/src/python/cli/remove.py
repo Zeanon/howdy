@@ -31,10 +31,12 @@ def say(line):
 		print(line)
 
 
-async def remove_model(bus, id):
-	signature = "ss" if builtins.howdy_args.user else "s"
+async def remove_model(bus, id, expected_label):
+	"""The daemon only removes the model if it still has the label the caller saw it with:
+	the ids move up when a model is removed, an old list would hit another one"""
+	signature = "sss" if builtins.howdy_args.user else "ss"
 	body = [builtins.howdy_args.user] if builtins.howdy_args.user else []
-	body.append(str(id))
+	body += [str(id), expected_label]
 
 	reply = await bus.call(
 		Message(
@@ -54,11 +56,13 @@ async def remove_model(bus, id):
 		raise RuntimeError("Failed to remove model")
 
 
-def run():
-	asyncio.run(_run())
+def run(expected_label=None):
+	"""expected_label: the label the caller (the window) shows for the model, the name that is
+	found in the list is used without it"""
+	asyncio.run(_run(expected_label))
 
 
-async def _run():
+async def _run(expected_label=None):
 	bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 	try:
 		user = builtins.howdy_args.user
@@ -117,6 +121,7 @@ async def _run():
 
 				# Mark as found and print an enter
 				found = True
+				found_label = enc["label"]
 				break
 
 		# Abort if no matching id was found
@@ -124,7 +129,9 @@ async def _run():
 			exit(S(f"No model with ID {id} exists for {user}"))
 
 		try:
-			await remove_model(bus, id)
+			await remove_model(
+				bus, id, expected_label if expected_label is not None else found_label
+			)
 		except Exception as exc:
 			exit(f"Failed to remove face model: {exc}")
 

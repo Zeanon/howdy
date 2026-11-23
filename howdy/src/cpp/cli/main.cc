@@ -22,8 +22,8 @@ using howdy::S;
 using howdy::cli::CliError;
 using howdy::cli::Options;
 
-constexpr std::array<std::string_view, 11> COMMANDS{
-	"add", "clear", "config", "disable", "gui", "list", "remove", "set", "snapshot", "test", "version",
+constexpr std::array<std::string_view, 12> COMMANDS{
+	"add", "clear", "config", "disable", "gui", "list", "remove", "rename", "set", "snapshot", "test", "version",
 };
 
 const char* const USAGE = "usage: howdy [-U USER] [--plain] [-h] [-y] command [arguments...]";
@@ -34,9 +34,9 @@ void print_help() {
 			  << "positional arguments:\n"
 			  << "  command               "
 			  << S("The command option to execute, can be one of the following: add, clear, config, disable, gui, list, "
-				   "remove, snapshot, set, test or version.")
+				   "remove, rename, snapshot, set, test or version.")
 			  << "\n"
-			  << "  arguments             " << S("Optional arguments for the add, disable, remove and set commands.") << "\n\n"
+			  << "  arguments             " << S("Optional arguments for the add, disable, remove, rename and set commands.") << "\n\n"
 			  << "options:\n"
 			  << "  -U USER, --user USER  " << S("Set the user account to use.") << "\n"
 			  << "  -y                    " << S("Skip all questions.") << "\n"
@@ -194,6 +194,9 @@ int dispatch(const Options& options, const std::vector<std::string>& original_ar
 	}
 	if (options.command == "remove") {
 		return run_remove(options);
+	}
+	if (options.command == "rename") {
+		return run_rename(options);
 	}
 	if (options.command == "set") {
 		return run_set(options, original_arguments);

@@ -52,6 +52,10 @@
         <allow send_destination="@management_bus@"
                send_interface="@management_interface@"
                send_type="method_call"
+               send_member="Rename"/>
+        <allow send_destination="@management_bus@"
+               send_interface="@management_interface@"
+               send_type="method_call"
                send_member="Clear"/>
         <allow send_destination="@management_bus@"
                send_interface="@management_interface@"

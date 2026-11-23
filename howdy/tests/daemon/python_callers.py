@@ -698,6 +698,160 @@ RATE_LIMITED_ERROR = management_module.COMPARE_RATE_LIMITED_ERROR
 NOT_AUTHORIZED_ERROR = management_module.NOT_AUTHORIZED_ERROR
 asyncio.run(comparing())
 
+print("--- management daemon, removing and renaming models")
+
+
+def saved_models(user):
+	with open(paths_factory.user_model_path(user)) as handle:
+		return json.load(handle)
+
+
+async def managing():
+	own = pwd.getpwuid(DAEMON).pw_name
+	models_dir = os.path.join(WORK_DIR, "models")
+	shutil.rmtree(models_dir, ignore_errors=True)
+	os.makedirs(models_dir, mode=0o700)
+	os.chmod(models_dir, 0o700)
+
+	async def polkit(**kwargs):
+		pass
+
+	original = management_module.check_authorization
+	management_module.check_authorization = polkit
+
+	bus = Recorder({":1.9": DAEMON})
+	interface = management_module.ManagementInterface(bus)
+
+	async def call(member, signature, body):
+		"""The reply of a method: its body, or the name of its error and its text"""
+		bus.sent.clear()
+		message = Message(
+			destination="org.example.d", path="/p", interface="org.example.I", member=member,
+			signature=signature, body=body, sender=":1.9", serial=1,
+		)  # fmt: skip
+		await getattr(interface, member.lower())(message)
+		reply = bus.sent[0]
+		if reply.message_type == MessageType.ERROR:
+			return reply.error_name, reply.body[0]
+		return reply.body
+
+	async def models():
+		"""The (id, label) of the models of the user"""
+		listed = json.loads((await call("List", "", []))[0])
+		return [(model["id"], model["label"]) for model in listed]
+
+	def model(label):
+		return json.dumps({"time": 1, "label": label, "data": [[0.1, 0.2]]})
+
+	try:
+		for label in ("first", "second", "third"):
+			await call("Add", "s", [model(label)])
+		check(
+			"models get the next ids",
+			await models(),
+			[(0, "first"), (1, "second"), (2, "third")],
+		)
+
+		check(
+			"rename",
+			await call("Rename", "sss", ["1", "second", "Living room"]),
+			[True],
+		)
+		check(
+			"only the label changes",
+			await models(),
+			[(0, "first"), (1, "Living room"), (2, "third")],
+		)
+		check(
+			"rename with a user",
+			await call("Rename", "ssss", [own, "2", "third", "Office"]),
+			[True],
+		)
+		check(
+			"rename with a user, the label",
+			(await models())[2],
+			(2, "Office"),
+		)
+		check(
+			"the encodings are kept",
+			saved_models(own)[1]["data"],
+			[[0.1, 0.2]],
+		)
+
+		error, text = await call("Rename", "sss", ["9", "x", "y"])
+		check("rename unknown id, error", error, management_module.RENAME_ERROR)
+		check("rename unknown id, text", text, f"No model with ID 9 exists for {own}")
+		error, text = await call("Rename", "sss", ["1", "Living room", "x" * 300])
+		check("rename with a long label, error", error, management_module.RENAME_ERROR)
+		check("rename with a long label, text", text, "Model label is too long")
+		# The caller saw the models before another one was removed: the ids moved up
+		stale = 'Model {} is not called "{}" any more, please reload the list'
+		check(
+			"rename with an old list",
+			await call("Rename", "sss", ["1", "second", "x"]),
+			(management_module.RENAME_ERROR, stale.format(1, "second")),
+		)
+		check(
+			"remove with an old list",
+			await call("Remove", "ss", ["0", "wrong"]),
+			(management_module.REMOVE_ERROR, stale.format(0, "wrong")),
+		)
+		check(
+			"nothing changed by the failures",
+			await models(),
+			[(0, "first"), (1, "Living room"), (2, "Office")],
+		)
+
+		check("remove the first", await call("Remove", "ss", ["0", "first"]), [True])
+		check(
+			"the models behind it move up",
+			await models(),
+			[(0, "Living room"), (1, "Office")],
+		)
+		error, text = await call("Remove", "ss", ["5", "x"])
+		check("remove unknown id, error", error, management_module.REMOVE_ERROR)
+		check("remove unknown id, text", text, f"No model with ID 5 exists for {own}")
+		error, _ = await call("Remove", "ss", ["x", "x"])
+		check("remove with a text as id", error, management_module.REMOVE_ERROR)
+		check(
+			"nothing changed by the failures, remove",
+			await models(),
+			[(0, "Living room"), (1, "Office")],
+		)
+
+		check(
+			"remove the last one of the list",
+			await call("Remove", "ss", ["1", "Office"]),
+			[True],
+		)
+		check("the ones before it stay", await models(), [(0, "Living room")])
+		check(
+			"remove the last model",
+			await call("Remove", "sss", [own, "0", "Living room"]),
+			[True],
+		)
+		check(
+			"the file is gone with the last model",
+			os.path.exists(paths_factory.user_model_path(own)),
+			False,
+		)
+		error, text = await call("Rename", "sss", ["0", "x", "y"])
+		check("rename without models, error", error, management_module.RENAME_ERROR)
+		check(
+			"rename without models, text", text, f"No face model known for user {own}"
+		)
+		check(
+			"a new model starts at 0 again",
+			await call("Add", "s", [model("new")]),
+			[True],
+		)
+		check("the id", await models(), [(0, "new")])
+	finally:
+		management_module.check_authorization = original
+
+
+asyncio.run(managing())
+
 print("--- retention of the snapshots")
 from howdy import paths_factory, snapshot  # noqa: E402
 

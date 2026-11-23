@@ -31,10 +31,11 @@ struct Method {
 // from other failures
 constexpr const char* NOT_AUTHORIZED_ERROR = paths::MANAGEMENT_NOT_AUTHORIZED_ERROR;
 
-constexpr std::array<Method, 6> METHODS{{
+constexpr std::array<Method, 7> METHODS{{
 	{"Add", "s", paths::MANAGEMENT_ADD_ERROR, "Failed to add face model"},
 	{"List", "", paths::MANAGEMENT_LIST_ERROR, "Failed to list face models"},
-	{"Remove", "s", paths::MANAGEMENT_REMOVE_ERROR, "Failed to remove face model"},
+	{"Remove", "ss", paths::MANAGEMENT_REMOVE_ERROR, "Failed to remove face model"},
+	{"Rename", "sss", paths::MANAGEMENT_RENAME_ERROR, "Failed to rename face model"},
 	{"Clear", "", paths::MANAGEMENT_CLEAR_ERROR, "Failed to clear face models"},
 	{"Compare", "sad", paths::MANAGEMENT_COMPARE_ERROR, "Failed to compare the face"},
 	{"KeepAlive", "", paths::MANAGEMENT_KEEPALIVE_ERROR, "Failed to keep the authorization alive"},
@@ -87,12 +88,17 @@ struct ManagementService::Request {
 	sd_bus_message* message;
 	const Method* method;
 	std::string username;
-	// Model (Add) or id (Remove), unused for the others
+	// Model (Add) or id (Remove, Rename), unused for the others
 	std::string argument;
+	// Remove, Rename: the label the caller saw the model with, the model is only changed if it
+	// still has it (the ids move up when a model is removed)
+	std::string expected_label;
 	// Compare: the face
 	std::vector<double> encoding;
 	// The bus name of the caller, for Compare
 	std::string sender;
+	// Rename: the new label
+	std::string label;
 };
 
 ManagementService::ManagementService(sd_bus* bus, sd_event* event, ModelStore store) : bus_(bus), event_(event), store_(std::move(store)) {
@@ -137,7 +143,7 @@ int ManagementService::handle(sd_bus_message* message) {
 	++pending_;
 	sd_event_source_set_enabled(idle_timer_, SD_EVENT_OFF);
 
-	auto request = std::make_unique<Request>(Request{this, message, method, "", "", {}, ""});
+	auto request = std::make_unique<Request>(Request{this, message, method, "", "", "", {}, "", ""});
 	try {
 		if (with_user) {
 			const char* user = nullptr;
@@ -148,6 +154,16 @@ int ManagementService::handle(sd_bus_message* message) {
 			const char* argument = nullptr;
 			check(sd_bus_message_read(message, "s", &argument), "Failed to read the argument");
 			request->argument = argument;
+		}
+		if (method->name == "Remove" || method->name == "Rename") {
+			const char* expected = nullptr;
+			check(sd_bus_message_read(message, "s", &expected), "Failed to read the label of the model");
+			request->expected_label = expected;
+		}
+		if (method->name == "Rename") {
+			const char* label = nullptr;
+			check(sd_bus_message_read(message, "s", &label), "Failed to read the label");
+			request->label = label;
 		}
 		if (method->name == "Compare") {
 			read_encoding(message, request->encoding);
@@ -267,7 +283,10 @@ void ManagementService::execute(const Request& request) {
 	} else if (name == "List") {
 		check(sd_bus_reply_method_return(request.message, "s", store_.list(request.username).c_str()), "Failed to send the reply");
 	} else if (name == "Remove") {
-		store_.remove(request.username, request.argument);
+		store_.remove(request.username, request.argument, request.expected_label);
+		check(sd_bus_reply_method_return(request.message, "b", 1), "Failed to send the reply");
+	} else if (name == "Rename") {
+		store_.rename(request.username, request.argument, request.expected_label, request.label);
 		check(sd_bus_reply_method_return(request.message, "b", 1), "Failed to send the reply");
 	} else if (name == "KeepAlive") {
 		check(sd_bus_reply_method_return(request.message, "b", compare_authorized(request.sender) ? 1 : 0), "Failed to send the reply");

@@ -48,7 +48,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
 	"command",
 	help=S(
-		"The command option to execute, can be one of the following: add, clear, config, disable, list, remove, snapshot, set, test or version."
+		"The command option to execute, can be one of the following: add, clear, config, disable, list, remove, rename, snapshot, set, test or version."
 	),
 	metavar="command",
 	choices=[
@@ -58,6 +58,7 @@ parser.add_argument(
 		"disable",
 		"list",
 		"remove",
+		"rename",
 		"set",
 		"snapshot",
 		"test",
@@ -68,7 +69,7 @@ parser.add_argument(
 # Add an argument for the extra arguments of disable and remove
 parser.add_argument(
 	"arguments",
-	help=S("Optional arguments for the add, disable, remove and set commands."),
+	help=S("Optional arguments for the add, disable, remove, rename and set commands."),
 	nargs="*",
 )
 
@@ -148,6 +149,9 @@ elif args.command == "list":
 elif args.command == "remove":
 	from . import remove
 	remove.run()
+elif args.command == "rename":
+	from . import rename
+	rename.run()
 elif args.command == "set":
 	from . import set  # noqa: F401  (runs its command when it is imported)
 elif args.command == "snapshot":

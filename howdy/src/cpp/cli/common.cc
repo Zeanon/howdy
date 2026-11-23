@@ -35,6 +35,21 @@ bool confirm(const std::string& prompt) {
 	return answer == "y";
 }
 
+// The label is limited to 24 characters, not bytes
+std::string truncate_characters(const std::string& text, std::size_t limit) {
+	std::size_t characters = 0;
+	for (std::size_t i = 0; i < text.size(); ++i) {
+		// Bytes of the form 10xxxxxx continue a character
+		if ((static_cast<unsigned char>(text[i]) & 0xC0U) != 0x80U) {
+			if (characters == limit) {
+				return text.substr(0, i);
+			}
+			++characters;
+		}
+	}
+	return text;
+}
+
 BusPtr open_system_bus() {
 	sd_bus* bus = nullptr;
 	const int r = sd_bus_open_system(&bus);

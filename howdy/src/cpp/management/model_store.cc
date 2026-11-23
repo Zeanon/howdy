@@ -41,6 +41,15 @@ std::optional<long long> parse_integer(const std::string& text) {
 	return value;
 }
 
+// The caller saw the model with this label: with another one, the list of the caller is out of date
+// and the id means another model by now
+void check_label(const nlohmann::json& model, const std::string& model_id, const std::string& expected_label) {
+	const auto label = model.find("label");
+	if (label == model.end() || !label->is_string() || label->get<std::string>() != expected_label) {
+		throw std::runtime_error("Model " + model_id + " is not called \"" + expected_label + "\" any more, please reload the list");
+	}
+}
+
 bool is_number_list(const nlohmann::json& value) {
 	if (!value.is_array()) {
 		return false;
@@ -162,7 +171,7 @@ std::string ModelStore::list(const std::string& username) const {
 	return result.dump();
 }
 
-void ModelStore::remove(const std::string& username, const std::string& model_id) const {
+void ModelStore::remove(const std::string& username, const std::string& model_id, const std::string& expected_label) const {
 	const auto path = path_for(username);
 	const auto models = load(path, username);
 	if (!models.has_value()) {
@@ -176,6 +185,8 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 		const std::string text = id == model.end() ? "null" : (id->is_string() ? id->get<std::string>() : id->dump());
 		if (text != model_id) {
 			remaining.push_back(model);
+		} else {
+			check_label(model, model_id, expected_label);
 		}
 	}
 
@@ -202,6 +213,35 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 		}
 		save(path, username, remaining);
 	}
+}
+
+void ModelStore::rename(const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& label) const {
+	if (label.size() > MAX_LABEL_BYTES) {
+		throw std::runtime_error("Model label is too long");
+	}
+
+	const auto path = path_for(username);
+	auto models = load(path, username);
+	if (!models.has_value()) {
+		throw std::runtime_error("No face model known for user " + username);
+	}
+
+	bool found = false;
+	for (auto& model : *models) {
+		const auto id = model.find("id");
+		const std::string text = id == model.end() ? "null" : (id->is_string() ? id->get<std::string>() : id->dump());
+		if (text == model_id) {
+			check_label(model, model_id, expected_label);
+			model["label"] = label;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		throw std::runtime_error("No model with ID " + model_id + " exists for " + username);
+	}
+
+	save(path, username, *models);
 }
 
 EncryptionReport ModelStore::encrypt_all() const {

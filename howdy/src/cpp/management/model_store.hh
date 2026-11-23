@@ -45,7 +45,12 @@ class ModelStore {
 	// JSON list with the "time", "label" and "id" of every model
 	[[nodiscard]] std::string list(const std::string& username) const;
 
-	void remove(const std::string& username, const std::string& model_id) const;
+	// The model is only removed if it has the label the caller saw: the ids move up when a model
+	// is removed, a caller with an old list would remove another one
+	void remove(const std::string& username, const std::string& model_id, const std::string& expected_label) const;
+
+	// Give the model another label. The id is compared as text, like in remove().
+	void rename(const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& label) const;
 
 	// Delete all models of the user
 	void clear(const std::string& username) const;

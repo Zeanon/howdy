@@ -129,12 +129,22 @@ out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 3 euclidean 0.1 0.2 0.3)"
 expect "polkit can refuse compare" "$(grep -c "org.boltgolt.howdy.Management.NotAuthorized" <<< "$out")" 3
 expect "a refusal is asked again every time" "$(($(asked) - before))" 3
 echo allow > "$T/polkit.mode"
-expect "remove" "$(mcall Remove ss "$USER_NAME" 0)" "b true"
+expect "rename" "$(mcall Rename sss 1 second "Living room")" "b true"
+expect_contains "the model has the new label" "$(mcall List s "$USER_NAME")" 'label\":\"Living room'
+expect_contains "the other models keep theirs" "$(mcall List s "$USER_NAME")" 'label\":\"first'
+expect "rename with a user" "$(mcall Rename ssss "$USER_NAME" 1 "Living room" "Office")" "b true"
+expect "rename unknown id" "$(mcall Rename sss 9 x y)" "Call failed: No model with ID 9 exists for $USER_NAME"
+expect "rename with a label that is too long" "$(mcall Rename sss 1 Office "$(printf 'x%.0s' $(seq 300))")" "Call failed: Model label is too long"
+expect "rename needs both arguments" "$(mcall Rename s 1)" "Call failed: Invalid arguments for Rename"
+expect "rename with an old list" "$(mcall Rename sss 1 wrong x)" 'Call failed: Model 1 is not called "wrong" any more, please reload the list'
+expect "remove with an old list" "$(mcall Remove ss 0 wrong)" 'Call failed: Model 0 is not called "wrong" any more, please reload the list'
+expect_contains "the old list changed nothing" "$(mcall List s "$USER_NAME")" 'label\":\"first'
+expect "remove" "$(mcall Remove sss "$USER_NAME" 0 first)" "b true"
 expect_contains "the model behind it moves up" "$(mcall List s "$USER_NAME")" 'id\":0'
-expect "remove unknown id" "$(mcall Remove ss "$USER_NAME" 9)" "Call failed: No model with ID 9 exists for $USER_NAME"
-expect "remove the last model" "$(mcall Remove s 0)" "b true"
+expect "remove unknown id" "$(mcall Remove sss "$USER_NAME" 9 x)" "Call failed: No model with ID 9 exists for $USER_NAME"
+expect "remove the last model" "$(mcall Remove ss 0 Office)" "b true"
 expect "file is removed with the last model" "$([ -e "$MODEL" ] && echo exists || echo gone)" gone
-expect "remove without models" "$(mcall Remove ss "$USER_NAME" 0)" "Call failed: No face model known for user $USER_NAME"
+expect "remove without models" "$(mcall Remove sss "$USER_NAME" 0 x)" "Call failed: No face model known for user $USER_NAME"
 expect "clear without models" "$(mcall Clear s "$USER_NAME")" "Call failed: $USER_NAME has no models or they have already been cleared"
 mcall Add s "$MODEL_JSON" > /dev/null
 expect "clear" "$(mcall Clear)" "b true"
@@ -146,7 +156,7 @@ mcall Add s "$MODEL_JSON" > /dev/null
 chmod 666 "$MODEL"
 expect_contains "list refuses a model file that others can write" "$(mcall List)" "Not using"
 expect_contains "add refuses it" "$(mcall Add s "$SECOND_JSON")" "Not using"
-expect_contains "remove refuses it" "$(mcall Remove s 0)" "Not using"
+expect_contains "remove refuses it" "$(mcall Remove ss 0 first)" "Not using"
 chmod 600 "$MODEL"
 expect "list works again with the right mode" "$(mcall List)" 's "[{'
 mcall Clear > /dev/null
@@ -166,7 +176,7 @@ expect_contains "unknown method" "$(mcall Frobnicate)" "Call failed"
 mcall Clear > /dev/null
 for _ in $(seq 64); do mcall Add s "$MODEL_JSON" > /dev/null; done
 expect "too many models" "$(mcall Add s "$MODEL_JSON")" "Call failed: Too many face models, please remove one first"
-expect "the limit is not reached by removing" "$(mcall Remove s 0)" "b true"
+expect "the limit is not reached by removing" "$(mcall Remove ss 0 first)" "b true"
 expect "a model can be added again" "$(mcall Add s "$MODEL_JSON")" "b true"
 mcall Clear > /dev/null
 expect "other user" "$(mcall List s nobody)" "Call failed: Not authorized to modify models for user nobody"
@@ -261,6 +271,32 @@ expect "list, plain" "$output" "0,2023-11-14 22:13:20,first
 run "$HOWDY" list
 expect_contains "list header" "$output" "Known face models for $USER_NAME:"
 expect_contains "list row" "$output" "0   2023-11-14 22:13:20  first"
+
+run "$HOWDY" rename
+expect_contains "rename without id" "$output" "Please add the ID of the model you want to rename as an argument"
+run "$HOWDY" rename 1
+expect "rename without a name can not ask here" "$code" 1
+expect_contains "rename without a name" "$output" "Please add the new name of the model as an argument"
+# Asked on a terminal only
+run bash -c "echo 'Office, 2' | script -qec \"'$HOWDY' rename 1\" /dev/null"
+expect_contains "rename asks for the name" "$output" "Enter a new label for this model [second]:"
+expect_contains "rename with the answer" "$output" "Renamed model 1"
+run "$HOWDY" list --plain
+expect_contains "list shows the answer" "$output" "1,2023-11-14 22:15:00,Office 2"
+run bash -c "echo | script -qec \"'$HOWDY' rename 1\" /dev/null"
+expect_contains "an empty answer keeps the name" "$output" "Renamed model 1"
+run "$HOWDY" list --plain
+expect_contains "the name is kept" "$output" "1,2023-11-14 22:15:00,Office 2"
+run "$HOWDY" rename 7 Kitchen
+expect "rename unknown id, exit code" "$code" 1
+expect_contains "rename unknown id" "$output" "No model with ID 7 exists for $USER_NAME"
+run "$HOWDY" rename 1 "Living room"
+expect "rename" "$output" "Renamed model 1"
+run "$HOWDY" list --plain
+expect "list shows the new name" "$output" "0,2023-11-14 22:13:20,first
+1,2023-11-14 22:15:00,Living room"
+run "$HOWDY" rename 1 second
+expect "rename back" "$output" "Renamed model 1"
 
 run "$HOWDY" remove
 expect_contains "remove without id" "$output" "Please add the ID of the model you want to remove as an argument"

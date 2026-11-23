@@ -27,12 +27,16 @@ MANAGEMENT_PATH = "@management_path@"
 MANAGEMENT_INTERFACE = "@management_interface@"
 
 # The names of the errors of the management interface
+# The same limit as the C++ daemon has
+MAX_LABEL_BYTES = 256
+
 # A refused authorization has its own name, so that clients can tell it from
 # other failures
 NOT_AUTHORIZED_ERROR = "@management_interface@.NotAuthorized"
 ADD_ERROR = "@management_interface@.Add.Error"
 LIST_ERROR = "@management_interface@.List.Error"
 REMOVE_ERROR = "@management_interface@.Remove.Error"
+RENAME_ERROR = "@management_interface@.Rename.Error"
 CLEAR_ERROR = "@management_interface@.Clear.Error"
 COMPARE_ERROR = "@management_interface@.Compare.Error"
 KEEPALIVE_ERROR = "@management_interface@.KeepAlive.Error"
@@ -65,6 +69,15 @@ COMPARE_RATE_PER_SECOND = 30
 COMPARE_BURST = 60
 
 
+def check_label(model, model_id, expected_label):
+	"""The caller saw the model with this label. With another one its list is out of date
+	and the id means another model by now (the ids move up when a model is removed)."""
+	if model.get("label") != expected_label:
+		raise ValueError(
+			f'Model {model_id} is not called "{expected_label}" any more, please reload the list'
+		)
+
+
 class NotAuthorized(Exception):
 	"""The caller may not manage the face models"""
 
@@ -87,7 +100,8 @@ class ManagementInterface:
 		self.methods = {
 			"Add": ("s", self.add),
 			"List": ("", self.list),
-			"Remove": ("s", self.remove),
+			"Remove": ("ss", self.remove),
+			"Rename": ("sss", self.rename),
 			"Clear": ("", self.clear),
 			"Compare": ("sad", self.compare),
 			"KeepAlive": ("", self.keep_alive),
@@ -357,8 +371,9 @@ class ManagementInterface:
 
 	async def remove(self, msg):
 		try:
-			username = await self.get_caller(msg, 1)
-			model_id = msg.body[-1]
+			username = await self.get_caller(msg, 2)
+			model_id = msg.body[-2]
+			expected_label = msg.body[-1]
 
 			lock = self.user_locks.setdefault(username, asyncio.Lock())
 
@@ -373,7 +388,12 @@ class ManagementInterface:
 				if not isinstance(encodings, list):
 					raise ValueError("Face model file is invalid")
 
-				remaining = [enc for enc in encodings if str(enc.get("id")) != model_id]
+				remaining = []
+				for enc in encodings:
+					if str(enc.get("id")) != model_id:
+						remaining.append(enc)
+					else:
+						check_label(enc, model_id, expected_label)
 
 				if len(remaining) == len(encodings):
 					raise ValueError(
@@ -398,6 +418,47 @@ class ManagementInterface:
 
 		except Exception as exc:
 			self.reply_failure(msg, exc, REMOVE_ERROR, "Failed to remove face model")
+
+	async def rename(self, msg):
+		try:
+			username = await self.get_caller(msg, 3)
+			model_id = msg.body[-3]
+			expected_label = msg.body[-2]
+			new_label = msg.body[-1]
+
+			if len(new_label.encode()) > MAX_LABEL_BYTES:
+				raise ValueError("Model label is too long")
+
+			lock = self.user_locks.setdefault(username, asyncio.Lock())
+
+			async with lock:
+				enc_file = paths_factory.user_model_path(username)
+
+				try:
+					encodings = json.loads(read_model_file(enc_file, username))
+				except FileNotFoundError:
+					raise FileNotFoundError(f"No face model known for user {username}")
+
+				if not isinstance(encodings, list):
+					raise ValueError("Face model file is invalid")
+
+				# The ids are compared as text, like in Remove
+				for enc in encodings:
+					if isinstance(enc, dict) and str(enc.get("id")) == model_id:
+						check_label(enc, model_id, expected_label)
+						enc["label"] = new_label
+						break
+				else:
+					raise ValueError(
+						f"No model with ID {model_id} exists for {username}"
+					)
+
+				write_model_file(enc_file, username, json.dumps(encodings))
+
+			self.bus.send(Message.new_method_return(msg, "b", [True]))
+
+		except Exception as exc:
+			self.reply_failure(msg, exc, RENAME_ERROR, "Failed to rename face model")
 
 	async def clear(self, msg):
 		try:

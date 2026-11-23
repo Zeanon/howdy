@@ -23,25 +23,6 @@
 
 namespace howdy::cli {
 
-namespace {
-
-// The label is limited to 24 characters, not bytes
-std::string truncate_characters(const std::string& text, std::size_t limit) {
-	std::size_t characters = 0;
-	for (std::size_t i = 0; i < text.size(); ++i) {
-		// Bytes of the form 10xxxxxx continue a character
-		if ((static_cast<unsigned char>(text[i]) & 0xC0U) != 0x80U) {
-			if (characters == limit) {
-				return text.substr(0, i);
-			}
-			++characters;
-		}
-	}
-	return text;
-}
-
-} // namespace
-
 int run_add(const Options& options) {
 	const BusPtr bus = open_system_bus();
 	authorize(bus.get(), options);

@@ -712,6 +712,11 @@ if need_py
                 output: 'remove.py',
                 configuration: dbus_conf_data,
             ),
+            configure_file(
+                input: 'src/python/cli/rename.py',
+                output: 'rename.py',
+                configuration: dbus_conf_data,
+            ),
             'src/python/cli/set.py',
             'src/python/cli/snap.py',
             configure_file(
