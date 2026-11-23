@@ -5,5 +5,8 @@ if [[ "$1" != "post" ]]; then
     exit 0
 fi
 
-# restart howdy auth daemon
-systemctl restart @howdy_authentication_service_name@
+# Restart the howdy auth daemon without waiting for it. The restart takes a few
+# seconds (the daemon loads its models first) and blocking here would hold the
+# wakeup, and with it the frozen user sessions, until it is done. The PAM module
+# waits for the daemon to come back instead.
+systemctl --no-block restart @howdy_authentication_service_name@

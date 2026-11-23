@@ -56,6 +56,7 @@ MODEL="$T/models/$USER_NAME.dat"
 	face_authentication.micromotion_detection=false face_authentication.texture_detection=false face_authentication.similarity_detection=false
 chmod 644 "$T/etc/config.ini"
 start_background "$T/daemon"
+DAEMON_PID=$BACKGROUND_PID
 wait_for_name org.boltgolt.howdy.authentication
 
 CONFDIR="$PAM_DIR/pam.d"
@@ -98,6 +99,51 @@ chmod 600 "$MODEL"
 run_pam
 expect "not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
 expect "the user was asked to look into the camera" "$(has "Please look directly into the camera")" yes
+
+echo "--- the daemon is restarted"
+# The daemon is restarted when the computer wakes up and is gone for a few seconds. The module waits
+# for it and asks again, it does not fail: a failure would be a failed attempt for the lock screen.
+stop_daemon() {
+	kill "$DAEMON_PID" 2> /dev/null || true
+	while kill -0 "$DAEMON_PID" 2> /dev/null; do sleep 0.1; done
+}
+run_pam_in_background() {
+	( LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" > "$T/pam_background.out" 2>&1 ) &
+	pam_pid=$!
+}
+
+# Gone when the module starts, back after two seconds
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+stop_daemon
+started=$SECONDS
+run_pam_in_background
+sleep 2
+start_background "$T/daemon"
+DAEMON_PID=$BACKGROUND_PID
+wait "$pam_pid"
+OUT=$(cat "$T/pam_background.out")
+expect "a daemon that is not there at first: the face authenticates" "$(result_of)" 0
+expect "after it came back" "$([ $((SECONDS - started)) -ge 2 ] && echo yes || echo no)" yes
+
+# Restarted during the request: the first request is lost, the second one is made at the new daemon.
+# The face of the first one does not match, the model is changed while the daemon is gone.
+cp "$T/impostor.dat" "$MODEL"
+chmod 600 "$MODEL"
+started=$SECONDS
+run_pam_in_background
+sleep 1
+stop_daemon
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+sleep 1
+start_background "$T/daemon"
+DAEMON_PID=$BACKGROUND_PID
+wait "$pam_pid"
+OUT=$(cat "$T/pam_background.out")
+expect "a daemon that is restarted during the request: the face authenticates" "$(result_of)" 0
+expect "and it took the time of the restart" "$([ $((SECONDS - started)) -ge 2 ] && echo yes || echo no)" yes
+cp "$T/impostor.dat" "$MODEL"
 
 echo "--- the methods that can be used are announced"
 # fprintd on the private bus, its mode is read at every call

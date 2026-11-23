@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <functional>
 #include <string>
 
@@ -41,6 +42,9 @@ class FaceAuthenticator {
   private:
 	bool connect();
 	bool start_authentication();
+	// Like start_authentication(), but a daemon that is not there (it restarts, it is started by the bus)
+	// is waited for until the deadline, so that a short absence is not a failed authentication
+	bool start_authentication_waiting(std::chrono::steady_clock::time_point deadline);
 	void cancel_request();
 	void process_events(const std::function<void()>& on_scanning);
 	void cleanup();
@@ -58,6 +62,10 @@ class FaceAuthenticator {
 	sd_bus_slot* name_owner_slot_ = nullptr;
 
 	bool cancelled_ = false;
+	// The daemon went away (its name has no owner any more) while a request was running
+	bool daemon_lost_ = false;
+	// start_authentication() failed because the daemon could not be reached, not because it said no
+	bool daemon_unreachable_ = false;
 	bool request_started_ = false;
 	bool scanning_notified_ = false;
 
