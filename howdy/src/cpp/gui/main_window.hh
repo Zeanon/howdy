@@ -60,6 +60,12 @@ class MainWindow {
 		on_fatal_ = std::move(handler);
 	}
 
+	// The user is allowed to manage the models but has none yet: the window is not shown,
+	// the handler is called instead (to start the onboarding)
+	void set_no_models_handler(std::function<void()> handler) {
+		on_no_models_ = std::move(handler);
+	}
+
 	// Check that the user may manage the models and show the window if so.
 	// Until then there is no window, polkit may ask for a password first. If it
 	// is denied the window never appears, see set_fatal_handler().
@@ -108,11 +114,14 @@ class MainWindow {
 	std::vector<ModelRow> models_;
 	bool busy_ = false;
 	bool authorized_ = false;
+	// The last list of the models could be read
+	bool listed_ = false;
 	// Callbacks of the background work must not touch a destroyed window
 	std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
 	ErrorHandler on_error_;
 	std::function<void(const std::string&)> on_fatal_;
+	std::function<void()> on_no_models_;
 };
 
 } // namespace gtkui

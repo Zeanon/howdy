@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 
 #include <unistd.h>
 
@@ -29,18 +30,32 @@ int run_gui(bool force_onboarding) {
 	}
 
 	try {
-		// If no models have been created yet or when it is forced, start the onboarding
-		std::error_code ec;
-		if (force_onboarding || !std::filesystem::exists(howdy::paths::USER_MODELS_DIR, ec)) {
-			Onboarding onboarding((data_dir / "onboarding.glade").string());
+		const std::string onboarding_glade = (data_dir / "onboarding.glade").string();
+
+		if (force_onboarding) {
+			Onboarding onboarding(onboarding_glade);
 			gtk_main();
 			return onboarding.failed() ? 1 : 0;
 		}
 
+		// Only the daemon can tell whether the user has models, the directory is not readable
+		// for anybody else. Without models the onboarding replaces the window.
+		std::unique_ptr<Onboarding> onboarding;
 		MainWindow window((data_dir / "main.glade").string());
+		window.set_no_models_handler([&] {
+			try {
+				onboarding = std::make_unique<Onboarding>(onboarding_glade);
+			} catch (const std::exception& exc) {
+				std::cerr << exc.what() << "\n";
+				gtk_main_quit();
+			}
+		});
 		// The window appears when polkit has allowed to manage the models
 		window.start();
 		gtk_main();
+		if (onboarding != nullptr) {
+			return onboarding->failed() ? 1 : 0;
+		}
 	} catch (const std::exception& exc) {
 		std::cerr << exc.what() << "\n";
 		return 1;

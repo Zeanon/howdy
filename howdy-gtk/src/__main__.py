@@ -14,6 +14,8 @@ from . import paths_factory
 from howdy.cli import list  # type: ignore
 from howdy.cli.auth import check_authorization  # type: ignore
 from collections import namedtuple
+from dbus_next import BusType  # type: ignore
+from dbus_next.aio import MessageBus  # type: ignore
 
 os.environ["GDK_BACKEND"] = "x11"
 
@@ -170,10 +172,29 @@ except Exception as exc:
 # Make sure we quit on a SIGINT
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+
+async def has_models():
+	"""Ask the management daemon whether the user has models. Only root can look into the
+	models directory, so nobody else can tell by looking for it. Anything that goes wrong
+	counts as yes: no reason to start the onboarding then."""
+	builtins.howdy_args = Args(
+		y=True,
+		gui=True,
+		plain=True,
+		user=pwd.getpwuid(os.getuid()).pw_name,
+		arguments=[],
+	)
+	bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+	try:
+		return bool(await list.list_models(bus))
+	except Exception:  # noqa: BLE001
+		return True
+	finally:
+		bus.disconnect()
+
+
 # If no models have been created yet or when it is forced, start the onboarding
-if "--force-onboarding" in sys.argv or not os.path.exists(
-	paths_factory.user_models_dir_path()
-):
+if "--force-onboarding" in sys.argv or not asyncio.run(has_models()):
 	from . import onboarding
 
 	onboarding.OnboardingWindow()

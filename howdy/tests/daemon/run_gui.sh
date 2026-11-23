@@ -258,11 +258,14 @@ code=0
 xvfb-run -a timeout 4 "$T/howdy-gtk" --force-onboarding > "$T/app.log" 2>&1 || code=$?
 expect_missing "the wizard is started on request" "$(cat "$FAKE_DAEMON_LOG")" " List "
 expect "the wizard keeps running" "$code" 124
+# The models directory is not readable for the user, only the daemon knows that there are no models
 rmdir "$T/models"
+rm -f "$FAKE_MODELS"
 : > "$FAKE_DAEMON_LOG"
 code=0
 xvfb-run -a timeout 4 "$T/howdy" gui > "$T/app.log" 2>&1 || code=$?
-expect_missing "the wizard is started without models" "$(cat "$FAKE_DAEMON_LOG")" " List "
+expect_contains "the daemon is asked for the models" "$(cat "$FAKE_DAEMON_LOG")" " List "
+expect "the wizard is started without models and keeps running" "$code" 124
 expect_missing "no errors on start" "$(grep -v 'Gtk-WARNING\|Gdk-WARNING' "$T/app.log" || true)" "rror"
 run "$T/howdy" -h
 expect_contains "gui is a command" "$output" "disable, gui, list"

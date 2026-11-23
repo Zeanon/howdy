@@ -261,7 +261,9 @@ void MainWindow::start(std::function<void()> done) {
 	// Listing the models needs the same permission as everything else here
 	reload_models(
 		[this, done = std::move(done)] {
-			if (authorized_ && window_ != nullptr) {
+			if (authorized_ && listed_ && models_.empty() && on_no_models_) {
+				on_no_models_();
+			} else if (authorized_ && window_ != nullptr) {
 				gtk_widget_show_all(window_);
 			}
 			if (done) {
@@ -300,6 +302,8 @@ void MainWindow::reload_models(std::function<void()> done, bool denied_is_fatal)
 				problem = exc.what();
 			}
 		}
+
+		listed_ = result.ok && problem.empty();
 
 		gtk_list_store_clear(list_store_);
 		for (const auto& model : models_) {
