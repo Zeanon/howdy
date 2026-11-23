@@ -209,9 +209,52 @@ if compare_worker.authorization_error is not None:
 	print(f"Authorization failed: {compare_worker.authorization_error}")
 	sys.exit(1)
 
+# How long a camera that is there but busy is waited for, and how often it is tried, in seconds
+CAMERA_WAIT = 5
+CAMERA_RETRY_INTERVAL = 0.25
+
+
+def open_camera():
+	"""Open the camera. The polkit prompt may have started a face authentication (pam_howdy)
+	just before, and the camera is busy for a moment after that: the driver needs its time to
+	stop the stream and to let go of the device. So a camera that is there but can not be read
+	is tried again for a while (reading one frame shows that), instead of a pause that is a
+	guess and costs time when the camera is free. A device path that does not exist fails at
+	once."""
+	device_path = config.get("video", "device_path", fallback="none")
+	deadline = time.monotonic() + CAMERA_WAIT
+	announced = False
+
+	# The warnings of OpenCV and GStreamer come with every try
+	try:
+		old_level = cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+	except AttributeError:
+		old_level = None
+
+	try:
+		while True:
+			try:
+				capture = VideoCapture(config)
+				# A camera that is opened but still busy fails on the first read
+				capture.read_frame()
+				return capture
+			except NoDeviceException:
+				if (
+					device_path != "none" and not os.path.exists(device_path)
+				) or time.monotonic() >= deadline:
+					raise
+				if not announced:
+					announced = True
+					print("Waiting for the camera ...")
+				time.sleep(CAMERA_RETRY_INTERVAL)
+	finally:
+		if old_level is not None:
+			cv2.utils.logging.setLogLevel(old_level)
+
+
 rotate = fixed_rotation(config.getint("video", "rotate", fallback=0))
 try:
-	video_capture = VideoCapture(config)
+	video_capture = open_camera()
 except NoDeviceException as exc:
 	print(exc.message)
 	sys.exit(CompareResult.InvalidDevice)

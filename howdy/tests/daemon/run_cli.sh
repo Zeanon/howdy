@@ -410,6 +410,23 @@ if [ "$HAS_XVFB" = 1 ]; then
 			failed=1
 		fi
 	fi
+	# A camera that is there but can not be read at first (the face authentication of the polkit prompt
+	# may still hold it) is tried again, one that does not exist fails at once
+	cp "$T/still.mp4" "$T/busy.mp4"
+	chmod 000 "$T/busy.mp4"
+	write_config "$T/busy.mp4"
+	( sleep 2; chmod 644 "$T/busy.mp4" ) &
+	freeing=$!
+	run xvfb-run -a timeout 12 "$HOWDY" test
+	expect_contains "test waits for a camera that is busy" "$output" "Waiting for the camera"
+	expect_contains "and opens it when it is free" "$output" "Opening a window with a test feed"
+	wait "$freeing"
+	write_config /dev/does-not-exist
+	started=$SECONDS
+	run xvfb-run -a timeout 12 "$HOWDY" test
+	expect_missing "a camera that does not exist is not waited for" "$output" "Waiting for the camera"
+	if [ $((SECONDS - started)) -lt 4 ]; then echo "PASS  and it fails at once ($((SECONDS - started)) s)"; else echo "FAIL  it took $((SECONDS - started)) s"; failed=1; fi
+	write_config "$T/still.mp4"
 	# The password is asked before the camera is opened: the polkit prompt may start a face
 	# authentication (pam_howdy), which needs the camera. So a refusal comes before any camera error.
 	write_config /dev/does-not-exist

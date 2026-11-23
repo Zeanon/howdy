@@ -17,6 +17,7 @@
 #include <thread>
 #include <tuple>
 
+#include <opencv2/core/utils/logger.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -42,6 +43,9 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr std::uint64_t COMPARE_FRAME_TIMEOUT_USEC = 10ULL * 1000000ULL;
+// How long a camera that is there but busy is waited for, and how often it is tried
+constexpr std::chrono::seconds CAMERA_WAIT{5};
+constexpr std::chrono::milliseconds CAMERA_RETRY_INTERVAL{250};
 // The shortest time between two rounds of comparisons
 constexpr std::chrono::milliseconds COMPARE_INTERVAL{100};
 // Without a face to compare the authorization of the connection is kept alive this often (the daemon
@@ -249,11 +253,37 @@ struct Match {
 	bool accept = false;
 };
 
+// Open the camera. The polkit prompt may have started a face authentication (pam_howdy) just before,
+// and the camera is busy for a moment after that: the driver needs its time to stop the stream and to
+// let go of the device. So a camera that is there but can not be read is tried again for a while
+// (reading one frame shows that), instead of a pause that is a guess and costs time when the camera is
+// free. A device path that does not exist fails at once.
 std::unique_ptr<VideoCapture> open_camera(const Config& config) {
-	try {
-		return std::make_unique<VideoCapture>(config);
-	} catch (const NoDeviceException& exc) {
-		throw CliError(exc.what(), EXIT_INVALID_DEVICE);
+	const std::string device_path = config.get("video", "device_path", "none");
+	const auto exists = [&] { return device_path == "none" || std::filesystem::exists(device_path); };
+
+	// The warnings of OpenCV and GStreamer come with every try
+	const auto log_level = cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_ERROR);
+	const auto restore_log_level = ScopeExit([&] { cv::utils::logging::setLogLevel(log_level); });
+
+	const auto deadline = Clock::now() + CAMERA_WAIT;
+	bool announced = false;
+	for (;;) {
+		try {
+			auto capture = std::make_unique<VideoCapture>(config);
+			// A camera that is opened but still busy fails on the first read
+			static_cast<void>(capture->read_frame());
+			return capture;
+		} catch (const NoDeviceException& exc) {
+			if (!exists() || Clock::now() >= deadline) {
+				throw CliError(exc.what(), EXIT_INVALID_DEVICE);
+			}
+			if (!announced) {
+				announced = true;
+				std::cout << "Waiting for the camera ...\n";
+			}
+			std::this_thread::sleep_for(CAMERA_RETRY_INTERVAL);
+		}
 	}
 }
 
