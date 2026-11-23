@@ -378,7 +378,7 @@ int AuthenticationService::method_get_result(sd_bus_message* message, void* user
 		status = it->second->status;
 	}
 
-	syslog(LOG_DEBUG, "GetResult - request_id: %s, status: %s", request_id, to_string(status));
+	// syslog(LOG_DEBUG, "GetResult - request_id: %s, status: %s", request_id, to_string(status));
 	return sd_bus_reply_method_return(message, "s", to_string(status));
 }
 

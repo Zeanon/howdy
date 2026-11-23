@@ -941,10 +941,10 @@ class AuthenticationInterface(ServiceInterface):
 				)
 
 			request["timeout"].time = time.monotonic() + 1
-			syslog.syslog(
-				syslog.LOG_INFO,
-				f"GetResult - request_id: {request_id}, object_id: {id(request)}",
-			)
+			# syslog.syslog(
+			# 	syslog.LOG_INFO,
+			# 	f"GetResult - request_id: {request_id}, object_id: {id(request)}",
+			# )
 			return str(request["status"])
 
 	@method()
