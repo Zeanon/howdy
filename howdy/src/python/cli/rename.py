@@ -31,12 +31,12 @@ def say(line):
 		print(line)
 
 
-async def rename_model(bus, id, expected_label, label):
-	"""The daemon only renames the model if it still has the label the caller saw it with:
-	the ids move up when a model is removed, an old list would hit another one"""
-	signature = "ssss" if builtins.howdy_args.user else "sss"
+async def rename_model(bus, id, expected_label, expected_time, label):
+	"""The daemon only renames the model if it still has the label and time the caller saw
+	it with: the ids move up when a model is removed, an old list would hit another one"""
+	signature = "sssss" if builtins.howdy_args.user else "ssss"
 	body = [builtins.howdy_args.user] if builtins.howdy_args.user else []
-	body += [str(id), expected_label, label]
+	body += [str(id), expected_label, str(expected_time), label]
 
 	reply = await bus.call(
 		Message(
@@ -56,13 +56,13 @@ async def rename_model(bus, id, expected_label, label):
 		raise RuntimeError("Failed to rename model")
 
 
-def run(expected_label=None):
-	"""expected_label: the label the caller (the window) shows for the model, the name that is
-	found in the list is used without it"""
-	asyncio.run(_run(expected_label))
+def run(expected_label=None, expected_time=None):
+	"""expected_label, expected_time: the label and time (seconds) the caller (the window)
+	shows for the model, the ones found in the list are used without them"""
+	asyncio.run(_run(expected_label, expected_time))
 
 
-async def _run(expected_label=None):
+async def _run(expected_label=None, expected_time=None):
 	bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 	try:
 		user = builtins.howdy_args.user
@@ -131,6 +131,7 @@ async def _run(expected_label=None):
 				bus,
 				id,
 				expected_label if expected_label is not None else found["label"],
+				expected_time if expected_time is not None else int(found["time"]),
 				label,
 			)
 		except Exception as exc:

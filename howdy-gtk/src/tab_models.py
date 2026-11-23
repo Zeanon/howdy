@@ -152,13 +152,18 @@ def on_model_delete(self, button):
 
 		model_id = listmodel.get_value(tree_iter, 0)
 		name = listmodel.get_value(tree_iter, 2)
+		seconds = listmodel.get_value(tree_iter, 3)
 
 		dialog = gtk.MessageDialog(
 			parent=self, flags=gtk.DialogFlags.MODAL, buttons=gtk.ButtonsType.OK_CANCEL
 		)
 		dialog.set_title(S("Confirm Model Deletion"))
+		# The name is text, not markup: "&" or "<" in it would break the dialog
 		dialog.set_markup(
-			S(f"Are you sure you want to delete model {model_id} ({name})?")
+			S(
+				f"Are you sure you want to delete model {glib.markup_escape_text(model_id)} "
+				f"({glib.markup_escape_text(name)})?"
+			)
 		)
 
 		response = dialog.run()
@@ -172,7 +177,7 @@ def on_model_delete(self, button):
 			try:
 				from howdy.cli import remove  # type: ignore
 
-				remove.run(expected_label=name)
+				remove.run(expected_label=name, expected_time=seconds)
 			except Exception as exc:
 				on_error(S("Error while deleting model"), str(exc), self.window)
 			finally:
@@ -189,6 +194,7 @@ def on_model_rename(self, widget=None):
 	tree_iter = listmodel.get_iter(rowlist[0])
 	model_id = listmodel.get_value(tree_iter, 0)
 	current = listmodel.get_value(tree_iter, 2)
+	seconds = listmodel.get_value(tree_iter, 3)
 
 	dialog = gtk.MessageDialog(
 		parent=self.window,
@@ -231,7 +237,7 @@ def on_model_rename(self, widget=None):
 	try:
 		from howdy.cli import rename  # type: ignore
 
-		rename.run(expected_label=current)
+		rename.run(expected_label=current, expected_time=seconds)
 	except Exception as exc:  # noqa: BLE001
 		on_error(S("Error while renaming model"), str(exc), self.window)
 	finally:

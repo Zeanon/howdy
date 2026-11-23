@@ -89,6 +89,16 @@ int test_main_window() {
 	};
 
 	const auto shown = [&] { return gtk_widget_get_visible(window.window()) != FALSE ? "yes" : "no"; };
+	// The time of a shown model in seconds, which is sent back with a change
+	const auto seconds = [&](const std::string& id) {
+		for (const auto& model : window.models()) {
+			if (model.id == id) {
+				return model.seconds;
+			}
+		}
+		return std::string("none");
+	};
+
 	std::cout << "window shown before the check: " << shown() << "\n";
 	action([&](auto done) { window.start(done); });
 	std::cout << "window shown after the check: " << shown() << "\n";
@@ -105,7 +115,7 @@ int test_main_window() {
 	print_models(window);
 
 	std::cout << "step: delete\n";
-	action([&](auto done) { window.delete_model("0", "Test face", done); });
+	action([&](auto done) { window.delete_model("0", "Test face", seconds("0"), done); });
 	print_models(window);
 
 	std::cout << "step: add without a camera\n";
@@ -125,25 +135,28 @@ int test_main_window() {
 
 	std::cout << "step: delete fails\n";
 	set_mode("remove-error");
-	action([&](auto done) { window.delete_model("1", "Model #1", done); });
+	action([&](auto done) { window.delete_model("1", "Model #1", seconds("1"), done); });
 	set_mode("allow");
 
 	std::cout << "step: rename\n";
-	action([&](auto done) { window.rename_model("1", "Model #1", "Renamed", done); });
+	action([&](auto done) { window.rename_model("1", "Model #1", seconds("1"), "Renamed", done); });
 	print_models(window);
 
 	std::cout << "step: rename fails\n";
 	set_mode("rename-error");
-	action([&](auto done) { window.rename_model("1", "Renamed", "Not renamed", done); });
+	action([&](auto done) { window.rename_model("1", "Renamed", seconds("1"), "Not renamed", done); });
 	set_mode("allow");
 
 	std::cout << "step: the list is out of date\n";
-	action([&](auto done) { window.rename_model("1", "Another name", "Not renamed", done); });
-	action([&](auto done) { window.delete_model("1", "Another name", done); });
+	action([&](auto done) { window.rename_model("1", "Another name", seconds("1"), "Not renamed", done); });
+	action([&](auto done) { window.delete_model("1", "Another name", seconds("1"), done); });
+	std::cout << "step: the time is not the one of the model\n";
+	action([&](auto done) { window.rename_model("1", "Renamed", "5", "Not renamed", done); });
+	action([&](auto done) { window.delete_model("1", "Renamed", "5", done); });
 	print_models(window);
 
 	// What the face is saved with is checked at the end
-	action([&](auto done) { window.rename_model("1", "Renamed", "Model #1", done); });
+	action([&](auto done) { window.rename_model("1", "Renamed", seconds("1"), "Model #1", done); });
 
 	std::cout << "step: the video tab\n";
 	write_config("/dev/video42", "opencv");
@@ -156,7 +169,7 @@ int test_main_window() {
 	std::cout << "step: the permission is refused later\n";
 	set_mode("deny");
 	action([&](auto done) { window.reload_models(done); });
-	action([&](auto done) { window.delete_model("1", "Model #1", done); });
+	action([&](auto done) { window.delete_model("1", "Model #1", seconds("1"), done); });
 	std::cout << "still running after a refusal: yes\n";
 
 	std::cout << "step: not allowed to manage the models\n";

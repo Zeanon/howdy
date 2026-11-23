@@ -84,6 +84,9 @@ async def _run(gui=False):
 					enc["id"],
 					time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(enc["time"])),
 					enc["label"],
+					# The time as the daemon wants it back, to check that the model is still the one
+					# that is shown
+					str(int(enc["time"])),
 				)
 				for enc in encodings
 			]

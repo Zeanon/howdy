@@ -41,12 +41,31 @@ std::optional<long long> parse_integer(const std::string& text) {
 	return value;
 }
 
-// The caller saw the model with this label: with another one, the list of the caller is out of date
-// and the id means another model by now
-void check_label(const nlohmann::json& model, const std::string& model_id, const std::string& expected_label) {
+// The text goes to terminals and dialogs: no control characters, which includes the C1 ones that some
+// terminals take for escape sequences (U+0080 to U+009F, in UTF-8 0xC2 0x80 to 0xC2 0x9F)
+bool has_control_characters(const std::string& text) {
+	for (std::size_t i = 0; i < text.size(); ++i) {
+		const auto byte = static_cast<unsigned char>(text[i]);
+		if (byte < 0x20 || byte == 0x7F) {
+			return true;
+		}
+		if (byte == 0xC2 && i + 1 < text.size() && static_cast<unsigned char>(text[i + 1]) >= 0x80 && static_cast<unsigned char>(text[i + 1]) <= 0x9F) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// The caller saw the model with this label and time: with others, the list of the caller is out of
+// date and the id means another model by now. The label alone is not enough, models may share one.
+void check_model(const nlohmann::json& model, const std::string& model_id, const std::string& expected_label, const std::string& expected_time) {
 	const auto label = model.find("label");
-	if (label == model.end() || !label->is_string() || label->get<std::string>() != expected_label) {
-		throw std::runtime_error("Model " + model_id + " is not called \"" + expected_label + "\" any more, please reload the list");
+	const auto time = model.find("time");
+	const auto expected = parse_integer(expected_time);
+	const bool same_label = label != model.end() && label->is_string() && label->get<std::string>() == expected_label;
+	const bool same_time = time != model.end() && time->is_number() && expected.has_value() && static_cast<long long>(time->get<double>()) == *expected;
+	if (!same_label || !same_time) {
+		throw std::runtime_error("Model " + model_id + " has changed since the list was loaded, please reload the list");
 	}
 }
 
@@ -71,6 +90,9 @@ void validate_new_model(const nlohmann::json& model) {
 	}
 	if (model.at("label").get_ref<const std::string&>().size() > MAX_LABEL_BYTES) {
 		throw std::runtime_error("Model label is too long");
+	}
+	if (has_control_characters(model.at("label").get_ref<const std::string&>())) {
+		throw std::runtime_error("Model label has invalid characters");
 	}
 	if (!model.contains("data") || !model.at("data").is_array()) {
 		throw std::runtime_error("Model has no valid data");
@@ -171,7 +193,7 @@ std::string ModelStore::list(const std::string& username) const {
 	return result.dump();
 }
 
-void ModelStore::remove(const std::string& username, const std::string& model_id, const std::string& expected_label) const {
+void ModelStore::remove(const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& expected_time) const {
 	const auto path = path_for(username);
 	const auto models = load(path, username);
 	if (!models.has_value()) {
@@ -186,7 +208,7 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 		if (text != model_id) {
 			remaining.push_back(model);
 		} else {
-			check_label(model, model_id, expected_label);
+			check_model(model, model_id, expected_label, expected_time);
 		}
 	}
 
@@ -215,9 +237,14 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 	}
 }
 
-void ModelStore::rename(const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& label) const {
+void ModelStore::rename(
+	const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& expected_time,
+	const std::string& label) const {
 	if (label.size() > MAX_LABEL_BYTES) {
 		throw std::runtime_error("Model label is too long");
+	}
+	if (has_control_characters(label)) {
+		throw std::runtime_error("Model label has invalid characters");
 	}
 
 	const auto path = path_for(username);
@@ -231,7 +258,7 @@ void ModelStore::rename(const std::string& username, const std::string& model_id
 		const auto id = model.find("id");
 		const std::string text = id == model.end() ? "null" : (id->is_string() ? id->get<std::string>() : id->dump());
 		if (text == model_id) {
-			check_label(model, model_id, expected_label);
+			check_model(model, model_id, expected_label, expected_time);
 			model["label"] = label;
 			found = true;
 			break;

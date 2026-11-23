@@ -31,12 +31,12 @@ def say(line):
 		print(line)
 
 
-async def remove_model(bus, id, expected_label):
-	"""The daemon only removes the model if it still has the label the caller saw it with:
-	the ids move up when a model is removed, an old list would hit another one"""
-	signature = "sss" if builtins.howdy_args.user else "ss"
+async def remove_model(bus, id, expected_label, expected_time):
+	"""The daemon only removes the model if it still has the label and time the caller saw
+	it with: the ids move up when a model is removed, an old list would hit another one"""
+	signature = "ssss" if builtins.howdy_args.user else "sss"
 	body = [builtins.howdy_args.user] if builtins.howdy_args.user else []
-	body += [str(id), expected_label]
+	body += [str(id), expected_label, str(expected_time)]
 
 	reply = await bus.call(
 		Message(
@@ -56,13 +56,13 @@ async def remove_model(bus, id, expected_label):
 		raise RuntimeError("Failed to remove model")
 
 
-def run(expected_label=None):
-	"""expected_label: the label the caller (the window) shows for the model, the name that is
-	found in the list is used without it"""
-	asyncio.run(_run(expected_label))
+def run(expected_label=None, expected_time=None):
+	"""expected_label, expected_time: the label and time (seconds) the caller (the window)
+	shows for the model, the ones found in the list are used without them"""
+	asyncio.run(_run(expected_label, expected_time))
 
 
-async def _run(expected_label=None):
+async def _run(expected_label=None, expected_time=None):
 	bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 	try:
 		user = builtins.howdy_args.user
@@ -122,6 +122,7 @@ async def _run(expected_label=None):
 				# Mark as found and print an enter
 				found = True
 				found_label = enc["label"]
+				found_time = int(enc["time"])
 				break
 
 		# Abort if no matching id was found
@@ -130,7 +131,10 @@ async def _run(expected_label=None):
 
 		try:
 			await remove_model(
-				bus, id, expected_label if expected_label is not None else found_label
+				bus,
+				id,
+				expected_label if expected_label is not None else found_label,
+				expected_time if expected_time is not None else found_time,
 			)
 		except Exception as exc:
 			exit(f"Failed to remove face model: {exc}")

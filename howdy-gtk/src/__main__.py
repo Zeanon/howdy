@@ -169,7 +169,8 @@ class MainWindow(gtk.Window):
 		"""(Re)load the model list"""
 
 		# Create a datamodel
-		self.listmodel = gtk.ListStore(str, str, str)
+		# The fourth column, the time in seconds, is not shown: it is sent back with a change
+		self.listmodel = gtk.ListStore(str, str, str, str)
 
 		builtins.howdy_args = Args(
 			y=True, gui=True, plain=True, user=self.active_user, arguments=[]
@@ -179,9 +180,11 @@ class MainWindow(gtk.Window):
 
 		# Add the models to the datamodel
 		for model in user_models:
-			if len(model) < 3:
+			if len(model) < 4:
 				continue
-			self.listmodel.append((str(model[0]), str(model[1]), str(model[2])))
+			self.listmodel.append(
+				(str(model[0]), str(model[1]), str(model[2]), str(model[3]))
+			)
 
 		self.treeview.set_model(self.listmodel)
 

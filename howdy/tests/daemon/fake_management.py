@@ -22,8 +22,12 @@ PATH = "/org/boltgolt/howdy/Management"
 INTERFACE = "org.boltgolt.howdy.Management"
 
 
-def label_changed(model_id, expected):
-	return f'Model {model_id} is not called "{expected}" any more, please reload the list'
+def changed(model, label, seconds):
+	return model["label"] != label or str(int(model["time"])) != seconds
+
+
+def label_changed(model_id):
+	return f"Model {model_id} has changed since the list was loaded, please reload the list"
 
 
 def load():
@@ -91,8 +95,10 @@ def handler(msg):
 
 	if msg.member == "Remove":
 		for model in models:
-			if str(model["id"]) == msg.body[1] and model["label"] != msg.body[2]:
-				return error(msg, label_changed(msg.body[1], msg.body[2]))
+			if str(model["id"]) == msg.body[1] and changed(
+				model, msg.body[2], msg.body[3]
+			):
+				return error(msg, label_changed(msg.body[1]))
 		remaining = [m for m in models if str(m["id"]) != msg.body[1]]
 		if len(remaining) == len(models):
 			return error(msg, f"No model with ID {msg.body[1]} exists")
@@ -102,9 +108,9 @@ def handler(msg):
 	if msg.member == "Rename":
 		for model in models:
 			if str(model["id"]) == msg.body[1]:
-				if model["label"] != msg.body[2]:
-					return error(msg, label_changed(msg.body[1], msg.body[2]))
-				model["label"] = msg.body[3]
+				if changed(model, msg.body[2], msg.body[3]):
+					return error(msg, label_changed(msg.body[1]))
+				model["label"] = msg.body[4]
 				save(models)
 				return Message.new_method_return(msg, "b", [True])
 		return error(msg, f"No model with ID {msg.body[1]} exists")

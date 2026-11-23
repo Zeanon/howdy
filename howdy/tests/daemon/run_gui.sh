@@ -125,8 +125,9 @@ expect_contains "a model is renamed" "$daemon_calls" " Rename $USER_NAME"
 expect_contains "the new name is shown" "$(sed -n '/step: rename$/,/step: rename fails/p' <<< "$output")" "model: 1|"
 expect_contains "the name is the new one" "$(sed -n '/step: rename$/,/step: rename fails/p' <<< "$output")" "|Renamed"
 expect_contains "a failed rename is reported" "$output" "error: Error while renaming model | The model could not be renamed"
-expect_contains "a rename with an old list is refused" "$output" 'error: Error while renaming model | Model 1 is not called "Another name" any more'
-expect_contains "a delete with an old list is refused" "$output" 'error: Error while deleting model | Model 1 is not called "Another name" any more'
+expect_contains "a rename with an old list is refused" "$output" "error: Error while renaming model | Model 1 has changed since the list was loaded"
+expect_contains "a delete with an old list is refused" "$output" "error: Error while deleting model | Model 1 has changed since the list was loaded"
+expect "the time is checked as well" "$(sed -n '/step: the time is not the one of the model$/,/step: the video tab/p' <<< "$output" | grep -c "has changed since the list was loaded")" 2
 expect_contains "the model is kept then" "$(sed -n '/step: the list is out of date$/,/step: the video tab/p' <<< "$output")" "|Renamed"
 expect_contains "a failed delete is reported" "$output" "error: Error while deleting model | No model with ID"
 expect_contains "the camera of the config is shown" "$output" "camera: video42 | Can't open camera | opencv"

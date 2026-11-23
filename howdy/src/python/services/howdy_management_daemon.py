@@ -2,6 +2,7 @@ import os
 import sys
 import pwd
 import time
+import unicodedata
 import json
 import syslog
 import asyncio
@@ -69,12 +70,29 @@ COMPARE_RATE_PER_SECOND = 30
 COMPARE_BURST = 60
 
 
-def check_label(model, model_id, expected_label):
-	"""The caller saw the model with this label. With another one its list is out of date
-	and the id means another model by now (the ids move up when a model is removed)."""
-	if model.get("label") != expected_label:
+def validate_label(label):
+	"""The label goes to terminals and dialogs: a text of a limited size without control
+	characters (category Cc, which includes the C1 ones that some terminals take for
+	escape sequences)"""
+	if not isinstance(label, str):
+		raise TypeError("Model has no valid label")
+	if len(label.encode()) > MAX_LABEL_BYTES:
+		raise ValueError("Model label is too long")
+	if any(unicodedata.category(char) == "Cc" for char in label):
+		raise ValueError("Model label has invalid characters")
+
+
+def check_model(model, model_id, expected_label, expected_time):
+	"""The caller saw the model with this label and time. With others its list is out of date
+	and the id means another model by now (the ids move up when a model is removed). The
+	label alone is not enough, models may share one."""
+	try:
+		same_time = int(model.get("time")) == int(expected_time)
+	except (TypeError, ValueError):
+		same_time = False
+	if model.get("label") != expected_label or not same_time:
 		raise ValueError(
-			f'Model {model_id} is not called "{expected_label}" any more, please reload the list'
+			f"Model {model_id} has changed since the list was loaded, please reload the list"
 		)
 
 
@@ -100,8 +118,8 @@ class ManagementInterface:
 		self.methods = {
 			"Add": ("s", self.add),
 			"List": ("", self.list),
-			"Remove": ("ss", self.remove),
-			"Rename": ("sss", self.rename),
+			"Remove": ("sss", self.remove),
+			"Rename": ("ssss", self.rename),
 			"Clear": ("", self.clear),
 			"Compare": ("sad", self.compare),
 			"KeepAlive": ("", self.keep_alive),
@@ -249,6 +267,8 @@ class ManagementInterface:
 			if not isinstance(model, dict):
 				raise TypeError("Model must be a dictionary")
 
+			validate_label(model.get("label"))
+
 			# Get or create a lock for this user
 			lock = self.user_locks.setdefault(username, asyncio.Lock())
 
@@ -371,9 +391,10 @@ class ManagementInterface:
 
 	async def remove(self, msg):
 		try:
-			username = await self.get_caller(msg, 2)
-			model_id = msg.body[-2]
-			expected_label = msg.body[-1]
+			username = await self.get_caller(msg, 3)
+			model_id = msg.body[-3]
+			expected_label = msg.body[-2]
+			expected_time = msg.body[-1]
 
 			lock = self.user_locks.setdefault(username, asyncio.Lock())
 
@@ -393,7 +414,7 @@ class ManagementInterface:
 					if str(enc.get("id")) != model_id:
 						remaining.append(enc)
 					else:
-						check_label(enc, model_id, expected_label)
+						check_model(enc, model_id, expected_label, expected_time)
 
 				if len(remaining) == len(encodings):
 					raise ValueError(
@@ -421,13 +442,13 @@ class ManagementInterface:
 
 	async def rename(self, msg):
 		try:
-			username = await self.get_caller(msg, 3)
-			model_id = msg.body[-3]
-			expected_label = msg.body[-2]
+			username = await self.get_caller(msg, 4)
+			model_id = msg.body[-4]
+			expected_label = msg.body[-3]
+			expected_time = msg.body[-2]
 			new_label = msg.body[-1]
 
-			if len(new_label.encode()) > MAX_LABEL_BYTES:
-				raise ValueError("Model label is too long")
+			validate_label(new_label)
 
 			lock = self.user_locks.setdefault(username, asyncio.Lock())
 
@@ -445,7 +466,7 @@ class ManagementInterface:
 				# The ids are compared as text, like in Remove
 				for enc in encodings:
 					if isinstance(enc, dict) and str(enc.get("id")) == model_id:
-						check_label(enc, model_id, expected_label)
+						check_model(enc, model_id, expected_label, expected_time)
 						enc["label"] = new_label
 						break
 				else:

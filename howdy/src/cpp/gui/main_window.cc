@@ -45,7 +45,9 @@ std::vector<ModelRow> parse_model_list(const std::string& json) {
 		std::array<char, 32> created{};
 		std::strftime(created.data(), created.size(), "%Y-%m-%d %H:%M:%S", &local);
 
-		rows.push_back({std::to_string(model.at("id").get<long long>()), created.data(), model.at("label").get<std::string>()});
+		rows.push_back(
+			{std::to_string(model.at("id").get<long long>()), created.data(), model.at("label").get<std::string>(),
+			 std::to_string(static_cast<long long>(seconds))});
 	}
 	return rows;
 }
@@ -336,6 +338,12 @@ void MainWindow::ask_for_model_name() {
 	}
 }
 
+// The time of the shown model with this id, as the daemon wants it back
+std::string MainWindow::seconds_of(const std::string& id) const {
+	const auto row = std::find_if(models_.begin(), models_.end(), [&](const ModelRow& model) { return model.id == id; });
+	return row != models_.end() ? row->seconds : "";
+}
+
 void MainWindow::ask_to_rename_model() {
 	if (busy_) {
 		return;
@@ -382,7 +390,7 @@ void MainWindow::ask_to_rename_model() {
 	// The list is comma separated for machines
 	std::erase(name, ',');
 	if (response == GTK_RESPONSE_OK && !name.empty() && name != current) {
-		rename_model(model_id, current, name);
+		rename_model(model_id, current, seconds_of(model_id), name);
 	}
 }
 
@@ -412,7 +420,7 @@ void MainWindow::ask_to_delete_model() {
 	gtk_widget_destroy(dialog);
 
 	if (response == GTK_RESPONSE_OK) {
-		delete_model(model_id, model_label);
+		delete_model(model_id, model_label, seconds_of(model_id));
 	}
 }
 
@@ -509,10 +517,10 @@ void MainWindow::add_model(const std::string& name, std::function<void()> done) 
 	});
 }
 
-void MainWindow::delete_model(const std::string& id, const std::string& expected_label, std::function<void()> done) {
+void MainWindow::delete_model(const std::string& id, const std::string& expected_label, const std::string& expected_time, std::function<void()> done) {
 	set_busy(true);
 	const auto alive = alive_;
-	client_.remove(user_, id, expected_label, [this, alive, done = std::move(done)](const ManagementResult& result) {
+	client_.remove(user_, id, expected_label, expected_time, [this, alive, done = std::move(done)](const ManagementResult& result) {
 		if (!*alive) {
 			return;
 		}
@@ -525,10 +533,11 @@ void MainWindow::delete_model(const std::string& id, const std::string& expected
 	});
 }
 
-void MainWindow::rename_model(const std::string& id, const std::string& expected_label, const std::string& label, std::function<void()> done) {
+void MainWindow::rename_model(
+	const std::string& id, const std::string& expected_label, const std::string& expected_time, const std::string& label, std::function<void()> done) {
 	set_busy(true);
 	const auto alive = alive_;
-	client_.rename(user_, id, expected_label, label, [this, alive, done = std::move(done)](const ManagementResult& result) {
+	client_.rename(user_, id, expected_label, expected_time, label, [this, alive, done = std::move(done)](const ManagementResult& result) {
 		if (!*alive) {
 			return;
 		}

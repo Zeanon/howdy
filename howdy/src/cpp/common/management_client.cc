@@ -171,12 +171,14 @@ void add_model(sd_bus* bus, const std::string& user, const std::string& model_js
 	expect_success(call(bus, "Add", {&user, &model_json}), "Failed to add face model");
 }
 
-void remove_model(sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label) {
-	expect_success(call(bus, "Remove", {&user, &id, &expected_label}), "Failed to remove model");
+void remove_model(sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time) {
+	expect_success(call(bus, "Remove", {&user, &id, &expected_label, &expected_time}), "Failed to remove model");
 }
 
-void rename_model(sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label, const std::string& label) {
-	expect_success(call(bus, "Rename", {&user, &id, &expected_label, &label}), "Failed to rename model");
+void rename_model(
+	sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time,
+	const std::string& label) {
+	expect_success(call(bus, "Rename", {&user, &id, &expected_label, &expected_time, &label}), "Failed to rename model");
 }
 
 void clear_models(sd_bus* bus, const std::string& user) {
