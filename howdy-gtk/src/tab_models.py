@@ -11,6 +11,7 @@ os.environ["GDK_BACKEND"] = "x11"
 from .i18n import S
 from howdy import enroll_helper  # type: ignore
 from howdy.cli import add  # type: ignore
+from howdy.model_limits import many_models, many_models_warning  # type: ignore
 from collections import namedtuple
 
 Args = namedtuple("args", ["y", "gui", "plain", "user", "arguments"])
@@ -58,6 +59,23 @@ def on_model_add(self, button):
 
 	# Add the box to the dialog
 	content_area = dialog.get_content_area()
+
+	# The same warning as `howdy add` gives, where the name is asked for
+	if many_models(len(self.listmodel)):
+		warning = gtk.Box(orientation=gtk.Orientation.HORIZONTAL, spacing=8)
+		warning.pack_start(
+			gtk.Image.new_from_icon_name("dialog-warning", gtk.IconSize.LARGE_TOOLBAR),
+			False,
+			False,
+			5,
+		)
+		text = gtk.Label(label=many_models_warning())
+		text.set_line_wrap(True)
+		text.set_max_width_chars(48)
+		text.set_xalign(0.0)
+		warning.pack_start(text, True, True, 0)
+		content_area.pack_start(warning, False, False, 5)
+
 	content_area.pack_start(hbox, True, True, 5)
 
 	dialog.show_all()

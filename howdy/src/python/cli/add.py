@@ -10,6 +10,7 @@ import builtins
 import configparser
 
 from ..i18n import S
+from ..model_limits import many_models, many_models_warning
 from .. import enroll_helper
 from .. import paths_factory
 from .. import enroll_capture
@@ -167,12 +168,8 @@ async def _run(dialog=None):
 			encodings = []
 
 		# Print a warning if too many encodings are being added
-		if len(encodings) > 3:
-			say(
-				S(
-					"NOTICE: Each additional model slows down the face recognition engine slightly"
-				)
-			)
+		if many_models(len(encodings)):
+			say(S("NOTICE: ") + many_models_warning())
 			say(S("Press Ctrl+C to cancel\n"))
 
 		# Make clear what we are doing if not human

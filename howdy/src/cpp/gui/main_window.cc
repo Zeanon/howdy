@@ -10,6 +10,7 @@
 
 #include <unistd.h>
 
+#include "model_limits.hh"
 #include "process.hh"
 
 namespace gtkui {
@@ -325,7 +326,21 @@ void MainWindow::ask_for_model_name() {
 	GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 	gtk_box_pack_start(GTK_BOX(box), gtk_label_new(S("Model name:")), FALSE, FALSE, 5);
 	gtk_box_pack_start(GTK_BOX(box), entry, TRUE, TRUE, 5);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), box, TRUE, TRUE, 5);
+	GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+
+	// The same warning as `howdy add` gives, where the name is asked for
+	if (howdy::many_models(models_.size())) {
+		GtkWidget* warning = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+		gtk_box_pack_start(GTK_BOX(warning), gtk_image_new_from_icon_name("dialog-warning", GTK_ICON_SIZE_LARGE_TOOLBAR), FALSE, FALSE, 5);
+		GtkWidget* text = gtk_label_new(howdy::many_models_warning());
+		gtk_label_set_line_wrap(GTK_LABEL(text), TRUE);
+		gtk_label_set_max_width_chars(GTK_LABEL(text), 48);
+		gtk_label_set_xalign(GTK_LABEL(text), 0.0F);
+		gtk_box_pack_start(GTK_BOX(warning), text, TRUE, TRUE, 0);
+		gtk_box_pack_start(GTK_BOX(content), warning, FALSE, FALSE, 5);
+	}
+
+	gtk_box_pack_start(GTK_BOX(content), box, TRUE, TRUE, 5);
 	gtk_widget_show_all(dialog);
 
 	const gint response = gtk_dialog_run(GTK_DIALOG(dialog));

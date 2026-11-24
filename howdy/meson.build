@@ -597,6 +597,9 @@ if need_py
     if need_py_auth or need_py_cli
         py_top += 'src/python/common/exit_codes.py'
     endif
+    if need_py_cli
+        py_top += 'src/python/common/model_limits.py'
+    endif
     # The checks who calls a daemon, also used by the polkit check of the cli package
     if need_py_auth or need_py_management or need_py_cli
         py_top += 'src/python/common/caller.py'

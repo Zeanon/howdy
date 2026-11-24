@@ -17,6 +17,7 @@
 #include "face_backend.hh"
 #include "face_setup.hh"
 #include "management_client.hh"
+#include "model_limits.hh"
 #include "paths.hh"
 #include "util.hh"
 #include "video_capture.hh"
@@ -50,8 +51,8 @@ int run_add(const Options& options) {
 	}
 
 	// Print a warning if too many encodings are being added
-	if (models.size() > 3) {
-		say(options, S("NOTICE: Each additional model slows down the face recognition engine slightly"));
+	if (many_models(models.size())) {
+		say(options, std::string(S("NOTICE: ")) + many_models_warning());
 		say(options, S("Press Ctrl+C to cancel\n"));
 	}
 
