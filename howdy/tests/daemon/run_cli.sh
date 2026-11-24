@@ -129,27 +129,27 @@ out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 3 euclidean 0.1 0.2 0.3)"
 expect "polkit can refuse compare" "$(grep -c "org.boltgolt.howdy.Management.NotAuthorized" <<< "$out")" 3
 expect "a refusal is asked again every time" "$(($(asked) - before))" 3
 echo allow > "$T/polkit.mode"
-expect "rename" "$(mcall Rename ssss 1 second 1700000100 "Living room")" "b true"
+expect "rename" "$(mcall Rename xsxs 1 second 1700000100 "Living room")" "b true"
 expect_contains "the model has the new label" "$(mcall List s "$USER_NAME")" 'label\":\"Living room'
 expect_contains "the other models keep theirs" "$(mcall List s "$USER_NAME")" 'label\":\"first'
-expect "rename with a user" "$(mcall Rename sssss "$USER_NAME" 1 "Living room" 1700000100 "Office")" "b true"
-expect "rename unknown id" "$(mcall Rename ssss 9 x 1 y)" "Call failed: No model with ID 9 exists for $USER_NAME"
-expect "rename with a label that is too long" "$(mcall Rename ssss 1 Office 1700000100 "$(printf 'x%.0s' $(seq 300))")" "Call failed: Model label is too long"
+expect "rename with a user" "$(mcall Rename sxsxs "$USER_NAME" 1 "Living room" 1700000100 "Office")" "b true"
+expect "rename unknown id" "$(mcall Rename xsxs 9 x 1 y)" "Call failed: No model with ID 9 exists for $USER_NAME"
+expect "rename with a label that is too long" "$(mcall Rename xsxs 1 Office 1700000100 "$(printf 'x%.0s' $(seq 300))")" "Call failed: Model label is too long"
 expect "rename needs both arguments" "$(mcall Rename s 1)" "Call failed: Invalid arguments for Rename"
-expect "rename with an old list" "$(mcall Rename ssss 1 wrong 1700000100 x)" "Call failed: Model 1 has changed since the list was loaded, please reload the list"
-expect "rename with another time" "$(mcall Rename ssss 1 Office 5 x)" "Call failed: Model 1 has changed since the list was loaded, please reload the list"
-expect "remove with an old list" "$(mcall Remove sss 0 wrong 1700000000)" "Call failed: Model 0 has changed since the list was loaded, please reload the list"
-expect "remove with another time" "$(mcall Remove sss 0 first 5)" "Call failed: Model 0 has changed since the list was loaded, please reload the list"
-expect "rename with a control character" "$(mcall Rename ssss 1 Office 1700000100 $'a\x1b[31mb')" "Call failed: Model label has invalid characters"
-expect "rename with a C1 control character" "$(mcall Rename ssss 1 Office 1700000100 $'a\xc2\x9bb')" "Call failed: Model label has invalid characters"
+expect "rename with an old list" "$(mcall Rename xsxs 1 wrong 1700000100 x)" "Call failed: Model 1 has changed since the list was loaded, please reload the list"
+expect "rename with another time" "$(mcall Rename xsxs 1 Office 5 x)" "Call failed: Model 1 has changed since the list was loaded, please reload the list"
+expect "remove with an old list" "$(mcall Remove xsx 0 wrong 1700000000)" "Call failed: Model 0 has changed since the list was loaded, please reload the list"
+expect "remove with another time" "$(mcall Remove xsx 0 first 5)" "Call failed: Model 0 has changed since the list was loaded, please reload the list"
+expect "rename with a control character" "$(mcall Rename xsxs 1 Office 1700000100 $'a\x1b[31mb')" "Call failed: Model label has invalid characters"
+expect "rename with a C1 control character" "$(mcall Rename xsxs 1 Office 1700000100 $'a\xc2\x9bb')" "Call failed: Model label has invalid characters"
 expect "add with a control character" "$(mcall Add s '{"time":1,"label":"a\u001bb","data":[]}')" "Call failed: Model label has invalid characters"
 expect_contains "the old list changed nothing" "$(mcall List s "$USER_NAME")" 'label\":\"first'
-expect "remove" "$(mcall Remove ssss "$USER_NAME" 0 first 1700000000)" "b true"
+expect "remove" "$(mcall Remove sxsx "$USER_NAME" 0 first 1700000000)" "b true"
 expect_contains "the model behind it moves up" "$(mcall List s "$USER_NAME")" 'id\":0'
-expect "remove unknown id" "$(mcall Remove ssss "$USER_NAME" 9 x 1)" "Call failed: No model with ID 9 exists for $USER_NAME"
-expect "remove the last model" "$(mcall Remove sss 0 Office 1700000100)" "b true"
+expect "remove unknown id" "$(mcall Remove sxsx "$USER_NAME" 9 x 1)" "Call failed: No model with ID 9 exists for $USER_NAME"
+expect "remove the last model" "$(mcall Remove xsx 0 Office 1700000100)" "b true"
 expect "file is removed with the last model" "$([ -e "$MODEL" ] && echo exists || echo gone)" gone
-expect "remove without models" "$(mcall Remove ssss "$USER_NAME" 0 x 1)" "Call failed: No face model known for user $USER_NAME"
+expect "remove without models" "$(mcall Remove sxsx "$USER_NAME" 0 x 1)" "Call failed: No face model known for user $USER_NAME"
 expect "clear without models" "$(mcall Clear s "$USER_NAME")" "Call failed: $USER_NAME has no models or they have already been cleared"
 mcall Add s "$MODEL_JSON" > /dev/null
 expect "clear" "$(mcall Clear)" "b true"
@@ -161,7 +161,7 @@ mcall Add s "$MODEL_JSON" > /dev/null
 chmod 666 "$MODEL"
 expect_contains "list refuses a model file that others can write" "$(mcall List)" "Not using"
 expect_contains "add refuses it" "$(mcall Add s "$SECOND_JSON")" "Not using"
-expect_contains "remove refuses it" "$(mcall Remove sss 0 first 1700000000)" "Not using"
+expect_contains "remove refuses it" "$(mcall Remove xsx 0 first 1700000000)" "Not using"
 chmod 600 "$MODEL"
 expect "list works again with the right mode" "$(mcall List)" 's "[{'
 mcall Clear > /dev/null
@@ -181,7 +181,7 @@ expect_contains "unknown method" "$(mcall Frobnicate)" "Call failed"
 mcall Clear > /dev/null
 for _ in $(seq 64); do mcall Add s "$MODEL_JSON" > /dev/null; done
 expect "too many models" "$(mcall Add s "$MODEL_JSON")" "Call failed: Too many face models, please remove one first"
-expect "the limit is not reached by removing" "$(mcall Remove sss 0 first 1700000000)" "b true"
+expect "the limit is not reached by removing" "$(mcall Remove xsx 0 first 1700000000)" "b true"
 expect "a model can be added again" "$(mcall Add s "$MODEL_JSON")" "b true"
 mcall Clear > /dev/null
 expect "other user" "$(mcall List s nobody)" "Call failed: Not authorized to modify models for user nobody"
@@ -216,7 +216,7 @@ if command -v gdbus > /dev/null; then
 	expect_contains "a refusal by polkit" "$(gcall List "'$USER_NAME'")" "org.boltgolt.howdy.Management.NotAuthorized: Polkit authorization denied"
 	echo allow > "$T/polkit.mode"
 	expect_contains "somebody else's models" "$(gcall List "'nobody'")" "org.boltgolt.howdy.Management.NotAuthorized: Not authorized to modify models for user nobody"
-	expect_contains "other failures keep the name of the method" "$(gcall Remove "'$USER_NAME'" "'9'" "'x'" "'1'")" "org.boltgolt.howdy.Management.Remove.Error: No face model known"
+	expect_contains "other failures keep the name of the method" "$(gcall Remove "'$USER_NAME'" "int64 9" "'x'" "int64 1")" "org.boltgolt.howdy.Management.Remove.Error: No face model known"
 else
 	echo "gdbus not found, skipping the check of the error names"
 fi

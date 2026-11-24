@@ -82,12 +82,18 @@ def validate_label(label):
 		raise ValueError("Model label has invalid characters")
 
 
+def has_id(model, model_id):
+	"""Whether this is the model with the id"""
+	value = model.get("id") if isinstance(model, dict) else None
+	return isinstance(value, int) and not isinstance(value, bool) and value == model_id
+
+
 def check_model(model, model_id, expected_label, expected_time):
 	"""The caller saw the model with this label and time. With others its list is out of date
 	and the id means another model by now (the ids move up when a model is removed). The
 	label alone is not enough, models may share one."""
 	try:
-		same_time = int(model.get("time")) == int(expected_time)
+		same_time = int(model.get("time")) == expected_time
 	except (TypeError, ValueError):
 		same_time = False
 	if model.get("label") != expected_label or not same_time:
@@ -118,8 +124,8 @@ class ManagementInterface:
 		self.methods = {
 			"Add": ("s", self.add),
 			"List": ("", self.list),
-			"Remove": ("sss", self.remove),
-			"Rename": ("ssss", self.rename),
+			"Remove": ("xsx", self.remove),
+			"Rename": ("xsxs", self.rename),
 			"Clear": ("", self.clear),
 			"Compare": ("sad", self.compare),
 			"KeepAlive": ("", self.keep_alive),
@@ -411,7 +417,7 @@ class ManagementInterface:
 
 				remaining = []
 				for enc in encodings:
-					if str(enc.get("id")) != model_id:
+					if not has_id(enc, model_id):
 						remaining.append(enc)
 					else:
 						check_model(enc, model_id, expected_label, expected_time)
@@ -425,14 +431,9 @@ class ManagementInterface:
 					os.remove(enc_file)
 				else:
 					# The models behind the removed one move up, so the ids stay without gaps
-					try:
-						removed = int(model_id)
-					except ValueError:
-						removed = None
-					if removed is not None:
-						for enc in remaining:
-							if isinstance(enc.get("id"), int) and enc["id"] > removed:
-								enc["id"] -= 1
+					for enc in remaining:
+						if isinstance(enc.get("id"), int) and enc["id"] > model_id:
+							enc["id"] -= 1
 					write_model_file(enc_file, username, json.dumps(remaining))
 
 				self.bus.send(Message.new_method_return(msg, "b", [True]))
@@ -463,9 +464,8 @@ class ManagementInterface:
 				if not isinstance(encodings, list):
 					raise ValueError("Face model file is invalid")
 
-				# The ids are compared as text, like in Remove
 				for enc in encodings:
-					if isinstance(enc, dict) and str(enc.get("id")) == model_id:
+					if has_id(enc, model_id):
 						check_model(enc, model_id, expected_label, expected_time)
 						enc["label"] = new_label
 						break

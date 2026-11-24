@@ -34,9 +34,9 @@ def say(line):
 async def rename_model(bus, id, expected_label, expected_time, label):
 	"""The daemon only renames the model if it still has the label and time the caller saw
 	it with: the ids move up when a model is removed, an old list would hit another one"""
-	signature = "sssss" if builtins.howdy_args.user else "ssss"
+	signature = "sxsxs" if builtins.howdy_args.user else "xsxs"
 	body = [builtins.howdy_args.user] if builtins.howdy_args.user else []
-	body += [str(id), expected_label, str(expected_time), label]
+	body += [int(id), expected_label, int(expected_time), label]
 
 	reply = await bus.call(
 		Message(
@@ -129,7 +129,7 @@ async def _run(expected_label=None, expected_time=None):
 		try:
 			await rename_model(
 				bus,
-				id,
+				int(found["id"]),
 				expected_label if expected_label is not None else found["label"],
 				expected_time if expected_time is not None else int(found["time"]),
 				label,

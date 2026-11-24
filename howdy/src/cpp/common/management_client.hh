@@ -42,14 +42,14 @@ std::vector<ModelInfo> list_models(sd_bus* bus, const std::string& user);
 // model_json: {"time": ..., "label": ..., "data": [[...], ...]}
 void add_model(sd_bus* bus, const std::string& user, const std::string& model_json);
 
-// The model is only removed or renamed if it still has the label the caller saw it with
-// (expected_label) and time (expected_time, seconds as text): the ids move up when a model is
-// removed, an old list would hit another one.
-void remove_model(sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time);
+// The model is only removed or renamed if it still has the label (expected_label) and time
+// (expected_time, seconds) the caller saw it with: the ids move up when a model is removed, an old
+// list would hit another one.
+void remove_model(sd_bus* bus, const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time);
 
 // Give the model another label
 void rename_model(
-	sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time, const std::string& label);
+	sd_bus* bus, const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time, const std::string& label);
 
 void clear_models(sd_bus* bus, const std::string& user);
 

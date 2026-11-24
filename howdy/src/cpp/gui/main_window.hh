@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -17,8 +18,10 @@ struct ModelRow {
 	std::string id;
 	std::string created;
 	std::string label;
-	// The time as the daemon wants it back to check that the model is still the one that is shown
-	std::string seconds;
+	// The id and time as numbers, the daemon wants them back to check that the model is still the one
+	// that is shown
+	std::int64_t number = 0;
+	std::int64_t seconds = 0;
 };
 
 // The list of the management daemon, a JSON list of models with "id", "time"
@@ -91,9 +94,9 @@ class MainWindow {
 	void add_model(const std::string& name, std::function<void()> done = {});
 	// The model is only changed if it still has the label and time that are shown (expected_label,
 	// expected_time in seconds), the ids move up when a model is removed
-	void delete_model(const std::string& id, const std::string& expected_label, const std::string& expected_time, std::function<void()> done = {});
-	void rename_model(
-		const std::string& id, const std::string& expected_label, const std::string& expected_time, const std::string& label, std::function<void()> done = {});
+	void delete_model(std::int64_t id, const std::string& expected_label, std::int64_t expected_time, std::function<void()> done = {});
+	void
+	rename_model(std::int64_t id, const std::string& expected_label, std::int64_t expected_time, const std::string& label, std::function<void()> done = {});
 
   private:
 	static void on_page_switch(GtkNotebook* notebook, GtkWidget* page, guint page_number, gpointer data);
@@ -107,7 +110,7 @@ class MainWindow {
 	void ask_to_delete_model();
 	void ask_to_rename_model();
 	void build_model_menu();
-	[[nodiscard]] std::string seconds_of(const std::string& id) const;
+	[[nodiscard]] const ModelRow* row_of(const std::string& id) const;
 	void show_model_menu(GdkRectangle rect);
 	void set_busy(bool busy);
 	[[nodiscard]] std::string next_model_name() const;

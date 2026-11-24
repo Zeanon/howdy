@@ -101,15 +101,17 @@ void ManagementClient::add(const std::string& user, const std::string& model_jso
 	call("Add", g_variant_new("(ss)", user.c_str(), model_json.c_str()), std::move(callback));
 }
 
-void ManagementClient::remove(
-	const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time, Callback callback) {
-	call("Remove", g_variant_new("(ssss)", user.c_str(), id.c_str(), expected_label.c_str(), expected_time.c_str()), std::move(callback));
+void ManagementClient::remove(const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time, Callback callback) {
+	call(
+		"Remove", g_variant_new("(sxsx)", user.c_str(), static_cast<gint64>(id), expected_label.c_str(), static_cast<gint64>(expected_time)),
+		std::move(callback));
 }
 
 void ManagementClient::rename(
-	const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time, const std::string& label,
-	Callback callback) {
-	call("Rename", g_variant_new("(sssss)", user.c_str(), id.c_str(), expected_label.c_str(), expected_time.c_str(), label.c_str()), std::move(callback));
+	const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time, const std::string& label, Callback callback) {
+	call(
+		"Rename", g_variant_new("(sxsxs)", user.c_str(), static_cast<gint64>(id), expected_label.c_str(), static_cast<gint64>(expected_time), label.c_str()),
+		std::move(callback));
 }
 
 } // namespace gtkui

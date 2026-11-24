@@ -754,7 +754,7 @@ async def managing():
 
 		check(
 			"rename",
-			await call("Rename", "ssss", ["1", "second", "1", "Living room"]),
+			await call("Rename", "xsxs", [1, "second", 1, "Living room"]),
 			[True],
 		)
 		check(
@@ -764,7 +764,7 @@ async def managing():
 		)
 		check(
 			"rename with a user",
-			await call("Rename", "sssss", [own, "2", "third", "1", "Office"]),
+			await call("Rename", "sxsxs", [own, 2, "third", 1, "Office"]),
 			[True],
 		)
 		check(
@@ -778,32 +778,32 @@ async def managing():
 			[[0.1, 0.2]],
 		)
 
-		error, text = await call("Rename", "ssss", ["9", "x", "1", "y"])
+		error, text = await call("Rename", "xsxs", [9, "x", 1, "y"])
 		check("rename unknown id, error", error, management_module.RENAME_ERROR)
 		check("rename unknown id, text", text, f"No model with ID 9 exists for {own}")
-		error, text = await call("Rename", "ssss", ["1", "Living room", "1", "x" * 300])
+		error, text = await call("Rename", "xsxs", [1, "Living room", 1, "x" * 300])
 		check("rename with a long label, error", error, management_module.RENAME_ERROR)
 		check("rename with a long label, text", text, "Model label is too long")
 		# The caller saw the models before another one was removed: the ids moved up
 		stale = "Model {} has changed since the list was loaded, please reload the list"
 		check(
 			"rename with an old list",
-			await call("Rename", "ssss", ["1", "second", "1", "x"]),
+			await call("Rename", "xsxs", [1, "second", 1, "x"]),
 			(management_module.RENAME_ERROR, stale.format(1)),
 		)
 		check(
 			"rename with another time",
-			await call("Rename", "ssss", ["1", "Living room", "5", "x"]),
+			await call("Rename", "xsxs", [1, "Living room", 5, "x"]),
 			(management_module.RENAME_ERROR, stale.format(1)),
 		)
 		check(
 			"remove with an old list",
-			await call("Remove", "sss", ["0", "wrong", "1"]),
+			await call("Remove", "xsx", [0, "wrong", 1]),
 			(management_module.REMOVE_ERROR, stale.format(0)),
 		)
 		check(
 			"remove with another time",
-			await call("Remove", "sss", ["0", "first", "5"]),
+			await call("Remove", "xsx", [0, "first", 5]),
 			(management_module.REMOVE_ERROR, stale.format(0)),
 		)
 		for name, label in (
@@ -813,7 +813,7 @@ async def managing():
 		):
 			check(
 				f"rename with {name}",
-				await call("Rename", "ssss", ["1", "Living room", "1", label]),
+				await call("Rename", "xsxs", [1, "Living room", 1, label]),
 				(management_module.RENAME_ERROR, "Model label has invalid characters"),
 			)
 			check(
@@ -827,19 +827,15 @@ async def managing():
 			[(0, "first"), (1, "Living room"), (2, "Office")],
 		)
 
-		check(
-			"remove the first", await call("Remove", "sss", ["0", "first", "1"]), [True]
-		)
+		check("remove the first", await call("Remove", "xsx", [0, "first", 1]), [True])
 		check(
 			"the models behind it move up",
 			await models(),
 			[(0, "Living room"), (1, "Office")],
 		)
-		error, text = await call("Remove", "sss", ["5", "x", "1"])
+		error, text = await call("Remove", "xsx", [5, "x", 1])
 		check("remove unknown id, error", error, management_module.REMOVE_ERROR)
 		check("remove unknown id, text", text, f"No model with ID 5 exists for {own}")
-		error, _ = await call("Remove", "sss", ["x", "x", "1"])
-		check("remove with a text as id", error, management_module.REMOVE_ERROR)
 		check(
 			"nothing changed by the failures, remove",
 			await models(),
@@ -848,13 +844,13 @@ async def managing():
 
 		check(
 			"remove the last one of the list",
-			await call("Remove", "sss", ["1", "Office", "1"]),
+			await call("Remove", "xsx", [1, "Office", 1]),
 			[True],
 		)
 		check("the ones before it stay", await models(), [(0, "Living room")])
 		check(
 			"remove the last model",
-			await call("Remove", "ssss", [own, "0", "Living room", "1"]),
+			await call("Remove", "sxsx", [own, 0, "Living room", 1]),
 			[True],
 		)
 		check(
@@ -862,7 +858,7 @@ async def managing():
 			os.path.exists(paths_factory.user_model_path(own)),
 			False,
 		)
-		error, text = await call("Rename", "ssss", ["0", "x", "1", "y"])
+		error, text = await call("Rename", "xsxs", [0, "x", 1, "y"])
 		check("rename without models, error", error, management_module.RENAME_ERROR)
 		check(
 			"rename without models, text", text, f"No face model known for user {own}"

@@ -34,9 +34,9 @@ def say(line):
 async def remove_model(bus, id, expected_label, expected_time):
 	"""The daemon only removes the model if it still has the label and time the caller saw
 	it with: the ids move up when a model is removed, an old list would hit another one"""
-	signature = "ssss" if builtins.howdy_args.user else "sss"
+	signature = "sxsx" if builtins.howdy_args.user else "xsx"
 	body = [builtins.howdy_args.user] if builtins.howdy_args.user else []
-	body += [str(id), expected_label, str(expected_time)]
+	body += [int(id), expected_label, int(expected_time)]
 
 	reply = await bus.call(
 		Message(
@@ -121,6 +121,7 @@ async def _run(expected_label=None, expected_time=None):
 
 				# Mark as found and print an enter
 				found = True
+				found_id = int(enc["id"])
 				found_label = enc["label"]
 				found_time = int(enc["time"])
 				break
@@ -132,7 +133,7 @@ async def _run(expected_label=None, expected_time=None):
 		try:
 			await remove_model(
 				bus,
-				id,
+				found_id,
 				expected_label if expected_label is not None else found_label,
 				expected_time if expected_time is not None else found_time,
 			)

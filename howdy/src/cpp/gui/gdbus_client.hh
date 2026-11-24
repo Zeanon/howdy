@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -40,10 +41,9 @@ class ManagementClient {
 	// enter a password, so the calls have a long timeout.
 	void list(const std::string& user, Callback callback);
 	void add(const std::string& user, const std::string& model_json, Callback callback);
-	void remove(const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time, Callback callback);
+	void remove(const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time, Callback callback);
 	void rename(
-		const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time, const std::string& label,
-		Callback callback);
+		const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time, const std::string& label, Callback callback);
 
   private:
 	void call(const char* method, GVariant* parameters, Callback callback);

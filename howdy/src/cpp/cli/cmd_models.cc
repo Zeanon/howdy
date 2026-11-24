@@ -114,7 +114,7 @@ int run_remove(const Options& options) {
 	}
 
 	try {
-		remove_model(bus.get(), options.user, id, found->label, std::to_string(found->time));
+		remove_model(bus.get(), options.user, found->id, found->label, found->time);
 	} catch (const std::exception& exc) {
 		throw CliError(std::string("Failed to remove face model: ") + exc.what());
 	}
@@ -188,7 +188,7 @@ int run_rename(const Options& options) {
 	}
 
 	try {
-		rename_model(bus.get(), options.user, id, found->label, std::to_string(found->time), label);
+		rename_model(bus.get(), options.user, found->id, found->label, found->time, label);
 	} catch (const std::exception& exc) {
 		throw CliError(std::string("Failed to rename face model: ") + exc.what());
 	}

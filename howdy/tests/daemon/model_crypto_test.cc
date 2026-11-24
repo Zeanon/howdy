@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
 												}).empty());
 	spit(root / "models/alice.dat", stored);
 	chmod((root / "models/alice.dat").c_str(), 0600);
-	store.remove("alice", "0", "a", "1");
+	store.remove("alice", 0, "a", 1);
 	// The other model moved up
 	check(
 		"remove keeps it encrypted",

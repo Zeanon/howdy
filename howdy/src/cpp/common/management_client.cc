@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 
@@ -21,10 +22,10 @@ struct MessageDeleter {
 };
 using MessagePtr = std::unique_ptr<sd_bus_message, MessageDeleter>;
 
-// Call a method of the management interface with the given strings as
-// arguments. The daemon may wait for the user to authenticate, so the timeout
-// is long. Returns the reply, an error of the daemon becomes an exception.
-MessagePtr call(sd_bus* bus, const char* member, const std::vector<const std::string*>& arguments) {
+// Call a method of the management interface, `append` adds the arguments to the call. The daemon
+// may wait for the user to authenticate, so the timeout is long. Returns the reply, an error of
+// the daemon becomes an exception.
+MessagePtr call(sd_bus* bus, const char* member, const std::function<int(sd_bus_message*)>& append) {
 	sd_bus_message* raw = nullptr;
 	int r = sd_bus_message_new_method_call(bus, &raw, paths::MANAGEMENT_BUS, paths::MANAGEMENT_PATH, paths::MANAGEMENT_INTERFACE, member);
 	if (r < 0) {
@@ -32,11 +33,9 @@ MessagePtr call(sd_bus* bus, const char* member, const std::vector<const std::st
 	}
 	const MessagePtr message(raw);
 
-	for (const std::string* argument : arguments) {
-		r = sd_bus_message_append(raw, "s", argument->c_str());
-		if (r < 0) {
-			throw std::runtime_error(std::string("Failed to create the call: ") + std::strerror(-r));
-		}
+	r = append(raw);
+	if (r < 0) {
+		throw std::runtime_error(std::string("Failed to create the call: ") + std::strerror(-r));
 	}
 
 	sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -50,6 +49,19 @@ MessagePtr call(sd_bus* bus, const char* member, const std::vector<const std::st
 	}
 	sd_bus_error_free(&error);
 	return reply;
+}
+
+// Call a method with the given strings as arguments
+MessagePtr call(sd_bus* bus, const char* member, const std::vector<const std::string*>& arguments) {
+	return call(bus, member, [&](sd_bus_message* message) {
+		for (const std::string* argument : arguments) {
+			const int r = sd_bus_message_append(message, "s", argument->c_str());
+			if (r < 0) {
+				return r;
+			}
+		}
+		return 0;
+	});
 }
 
 // What the callback of an asynchronous call leaves
@@ -171,14 +183,23 @@ void add_model(sd_bus* bus, const std::string& user, const std::string& model_js
 	expect_success(call(bus, "Add", {&user, &model_json}), "Failed to add face model");
 }
 
-void remove_model(sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time) {
-	expect_success(call(bus, "Remove", {&user, &id, &expected_label, &expected_time}), "Failed to remove model");
+void remove_model(sd_bus* bus, const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time) {
+	expect_success(
+		call(
+			bus, "Remove",
+			[&](sd_bus_message* message) { return sd_bus_message_append(message, "sxsx", user.c_str(), id, expected_label.c_str(), expected_time); }),
+		"Failed to remove model");
 }
 
 void rename_model(
-	sd_bus* bus, const std::string& user, const std::string& id, const std::string& expected_label, const std::string& expected_time,
-	const std::string& label) {
-	expect_success(call(bus, "Rename", {&user, &id, &expected_label, &expected_time, &label}), "Failed to rename model");
+	sd_bus* bus, const std::string& user, std::int64_t id, const std::string& expected_label, std::int64_t expected_time, const std::string& label) {
+	expect_success(
+		call(
+			bus, "Rename",
+			[&](sd_bus_message* message) {
+				return sd_bus_message_append(message, "sxsxs", user.c_str(), id, expected_label.c_str(), expected_time, label.c_str());
+			}),
+		"Failed to rename model");
 }
 
 void clear_models(sd_bus* bus, const std::string& user) {

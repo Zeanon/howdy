@@ -23,7 +23,7 @@ INTERFACE = "org.boltgolt.howdy.Management"
 
 
 def changed(model, label, seconds):
-	return model["label"] != label or str(int(model["time"])) != seconds
+	return model["label"] != label or int(model["time"]) != seconds
 
 
 def label_changed(model_id):
@@ -95,11 +95,9 @@ def handler(msg):
 
 	if msg.member == "Remove":
 		for model in models:
-			if str(model["id"]) == msg.body[1] and changed(
-				model, msg.body[2], msg.body[3]
-			):
+			if model["id"] == msg.body[1] and changed(model, msg.body[2], msg.body[3]):
 				return error(msg, label_changed(msg.body[1]))
-		remaining = [m for m in models if str(m["id"]) != msg.body[1]]
+		remaining = [m for m in models if m["id"] != msg.body[1]]
 		if len(remaining) == len(models):
 			return error(msg, f"No model with ID {msg.body[1]} exists")
 		save(remaining)
@@ -107,7 +105,7 @@ def handler(msg):
 
 	if msg.member == "Rename":
 		for model in models:
-			if str(model["id"]) == msg.body[1]:
+			if model["id"] == msg.body[1]:
 				if changed(model, msg.body[2], msg.body[3]):
 					return error(msg, label_changed(msg.body[1]))
 				model["label"] = msg.body[4]

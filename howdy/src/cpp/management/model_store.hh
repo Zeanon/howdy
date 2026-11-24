@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -45,15 +46,13 @@ class ModelStore {
 	// JSON list with the "time", "label" and "id" of every model
 	[[nodiscard]] std::string list(const std::string& username) const;
 
-	// The model is only removed if it has the label and time the caller saw: the ids move up when a
-	// model is removed, a caller with an old list would remove another one. The time is the number
-	// of seconds as text, like the id.
-	void remove(const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& expected_time) const;
+	// The model is only removed if it has the label and time (seconds) the caller saw: the ids move
+	// up when a model is removed, a caller with an old list would remove another one.
+	void remove(const std::string& username, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time) const;
 
-	// Give the model another label. The id is compared as text, like in remove().
-	void rename(
-		const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& expected_time,
-		const std::string& label) const;
+	// Give the model another label, with the same check as remove()
+	void
+	rename(const std::string& username, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time, const std::string& label) const;
 
 	// Delete all models of the user
 	void clear(const std::string& username) const;

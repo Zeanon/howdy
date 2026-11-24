@@ -1,8 +1,8 @@
 #include "model_store.hh"
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
@@ -30,15 +30,10 @@ constexpr std::size_t MAX_ENCODINGS_PER_MODEL = 64;
 constexpr std::size_t MAX_ENCODING_VALUES = 512;
 constexpr std::size_t MAX_MODELS_PER_USER = 64;
 
-// The id the client sent, if it is a plain number
-std::optional<long long> parse_integer(const std::string& text) {
-	long long value = 0;
-	const auto* end = text.data() + text.size();
-	const auto [pointer, error] = std::from_chars(text.data(), end, value);
-	if (text.empty() || error != std::errc{} || pointer != end) {
-		return std::nullopt;
-	}
-	return value;
+// Whether this is the model with the id
+bool has_id(const nlohmann::json& model, std::int64_t model_id) {
+	const auto id = model.find("id");
+	return id != model.end() && id->is_number_integer() && id->get<std::int64_t>() == model_id;
 }
 
 // The text goes to terminals and dialogs: no control characters, which includes the C1 ones that some
@@ -58,14 +53,13 @@ bool has_control_characters(const std::string& text) {
 
 // The caller saw the model with this label and time: with others, the list of the caller is out of
 // date and the id means another model by now. The label alone is not enough, models may share one.
-void check_model(const nlohmann::json& model, const std::string& model_id, const std::string& expected_label, const std::string& expected_time) {
+void check_model(const nlohmann::json& model, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time) {
 	const auto label = model.find("label");
 	const auto time = model.find("time");
-	const auto expected = parse_integer(expected_time);
 	const bool same_label = label != model.end() && label->is_string() && label->get<std::string>() == expected_label;
-	const bool same_time = time != model.end() && time->is_number() && expected.has_value() && static_cast<long long>(time->get<double>()) == *expected;
+	const bool same_time = time != model.end() && time->is_number() && static_cast<std::int64_t>(time->get<double>()) == expected_time;
 	if (!same_label || !same_time) {
-		throw std::runtime_error("Model " + model_id + " has changed since the list was loaded, please reload the list");
+		throw std::runtime_error("Model " + std::to_string(model_id) + " has changed since the list was loaded, please reload the list");
 	}
 }
 
@@ -193,19 +187,16 @@ std::string ModelStore::list(const std::string& username) const {
 	return result.dump();
 }
 
-void ModelStore::remove(const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& expected_time) const {
+void ModelStore::remove(const std::string& username, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time) const {
 	const auto path = path_for(username);
 	const auto models = load(path, username);
 	if (!models.has_value()) {
 		throw std::runtime_error("No face model known for user " + username);
 	}
 
-	// The ids are compared as text, like the client sends them
 	auto remaining = nlohmann::json::array();
 	for (const auto& model : *models) {
-		const auto id = model.find("id");
-		const std::string text = id == model.end() ? "null" : (id->is_string() ? id->get<std::string>() : id->dump());
-		if (text != model_id) {
+		if (!has_id(model, model_id)) {
 			remaining.push_back(model);
 		} else {
 			check_model(model, model_id, expected_label, expected_time);
@@ -213,7 +204,7 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 	}
 
 	if (remaining.size() == models->size()) {
-		throw std::runtime_error("No model with ID " + model_id + " exists for " + username);
+		throw std::runtime_error("No model with ID " + std::to_string(model_id) + " exists for " + username);
 	}
 
 	if (remaining.empty()) {
@@ -224,13 +215,10 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 		}
 	} else {
 		// The models behind the removed one move up, so the ids stay without gaps
-		const auto removed = parse_integer(model_id);
-		if (removed.has_value()) {
-			for (auto& model : remaining) {
-				auto id = model.find("id");
-				if (id != model.end() && id->is_number_integer() && id->get<long long>() > *removed) {
-					*id = id->get<long long>() - 1;
-				}
+		for (auto& model : remaining) {
+			auto id = model.find("id");
+			if (id != model.end() && id->is_number_integer() && id->get<std::int64_t>() > model_id) {
+				*id = id->get<std::int64_t>() - 1;
 			}
 		}
 		save(path, username, remaining);
@@ -238,8 +226,7 @@ void ModelStore::remove(const std::string& username, const std::string& model_id
 }
 
 void ModelStore::rename(
-	const std::string& username, const std::string& model_id, const std::string& expected_label, const std::string& expected_time,
-	const std::string& label) const {
+	const std::string& username, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time, const std::string& label) const {
 	if (label.size() > MAX_LABEL_BYTES) {
 		throw std::runtime_error("Model label is too long");
 	}
@@ -255,9 +242,7 @@ void ModelStore::rename(
 
 	bool found = false;
 	for (auto& model : *models) {
-		const auto id = model.find("id");
-		const std::string text = id == model.end() ? "null" : (id->is_string() ? id->get<std::string>() : id->dump());
-		if (text == model_id) {
+		if (has_id(model, model_id)) {
 			check_model(model, model_id, expected_label, expected_time);
 			model["label"] = label;
 			found = true;
@@ -265,7 +250,7 @@ void ModelStore::rename(
 		}
 	}
 	if (!found) {
-		throw std::runtime_error("No model with ID " + model_id + " exists for " + username);
+		throw std::runtime_error("No model with ID " + std::to_string(model_id) + " exists for " + username);
 	}
 
 	save(path, username, *models);
