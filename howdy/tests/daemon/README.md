@@ -21,6 +21,8 @@ them needs root, a camera or the system bus.
 The CI runs `run_trusted_file.sh`, `run_model_crypto.sh`, `run_snapshot.sh`, `run_python.sh` and the part of `run_cli.sh` that checks the management daemon over a private D-Bus with `DAEMON_ONLY=1` (with `SKIP_IMAGES=1` and the Python of the system), the rest of `run_cli.sh` and the others need
 models, a camera stand-in or a display.
 
+`run_cli.sh` runs a second pass as root in a user namespace (`unshare -r`, `compare_as_root.sh`): `Compare` of the management daemon and `howdy test` are only for root, so their answers can only be tested there, over a bus and a daemon of their own (the daemon is the one of the installation, it has no mode for the tests). The first pass, as a normal user, tests that they are refused. Without user namespaces the second pass is skipped.
+
 `DAEMON_ONLY=1 howdy/tests/daemon/run_cli.sh` runs only the management daemon over the private bus and polkit (the D-Bus API, polkit, `Compare` for root, and that a call that is not answered can be given up in a short time, see `cancel_test.cc`), without the cli, a camera stand-in, models, images or `ffmpeg` (about 15 seconds).
 
 `SLOW_TESTS=1 howdy/tests/daemon/run_cli.sh` additionally runs `howdy add` with

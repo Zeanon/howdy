@@ -97,8 +97,6 @@ class ManagementInterface:
 		self.bus = bus
 		self.tasks = set()
 		self.user_locks = {}
-		# Bus names that were authorized for Compare, with the time it ends. A bus name
-		# is never given to a second connection, so it can be remembered safely.
 
 		self.idle_handle = None
 		self.shutdown_event = asyncio.Event()
@@ -282,8 +280,7 @@ class ManagementInterface:
 				caller_uid = await query_caller_uid(self.bus, msg.sender)
 			except MissingSenderError as exc:
 				raise NotAuthorized(str(exc)) from exc
-			# (a daemon that does not run as root, in the tests, trusts its own user like root)
-			if not is_privileged(caller_uid, True):
+			if not is_privileged(caller_uid):
 				raise NotAuthorized(
 					"Only root may compare faces, please run howdy test with sudo"
 				)

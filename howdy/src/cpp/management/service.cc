@@ -182,16 +182,19 @@ int ManagementService::handle(sd_bus_message* message) {
 			request->username = *name;
 		}
 
-		check_caller_may_manage(caller_uid, request->username);
-
 		// Compare answers how far a face is from the models of the user, for any face the caller sends. A
 		// program that may ask often enough could work out the model from the answers, so only root is
 		// let in (howdy test runs with sudo), and root needs no polkit: it can read the models anyway.
+		// This comes first, so that a caller that is not root is told that, and not that the models of
+		// another user are not its own.
+		if (method->name == "Compare" && !is_privileged(caller_uid)) {
+			throw AuthorizationError("Only root may compare faces, please run howdy test with sudo");
+		}
+
+		check_caller_may_manage(caller_uid, request->username);
+
+		// Root needs no polkit for Compare (see above)
 		if (method->name == "Compare") {
-			// (a daemon that does not run as root, in the tests, trusts its own user like root)
-			if (!is_privileged(caller_uid, true)) {
-				throw AuthorizationError("Only root may compare faces, please run howdy test with sudo");
-			}
 			execute(*request);
 			--pending_;
 			arm_idle_timer();

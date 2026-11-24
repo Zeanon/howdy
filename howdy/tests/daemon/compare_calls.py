@@ -3,7 +3,7 @@
 #
 # Prints the reply of every call, or the name of its error, one per line. The environment
 # variable COMPARE_PAUSE is a pause in seconds between the calls, COMPARE_CONCURRENT=1 sends all the
-# calls at once.
+# calls at once, COMPARE_USER is the user whose models are used (the caller without it).
 # The face is the list of the numbers.
 import os
 import sys
@@ -13,6 +13,8 @@ from dbus_next import BusType, Message, MessageType
 from dbus_next.aio import MessageBus
 
 count, metric, face = int(sys.argv[1]), sys.argv[2], [float(n) for n in sys.argv[3:]]
+# The user whose models are used, without it the one of the caller
+user = os.environ.get("COMPARE_USER", "")
 
 
 def compare_message():
@@ -21,8 +23,8 @@ def compare_message():
 		path="/org/boltgolt/howdy/Management",
 		interface="org.boltgolt.howdy.Management",
 		member="Compare",
-		signature="sad",
-		body=[metric, face],
+		signature="ssad" if user else "sad",
+		body=[user, metric, face] if user else [metric, face],
 	)
 
 

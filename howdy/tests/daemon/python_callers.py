@@ -475,7 +475,8 @@ class Recorder(Bus):
 
 
 async def comparing():
-	own = pwd.getpwuid(DAEMON).pw_name
+	# Only root compares faces: the models are the ones of root, the caller without a user name is root
+	own = "root"
 	models_dir = os.path.join(WORK_DIR, "models")
 	shutil.rmtree(models_dir, ignore_errors=True)
 	os.makedirs(models_dir, mode=0o700)
@@ -492,7 +493,8 @@ async def comparing():
 	original = management_module.check_authorization
 	management_module.check_authorization = polkit
 
-	bus = Recorder({":1.9": DAEMON, ":1.11": OTHER})
+	# :1.9 is root, :1.11 another user, :1.12 the user of the daemon (not root, unless the test runs as root)
+	bus = Recorder({":1.9": 0, ":1.11": OTHER, ":1.12": DAEMON})
 	interface = management_module.ManagementInterface(bus)
 
 	async def compare(signature, body, sender=":1.9"):
@@ -538,11 +540,11 @@ async def comparing():
 			await compare("sad", ["cosine", [1.0]]),
 			COMPARE_ERROR,
 		)
-		# Only root is let in (the daemon of the test trusts its own user like root), without polkit
+		# Only root is let in, without polkit
 		check("polkit is not asked for compare", polkit_calls, [])
 		check(
-			"root compares for any user",
-			await compare("ssad", ["root", "euclidean", [1.0]]),
+			"root compares for another user",
+			await compare("ssad", ["nobody", "euclidean", [1.0]]),
 			[False, 0.0, ""],
 		)
 		check(
@@ -550,6 +552,13 @@ async def comparing():
 			await compare("ssad", ["no-such-user-howdy", "euclidean", [1.0]]),
 			COMPARE_ERROR,
 		)
+		# Nobody else is trusted, also not the user the daemon runs as: the daemon has no mode for the tests
+		if DAEMON != 0:
+			check(
+				"the user of the daemon is refused",
+				await compare("sad", ["euclidean", [1.0]], sender=":1.12"),
+				NOT_AUTHORIZED_ERROR,
+			)
 		check(
 			"another user is refused",
 			await compare("sad", ["euclidean", [1.0]], sender=":1.11"),
@@ -588,6 +597,46 @@ async def comparing():
 COMPARE_ERROR = management_module.COMPARE_ERROR
 NOT_AUTHORIZED_ERROR = management_module.NOT_AUTHORIZED_ERROR
 asyncio.run(comparing())
+
+print("--- the D-Bus policy")
+import xml.etree.ElementTree as ElementTree  # noqa: E402
+
+POLICY = os.path.join(
+	SOURCE_DIR, "..", "..", "assets", "bin", "org.boltgolt.howdy.conf.in"
+)
+with open(POLICY) as handle:
+	policy_text = re.sub(
+		r"@([a-z_]+)@",
+		lambda m: PLACEHOLDERS.get(m.group(1), m.group(0)),
+		handle.read(),
+	)
+policies = ElementTree.fromstring(policy_text).findall("policy")
+
+
+def members(policy):
+	"""The methods of the management interface that a policy lets through"""
+	return {
+		rule.get("send_member")
+		for rule in policy.findall("allow")
+		if rule.get("send_destination") == PLACEHOLDERS["management_bus"]
+		and rule.get("send_member")
+	}
+
+
+root_policy = next(p for p in policies if p.get("user") == "root")
+default_policy = next(p for p in policies if p.get("context") == "default")
+check("root may call Compare", "Compare" in members(root_policy), True)
+check("a normal user may not call Compare", "Compare" in members(default_policy), False)
+check(
+	"and there is no KeepAlive any more",
+	"KeepAlive" in members(root_policy) | members(default_policy),
+	False,
+)
+check(
+	"the other methods stay for everybody",
+	{"Add", "List", "Remove", "Rename", "Clear"} <= members(default_policy),
+	True,
+)
 
 print("--- management daemon, removing and renaming models")
 

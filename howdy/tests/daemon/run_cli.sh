@@ -27,7 +27,9 @@ if [ "$DAEMON_ONLY" != 1 ]; then
 	link "$T/enroll_test" "${BASE_SOURCES[@]}" "${CORE_SOURCES[@]}" "$SRC_DIR/cli/enroll_dialog.cc" "$TEST_DIR/enroll_test.cc"
 fi
 
-USER_NAME="$(id -un)"
+# The second pass (see the end) runs as root in a user namespace, for the user that started the test
+ROOT_PASS="${HOWDY_ROOT_PASS:-0}"
+USER_NAME="${HOWDY_TEST_USER:-$(id -un)}"
 MODEL="$T/models/$USER_NAME.dat"
 HOWDY="$T/howdy"
 export TZ=UTC
@@ -68,6 +70,15 @@ run() {
 	output=$("$@" 2>&1) || code=$?
 }
 
+# The second pass: what only root may do (Compare of the daemon, howdy test), as root like in the
+# installation. The daemon and the bus run in the user namespace as well, so that the daemon sees the uid 0.
+if [ "$ROOT_PASS" = 1 ]; then
+	source "$TEST_DIR/compare_as_root.sh"
+	echo
+	[ "$failed" = 0 ] && echo "All tests passed (as root)" || echo "Some tests FAILED (as root), logs in $T"
+	exit "$failed"
+fi
+
 echo "--- management daemon"
 # The daemon creates the directory when the first model is saved
 rm -rf "$T/models"
@@ -83,32 +94,22 @@ expect_contains "list has the second model" "$out" 'id\":1'
 expect_contains "list has the labels" "$out" 'label\":\"second'
 expect "list without a user" "$(mcall List)" 's "[{'
 if grep -q '"data"' <<< "$out"; then echo "FAIL  list leaks the encodings"; failed=1; else echo "PASS  list does not leak the encodings"; fi
-# The daemon compares a face with the models, so that howdy test needs no access to them
-expect_contains "compare finds the closest model" "$(mcall Compare ssad "$USER_NAME" euclidean 3 0.1 0.2 0.5)" '"first"'
-expect_contains "compare gives the distance" "$(mcall Compare sad euclidean 3 0.1 0.2 0.3)" "bds true 0 \"first\""
-expect_contains "compare with the dot product takes the largest" "$(mcall Compare sad dot 3 1 1 1)" '"second"'
-expect "compare skips models of another size" "$(mcall Compare sad euclidean 2 0.1 0.2)" 'bds false 0 ""'
-expect_contains "compare refuses an unknown metric" "$(mcall Compare sad cosine 3 0.1 0.2 0.3)" "Unknown metric cosine"
-expect_contains "compare refuses an empty face" "$(mcall Compare sad euclidean 0)" "Invalid face encoding"
-expect_contains "compare for another user is refused" "$(mcall Compare ssad root euclidean 3 0.1 0.2 0.3)" "Not authorized"
-# Compare is only for root (the daemon of the test trusts its own user like root) and needs no polkit:
-# it is called for every frame
+# The daemon compares a face with the models, so that howdy test needs no access to them. Only root may
+# ask: a program of the user could work out the model from the answers. This pass runs as a normal user,
+# which is refused (and nothing else is asked, not polkit either). The comparisons themselves are tested
+# as root in compare_as_root.sh, in the second pass of this script (see the end).
 asked() { grep -c "org.boltgolt.howdy.Management" "$T/polkit.log" || true; }
 before="$(asked)"
-out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 4 euclidean 0.1 0.2 0.3)"
-expect "compare on one connection finds the model every time" "$(grep -c "first" <<< "$out")" 4
-expect "polkit is not asked for compare" "$(($(asked) - before))" 0
-# polkit does not matter for root
-echo deny > "$T/polkit.mode"
-out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 2 euclidean 0.1 0.2 0.3)"
-expect "a refusal of polkit does not matter, root is let in" "$(grep -c "first" <<< "$out")" 2
+expect_contains "compare is refused for a caller that is not root" "$(mcall Compare sad euclidean 3 0.1 0.2 0.3)" "Only root may compare faces"
+expect_contains "also with the user name" "$(mcall Compare ssad "$USER_NAME" euclidean 3 0.1 0.2 0.3)" "Only root may compare faces"
+expect_contains "and for another user, it is the first thing that is checked" "$(mcall Compare ssad root euclidean 3 0.1 0.2 0.3)" "Only root may compare faces"
 echo allow > "$T/polkit.mode"
-# There is no keep-alive any more
+expect "polkit is not asked for it" "$(($(asked) - before))" 0
+out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 3 euclidean 0.1 0.2 0.3)"
+expect "a program of the user is refused every time" "$(grep -c "Only root may compare\|NotAuthorized" <<< "$out")" 3
+expect_contains "the models of the user can still be listed" "$(mcall List s "$USER_NAME")" 'label\":\"first'
 expect_contains "KeepAlive does not exist any more" "$(mcall KeepAlive)" "Call failed"
-# Many calls at once are all answered (there is no limit for root)
-out="$(COMPARE_CONCURRENT=1 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 120 euclidean 0.1 0.2 0.3)"
-# (not more than 120 at once: the bus lets a connection wait for 128 answers)
-expect "many calls at once are all answered" "$(grep -c "first" <<< "$out")" 120
+
 expect "rename" "$(mcall Rename xsxs 1 second 1700000100 "Living room")" "b true"
 expect_contains "the model has the new label" "$(mcall List s "$USER_NAME")" 'label\":\"Living room'
 expect_contains "the other models keep theirs" "$(mcall List s "$USER_NAME")" 'label\":\"first'
@@ -203,25 +204,20 @@ else
 	echo "gdbus not found, skipping the check of the error names"
 fi
 
-echo "--- a call that is cancelled"
-# howdy test gives its call up when the window is closed, while the daemon may not answer (it is busy
-# or stuck). The client has to be free in a short time. The daemon is stopped for it (SIGSTOP).
-link "$T/cancel_test" "${BASE_SOURCES[@]}" "$TEST_DIR/cancel_test.cc"
-mcall Add s "$MODEL_JSON" > /dev/null
-daemon_pid="$(pgrep -f "^$T/management" | head -1)"
-kill -STOP "$daemon_pid"
-out="$("$T/cancel_test" "$USER_NAME" cancel)"
-kill -CONT "$daemon_pid"
-expect_contains "a call that is not answered is cancelled" "$out" "cancelled "
-ms="${out##* }"
-if [ "${ms:-99999}" -lt 1500 ]; then echo "PASS  in a short time ($ms ms)"; else echo "FAIL  it took $ms ms"; failed=1; fi
-out="$("$T/cancel_test" "$USER_NAME" wait)"
-expect_contains "a call that is not cancelled gets its answer" "$out" "answered first "
-out="$("$T/cancel_test" "$USER_NAME" error)"
-expect_contains "and an error of the daemon comes through" "$out" "error Unknown metric cosine"
-mcall Clear > /dev/null
+# The second pass, as root in a user namespace (see compare_as_root.sh). Without user namespaces (the
+# kernel or the system does not allow them to everybody) it is skipped, and what only root may do is
+# not tested here: Compare is refused for a normal user above, but its answers are not checked.
+second_pass() {
+	echo "--- second pass, as root in a user namespace"
+	if unshare -r true 2> /dev/null; then
+		HOWDY_ROOT_PASS=1 HOWDY_TEST_USER="$USER_NAME" WORK_DIR="$WORK_DIR" DAEMON_ONLY="$DAEMON_ONLY" unshare -r bash "${BASH_SOURCE[0]}" || failed=1
+	else
+		echo "SKIP  user namespaces are not available, the tests of what only root may do did not run"
+	fi
+}
 
 if [ "$DAEMON_ONLY" = 1 ]; then
+	second_pass
 	echo
 	[ "$failed" = 0 ] && echo "All tests passed" || echo "Some tests FAILED, logs in $T"
 	exit "$failed"
@@ -396,70 +392,15 @@ if [ "$HAS_XVFB" = 1 ]; then
 	expect_contains "enrollment without camera" "$output" "error: Howdy could not find a camera device"
 	write_config "$T/still.mp4"
 
-	echo "--- cli, test window (xvfb)"
-	mcall Add s "$MODEL_JSON" > /dev/null
-	cp "$T/genuine.dat" "$MODEL"
-	# Only root compares faces, so the command needs sudo: a user namespace is root for it, and the
-	# daemon of the test trusts its own user like root. The window never closes by itself, stop it after
-	# a few seconds
-	run xvfb-run -a timeout 12 "$HOWDY" test
+	echo "--- cli, test window"
+	# Only root compares faces: without root the command says so before it touches the display or the camera.
+	# The window itself is tested as root in compare_as_root.sh.
+	write_config /dev/does-not-exist
+	run "$HOWDY" test
 	expect_contains "test needs root" "$output" "Please run this command as root:"
 	expect_contains "and says how" "$output" "sudo howdy test"
-	asked_before="$(asked)"
-	run xvfb-run -a timeout 12 unshare -r "$HOWDY" test
-	expect_contains "test shows the detection" "$output" "Opening a window with a test feed"
-	expect_contains "test prints the texture" "$output" "texture: "
-	expect_contains "test prints the movement" "$output" "Micro-movement: "
-	expect_contains "test compares the face" "$output" "similarity: "
-	expect_missing "test compares through the daemon" "$output" "Could not compare"
-	# Root needs no polkit for the comparisons
-	expect "polkit is not asked during the test" "$(($(asked) - asked_before))" 0
-	# The video is shown 1.5 times larger than the frames of the camera (360x480 here)
-	if command -v xwininfo > /dev/null; then
-		size="$(xvfb-run -a bash -c 'unshare -r "$0" test > /dev/null 2>&1 & pid=$!
-			for _ in $(seq 40); do
-				sleep 0.5
-				xwininfo -name "Howdy Test" > /dev/null 2>&1 && break
-			done
-			# The window is made small and gets its size when the first frame is shown
-			sleep 3
-			xwininfo -name "Howdy Test" 2> /dev/null | grep -E "^ +(Width|Height):"
-			kill $pid 2> /dev/null' "$HOWDY" | tr -d ' \n')"
-		width="${size#Width:}"
-		width="${width%%Height:*}"
-		height="${size##*Height:}"
-		expect "the window is 1.5 times as wide as the video" "$width" 540
-		# The window has a tool bar of Qt above the video
-		if [ "${height:-0}" -ge 720 ] && [ "${height:-0}" -lt 840 ]; then
-			echo "PASS  and as high ($height with the tool bar)"
-		else
-			echo "FAIL  the height of the window is $height, expected 720 and the tool bar"
-			failed=1
-		fi
-	fi
-	# A camera that is there but can not be read at first (a face authentication may still hold it) is tried again, one that does not exist fails at once
-	# (a file that can not be read yet: root, which the command is here, reads every file)
-	: > "$T/busy.mp4"
-	write_config "$T/busy.mp4"
-	( sleep 2; cp "$T/still.mp4" "$T/busy.mp4" ) &
-	freeing=$!
-	run xvfb-run -a timeout 12 unshare -r "$HOWDY" test
-	expect_contains "test waits for a camera that is busy" "$output" "Waiting for the camera"
-	expect_contains "and opens it when it is free" "$output" "Opening a window with a test feed"
-	wait "$freeing"
-	write_config /dev/does-not-exist
-	started=$SECONDS
-	run xvfb-run -a timeout 12 unshare -r "$HOWDY" test
-	expect_missing "a camera that does not exist is not waited for" "$output" "Waiting for the camera"
-	if [ $((SECONDS - started)) -lt 4 ]; then echo "PASS  and it fails at once ($((SECONDS - started)) s)"; else echo "FAIL  it took $((SECONDS - started)) s"; failed=1; fi
-	write_config "$T/still.mp4"
-	# Without root it does not look for the camera
-	write_config /dev/does-not-exist
-	run xvfb-run -a timeout 12 "$HOWDY" test
-	expect_contains "test asks for root before it opens the camera" "$output" "Please run this command as root:"
 	expect_missing "and does not look for the camera" "$output" "camera device"
 	write_config "$T/still.mp4"
-	mcall Clear > /dev/null
 else
 	echo "xvfb-run not found, skipping the tests that need a display"
 fi
@@ -482,6 +423,8 @@ if [ "${SLOW_TESTS:-0}" = 1 ]; then
 	expect "daemon stops after the idle timeout" "$(pgrep -f "^$T/management" > /dev/null && echo running || echo stopped)" stopped
 	expect "daemon is started again by the next call" "$(mcall List s "$USER_NAME")" 's "[]"'
 fi
+
+second_pass
 
 echo
 [ "$failed" = 0 ] && echo "All tests passed" || echo "Some tests FAILED, logs in $T"
