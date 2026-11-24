@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <condition_variable>
 #include <cstring>
@@ -104,6 +105,8 @@ std::optional<EnterDevice> enter_device = std::nullopt;
  */
 int pam_res = PAM_IGNORE;
 bool terminate = false;
+// The signal that ended the authentication (SIGINT, SIGTERM or SIGQUIT), 0 if it was not one
+std::atomic<int> received_signal{0};
 
 bool howdy_finished = false;
 // Whether a method looks for the user (face model, enrolled fingerprints and a reader are
@@ -764,9 +767,10 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
 		pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
-		int sig;
+		int sig = 0;
 		sigwait(&set, &sig);
 
+		received_signal = sig;
 		terminate = true;
 		if (confirmation_type == ConfirmationType::Unset) {
 			confirmation_type = ConfirmationType::Terminated;
@@ -1090,7 +1094,9 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			fingerprint_task.stop(true);
 			workaround_function(Workaround::Native);
 
-			raise(SIGINT);
+			// Give the signal back to the program, the one that was sent: it is delivered when the signals
+			// are unblocked again, on the return. A cancelled method without a signal is a SIGINT, like before.
+			raise(received_signal != 0 ? received_signal.load() : SIGINT);
 			return PAM_CONV_ERR;
 		}
 

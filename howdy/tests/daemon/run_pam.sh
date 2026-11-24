@@ -145,6 +145,27 @@ expect "a daemon that is restarted during the request: the face authenticates" "
 expect "and it took the time of the restart" "$([ $((SECONDS - started)) -ge 2 ] && echo yes || echo no)" yes
 cp "$T/impostor.dat" "$MODEL"
 
+echo "--- a signal that ends the authentication goes on to the program"
+# The module catches SIGINT, SIGTERM and SIGQUIT while it authenticates, so that a Ctrl+C ends the
+# authentication, and gives the same signal back to the program when it is done. A program that does
+# not handle it is ended by it, like without the module (and not by another signal).
+stop_daemon
+for signal in INT TERM QUIT; do
+	# (a background job of a shell ignores SIGINT and SIGQUIT, the program must not)
+	( ulimit -c 0; exec env --default-signal=INT,QUIT LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" > "$T/pam_signal.out" 2>&1 ) &
+	signal_pid=$!
+	# The module waits for the daemon, which is not there
+	sleep 1
+	kill "-$signal" "$signal_pid"
+	status=0
+	# (the shell reports a program that is ended by SIGQUIT)
+	{ wait "$signal_pid" || status=$?; } 2> /dev/null
+	expected="$((128 + $(kill -l "$signal")))"
+	expect "SIG$signal ends the program with SIG$signal" "$status" "$expected"
+done
+start_background "$T/daemon"
+DAEMON_PID=$BACKGROUND_PID
+
 echo "--- the methods that can be used are announced"
 # fprintd on the private bus, its mode is read at every call
 export FPRINTD_MODE_FILE="$T/fprintd.mode"
