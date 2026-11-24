@@ -115,6 +115,8 @@ expect_contains "the other models keep theirs" "$(mcall List s "$USER_NAME")" 'l
 expect "rename with a user" "$(mcall Rename sxsxs "$USER_NAME" 1 "Living room" 1700000100 "Office")" "b true"
 expect "rename unknown id" "$(mcall Rename xsxs 9 x 1 y)" "Call failed: No model with ID 9 exists for $USER_NAME"
 expect "rename with a label that is too long" "$(mcall Rename xsxs 1 Office 1700000100 "$(printf 'x%.0s' $(seq 300))")" "Call failed: Model label is too long"
+expect "rename with an empty label" "$(mcall Rename xsxs 1 Office 1700000100 "")" "Call failed: Model label is empty"
+expect "add with an empty label" "$(mcall Add s '{"time":1,"label":"","data":[]}')" "Call failed: Model label is empty"
 expect "rename needs both arguments" "$(mcall Rename s 1)" "Call failed: Invalid arguments for Rename"
 expect "rename with an old list" "$(mcall Rename xsxs 1 wrong 1700000100 x)" "Call failed: Model 1 has changed since the list was loaded, please reload the list"
 expect "rename with another time" "$(mcall Rename xsxs 1 Office 5 x)" "Call failed: Model 1 has changed since the list was loaded, please reload the list"
@@ -278,6 +280,9 @@ expect "list shows the new name" "$output" "0,2023-11-14 22:13:20,first
 1,2023-11-14 22:15:00,Living room"
 run "$HOWDY" rename 1 second
 expect "rename back" "$output" "Renamed model 1"
+run "$HOWDY" rename 1 ","
+expect "rename to nothing but a comma, exit code" "$code" 1
+expect_contains "rename to nothing but a comma" "$output" "The new name of the model is empty"
 
 run "$HOWDY" remove
 expect_contains "remove without id" "$output" "Please add the ID of the model you want to remove as an argument"

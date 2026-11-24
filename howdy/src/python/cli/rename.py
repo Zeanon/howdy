@@ -125,6 +125,8 @@ async def _run(expected_label=None, expected_time=None):
 		if "," in label:
 			say(S('NOTICE: Removing illegal character "," from model name'))
 			label = label.replace(",", "")
+		if label == "":
+			exit(S("The new name of the model is empty"))
 
 		try:
 			await rename_model(

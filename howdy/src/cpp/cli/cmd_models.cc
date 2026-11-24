@@ -186,6 +186,9 @@ int run_rename(const Options& options) {
 		say(options, S("NOTICE: Removing illegal character \",\" from model name"));
 		std::erase(label, ',');
 	}
+	if (label.empty()) {
+		throw CliError(S("The new name of the model is empty"));
+	}
 
 	try {
 		rename_model(bus.get(), options.user, found->id, found->label, found->time, label);

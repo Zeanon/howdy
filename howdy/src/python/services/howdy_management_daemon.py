@@ -59,6 +59,9 @@ def validate_label(label):
 	escape sequences)"""
 	if not isinstance(label, str):
 		raise TypeError("Model has no valid label")
+	# A model without a name can not be told from the others
+	if label == "":
+		raise ValueError("Model label is empty")
 	if len(label.encode()) > MAX_LABEL_BYTES:
 		raise ValueError("Model label is too long")
 	if any(unicodedata.category(char) == "Cc" for char in label):

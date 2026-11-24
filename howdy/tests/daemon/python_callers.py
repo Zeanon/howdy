@@ -697,20 +697,21 @@ async def managing():
 			await call("Remove", "xsx", [0, "first", 5]),
 			(management_module.REMOVE_ERROR, stale.format(0)),
 		)
-		for name, label in (
-			("a control character", "a\x1bb"),
-			("a C1 control character", "a\x9bb"),
-			("a line break", "a\nb"),
+		for name, label, text in (
+			("an empty label", "", "Model label is empty"),
+			("a control character", "a\x1bb", "Model label has invalid characters"),
+			("a C1 control character", "a\x9bb", "Model label has invalid characters"),
+			("a line break", "a\nb", "Model label has invalid characters"),
 		):
 			check(
 				f"rename with {name}",
 				await call("Rename", "xsxs", [1, "Living room", 1, label]),
-				(management_module.RENAME_ERROR, "Model label has invalid characters"),
+				(management_module.RENAME_ERROR, text),
 			)
 			check(
 				f"add with {name}",
 				await call("Add", "s", [model(label)]),
-				(management_module.ADD_ERROR, "Model label has invalid characters"),
+				(management_module.ADD_ERROR, text),
 			)
 		check(
 			"nothing changed by the failures",

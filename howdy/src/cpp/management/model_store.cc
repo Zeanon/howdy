@@ -51,6 +51,20 @@ bool has_control_characters(const std::string& text) {
 	return false;
 }
 
+// What a label has to be: not empty (a model without a name can not be told from the others), not too
+// long, and without control characters
+void validate_label(const std::string& label) {
+	if (label.empty()) {
+		throw std::runtime_error("Model label is empty");
+	}
+	if (label.size() > MAX_LABEL_BYTES) {
+		throw std::runtime_error("Model label is too long");
+	}
+	if (has_control_characters(label)) {
+		throw std::runtime_error("Model label has invalid characters");
+	}
+}
+
 // The caller saw the model with this label and time: with others, the list of the caller is out of
 // date and the id means another model by now. The label alone is not enough, models may share one.
 void check_model(const nlohmann::json& model, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time) {
@@ -82,12 +96,7 @@ void validate_new_model(const nlohmann::json& model) {
 	if (!model.contains("label") || !model.at("label").is_string()) {
 		throw std::runtime_error("Model has no valid label");
 	}
-	if (model.at("label").get_ref<const std::string&>().size() > MAX_LABEL_BYTES) {
-		throw std::runtime_error("Model label is too long");
-	}
-	if (has_control_characters(model.at("label").get_ref<const std::string&>())) {
-		throw std::runtime_error("Model label has invalid characters");
-	}
+	validate_label(model.at("label").get_ref<const std::string&>());
 	if (!model.contains("data") || !model.at("data").is_array()) {
 		throw std::runtime_error("Model has no valid data");
 	}
@@ -227,12 +236,7 @@ void ModelStore::remove(const std::string& username, std::int64_t model_id, cons
 
 void ModelStore::rename(
 	const std::string& username, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time, const std::string& label) const {
-	if (label.size() > MAX_LABEL_BYTES) {
-		throw std::runtime_error("Model label is too long");
-	}
-	if (has_control_characters(label)) {
-		throw std::runtime_error("Model label has invalid characters");
-	}
+	validate_label(label);
 
 	const auto path = path_for(username);
 	auto models = load(path, username);
