@@ -4,9 +4,13 @@
 #include "translate.hh"
 #include <vars.hh>
 
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <security/pam_ext.h>
+#include <string>
 #include <syslog.h>
 
 #include <thread>
@@ -21,12 +25,50 @@ constexpr auto NO_MATCH_WAIT_TIME = std::chrono::milliseconds(500);
 // that meets this waits for it so long (all in all, not for each time it goes away), then it fails.
 constexpr auto RECONNECT_TIMEOUT = std::chrono::seconds(20);
 constexpr auto RECONNECT_INTERVAL = std::chrono::milliseconds(250);
+// The daemon says Busy while another authentication of the user runs (or one that nobody asks for any more,
+// until its keepalive ends). No request was made then, so it can be asked again for this long.
+constexpr auto BUSY_TIMEOUT = std::chrono::seconds(5);
 
-// The call could not be answered because nobody (or nobody in time) was there to answer it
-bool daemon_unreachable(int r, const sd_bus_error& error) {
-	return sd_bus_error_has_name(&error, SD_BUS_ERROR_SERVICE_UNKNOWN) != 0 || sd_bus_error_has_name(&error, SD_BUS_ERROR_NAME_HAS_NO_OWNER) != 0 ||
-		   sd_bus_error_has_name(&error, SD_BUS_ERROR_NO_REPLY) != 0 || sd_bus_error_has_name(&error, SD_BUS_ERROR_DISCONNECTED) != 0 ||
-		   sd_bus_error_has_name(&error, SD_BUS_ERROR_TIMEOUT) != 0 || r == -ETIMEDOUT || r == -ENOTCONN || r == -ECONNRESET;
+// The call could not be answered because the daemon went away or was not there. A timeout is not
+// this: the daemon may have the request and just not have answered yet, a new request would be a second one.
+bool daemon_unreachable(const std::string& error_name) {
+	return error_name == SD_BUS_ERROR_SERVICE_UNKNOWN || error_name == SD_BUS_ERROR_NAME_HAS_NO_OWNER || error_name == SD_BUS_ERROR_NO_REPLY ||
+		   error_name == SD_BUS_ERROR_DISCONNECTED;
+}
+
+// What the asynchronous call of StartAuthentication is answered with
+struct StartReply {
+	bool done = false;
+	bool failed = false;
+	std::string request_id;
+	std::string error_name;
+	std::string error_message;
+};
+
+int on_start_reply(sd_bus_message* reply, void* userdata, sd_bus_error* /*ret_error*/) {
+	auto* state = static_cast<StartReply*>(userdata);
+	state->done = true;
+
+	if (sd_bus_message_is_method_error(reply, nullptr) != 0) {
+		const sd_bus_error* error = sd_bus_message_get_error(reply);
+		state->failed = true;
+		if (error != nullptr && error->name != nullptr) {
+			state->error_name = error->name;
+		}
+		if (error != nullptr && error->message != nullptr) {
+			state->error_message = error->message;
+		}
+		return 0;
+	}
+
+	const char* request_id = nullptr;
+	if (sd_bus_message_read(reply, "s", &request_id) < 0 || request_id == nullptr) {
+		state->failed = true;
+		state->error_message = "The reply has no request id";
+		return 0;
+	}
+	state->request_id = request_id;
+	return 0;
 }
 } // namespace
 
@@ -54,15 +96,11 @@ bool FaceAuthenticator::connect() {
 		return false;
 	}
 
-	return sd_bus_match_signal(
-			   bus_, &name_owner_slot_, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameOwnerChanged", howdy_name_owner_changed,
-			   this) >= 0;
+	return true;
 }
 
-bool FaceAuthenticator::start_authentication() {
-	sd_bus_error error = SD_BUS_ERROR_NULL;
+bool FaceAuthenticator::start_authentication(std::chrono::steady_clock::time_point deadline) {
 	sd_bus_message* message = nullptr;
-	sd_bus_message* reply = nullptr;
 
 	int r = sd_bus_message_new_method_call(bus_, &message, HOWDY_BUS, AUTHENTICATION_PATH, AUTHENTICATION_INTERFACE, "StartAuthentication");
 
@@ -82,62 +120,94 @@ bool FaceAuthenticator::start_authentication() {
 		r = sd_bus_message_close_container(message);
 	}
 
+	// The call is asynchronous and waits for its answer until the deadline, as long as it is not cancelled. A
+	// daemon that has to be started by the bus (or is slow after the computer woke up) gets the call when it
+	// is there, and it is the only request, a timeout and a second call would make two.
+	StartReply state;
+	sd_bus_slot* slot = nullptr;
 	if (r >= 0) {
-		r = sd_bus_call(bus_, message, 0, &error, &reply);
+		const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - std::chrono::steady_clock::now());
+		const auto timeout = std::max<std::int64_t>(remaining.count(), 2000000);
+		r = sd_bus_call_async(bus_, &slot, message, on_start_reply, &state, static_cast<std::uint64_t>(timeout));
 	}
+	sd_bus_message_unref(message);
 
 	if (r < 0) {
-		if (sd_bus_error_has_name(&error, "org.howdy.Authentication.Busy")) {
-			result_ = Result::Busy;
-		} else if (sd_bus_error_has_name(&error, "org.howdy.Authentication.InvalidUser")) {
-			result_ = Result::InvalidUser;
-		} else if (daemon_unreachable(r, error)) {
-			result_ = Result::Disconnected;
+		// Not connected any more: the same as a daemon that is gone
+		if (r == -ENOTCONN || r == -ECONNRESET) {
 			daemon_unreachable_ = true;
-		} else {
-			result_ = Result::Error;
-			syslog(LOG_ERR, "Face: StartAuthentication failed: %s", error.message ? error.message : strerror(-r));
 		}
-
-		sd_bus_message_unref(reply);
-		sd_bus_error_free(&error);
-		return false;
-	}
-
-	const char* request_id = nullptr;
-	const int read_result = sd_bus_message_read(reply, "s", &request_id);
-
-	if (read_result < 0 || request_id == nullptr) {
 		result_ = Result::Error;
-		sd_bus_message_unref(reply);
-		sd_bus_error_free(&error);
+		syslog(LOG_ERR, "Face: StartAuthentication failed: %s", strerror(-r));
 		return false;
 	}
 
-	request_id_ = request_id;
+	while (!state.done) {
+		if (cancelled_) {
+			// The call is dropped, the daemon cancels a request that nobody asks for by itself
+			sd_bus_slot_unref(slot);
+			result_ = Result::Cancelled;
+			return false;
+		}
+		r = sd_bus_process(bus_, nullptr);
+		if (r < 0) {
+			sd_bus_slot_unref(slot);
+			result_ = Result::Error;
+			syslog(LOG_ERR, "Face: processing the bus failed: %s", strerror(-r));
+			return false;
+		}
+		if (r == 0 && !state.done) {
+			r = sd_bus_wait(bus_, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(POLL_INTERVAL).count()));
+			if (r < 0 && r != -EINTR) {
+				sd_bus_slot_unref(slot);
+				result_ = Result::Error;
+				syslog(LOG_ERR, "Face: waiting for the bus failed: %s", strerror(-r));
+				return false;
+			}
+		}
+	}
+	sd_bus_slot_unref(slot);
+
+	if (state.failed) {
+		if (state.error_name == "org.howdy.Authentication.Busy") {
+			result_ = Result::Busy;
+		} else if (state.error_name == "org.howdy.Authentication.InvalidUser") {
+			result_ = Result::InvalidUser;
+		} else {
+			// A daemon that is not there is an error like any other if it does not come in time. Only
+			// a daemon that was lost during a request is a Disconnected, see process_events().
+			result_ = Result::Error;
+			daemon_unreachable_ = daemon_unreachable(state.error_name);
+			syslog(LOG_ERR, "Face: StartAuthentication failed: %s", state.error_message.empty() ? state.error_name.c_str() : state.error_message.c_str());
+		}
+		return false;
+	}
+
+	request_id_ = state.request_id;
 	request_started_ = true;
-
-	sd_bus_message_unref(reply);
-	sd_bus_error_free(&error);
-
 	return true;
 }
 
 bool FaceAuthenticator::start_authentication_waiting(std::chrono::steady_clock::time_point deadline) {
 	bool announced = false;
+	const auto busy_deadline = std::chrono::steady_clock::now() + BUSY_TIMEOUT;
 	for (;;) {
 		daemon_unreachable_ = false;
-		if (start_authentication()) {
+		if (start_authentication(deadline)) {
 			// A daemon that was reported gone before this request is the one that answered it
 			daemon_lost_ = false;
+			// What the earlier tries said (Busy, Error) is not the result of this request
+			result_ = Result::Unset;
 			return true;
 		}
-		if (!daemon_unreachable_ || cancelled_ || std::chrono::steady_clock::now() >= deadline) {
+		const auto now = std::chrono::steady_clock::now();
+		const bool busy = result_ == Result::Busy && now < busy_deadline;
+		if ((!daemon_unreachable_ && !busy) || cancelled_ || now >= deadline) {
 			return false;
 		}
 		if (!announced) {
 			announced = true;
-			syslog(LOG_NOTICE, "Face: the daemon is not there, waiting for it");
+			syslog(LOG_NOTICE, busy ? "Face: the daemon is busy, waiting for it" : "Face: the daemon is not there, waiting for it");
 		}
 		// In small steps, a cancel (a password was typed) is not held up
 		for (auto waited = std::chrono::milliseconds(0); waited < RECONNECT_INTERVAL && !cancelled_; waited += POLL_INTERVAL) {
@@ -348,32 +418,6 @@ FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv
 	}
 	cleanup();
 	return result_;
-}
-
-int FaceAuthenticator::howdy_name_owner_changed(sd_bus_message* message, void* userdata, sd_bus_error* /*unused*/) {
-	auto* self = static_cast<FaceAuthenticator*>(userdata);
-
-	const char* name = nullptr;
-	const char* old_owner = nullptr;
-	const char* new_owner = nullptr;
-
-	if (sd_bus_message_read(message, "sss", &name, &old_owner, &new_owner) < 0) {
-
-		return 0;
-	}
-
-	if (!str_equal(name, HOWDY_BUS)) {
-		return 0;
-	}
-
-	/*
-	 * howdy disappeared.
-	 */
-	if (new_owner == nullptr || new_owner[0] == '\0') {
-		self->daemon_lost_ = true;
-	}
-
-	return 0;
 }
 
 void FaceAuthenticator::cancel() noexcept {

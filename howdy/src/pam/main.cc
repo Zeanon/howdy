@@ -313,7 +313,9 @@ inline void print_detection_notices() {
 	}
 
 	// A method that has not answered in time (the daemon of the face is still starting after the computer
-	// woke up) is announced when it does, if it can be used: without a face model there is nothing to say
+	// woke up) is announced when it does, if it can be used: without a face model there is nothing to say.
+	// This does not wait for good: the method answers when its task ends (Unavailable at the latest, after
+	// the 20 seconds the face waits for its daemon), and a success or an end of the authentication ends the wait.
 	if (face_state == Availability::Unknown) {
 		face_state = wait_for_answer(face_auth, face_availability, false);
 		if (face_state == Availability::Available && !done()) {

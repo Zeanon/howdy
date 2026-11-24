@@ -172,6 +172,41 @@ expect "a late daemon: the notices come when the face answers" "$(has "Facial au
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
 cp "$T/impostor.dat" "$MODEL"
 
+echo "--- the daemon is busy"
+# Another authentication of the user runs (the face of the first one does not match, it ends after the
+# timeout of the face): the daemon says Busy to the second one, and it is asked again until the first one is over
+cp "$T/impostor.dat" "$MODEL"
+chmod 600 "$MODEL"
+run_pam_in_background
+first_pid=$pam_pid
+sleep 1
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+run_pam
+wait "$first_pid" || true
+expect "a daemon that is busy: the face authenticates when it is free" "$(result_of)" 0
+expect "a daemon that is busy: it waited for the first request" "$([ "$SECONDS_TAKEN" -ge 1 ] && echo yes || echo no)" yes
+cp "$T/impostor.dat" "$MODEL"
+
+echo "--- a daemon that never comes"
+# The module waits 20 seconds for a daemon that is not there. Then the face has failed like without a
+# daemon: the program is not ended (a signal would end sudo or the lock screen), the others go on.
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+stop_daemon
+started=$SECONDS
+run_pam_in_background
+status=0
+wait "$pam_pid" || status=$?
+OUT=$(cat "$T/pam_background.out")
+expect "no daemon: the face does not authenticate" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "no daemon: the program ends normally, not by a signal" "$status" 0
+expect "no daemon: the module waited for the daemon" "$([ $((SECONDS - started)) -ge 19 ] && echo yes || echo no)" yes
+start_background "$T/daemon"
+DAEMON_PID=$BACKGROUND_PID
+cp "$T/impostor.dat" "$MODEL"
+
 echo "--- a signal that ends the authentication goes on to the program"
 # The module catches SIGINT, SIGTERM and SIGQUIT while it authenticates, so that a Ctrl+C ends the
 # authentication, and gives the same signal back to the program when it is done. A program that does

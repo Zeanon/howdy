@@ -41,7 +41,8 @@ class FaceAuthenticator {
 
   private:
 	bool connect();
-	bool start_authentication();
+	// Waits for the answer until the deadline (at least two seconds)
+	bool start_authentication(std::chrono::steady_clock::time_point deadline);
 	// Like start_authentication(), but a daemon that is not there (it restarts, it is started by the bus)
 	// is waited for until the deadline, so that a short absence is not a failed authentication
 	bool start_authentication_waiting(std::chrono::steady_clock::time_point deadline);
@@ -51,18 +52,15 @@ class FaceAuthenticator {
 
 	static Result map_status(const char* status) noexcept;
 
-	static int howdy_name_owner_changed(sd_bus_message* message, void* userdata, sd_bus_error* ret_error);
-
   private:
 	std::string username_;
 	std::string request_id_;
 	const std::vector<char const*> args_;
 
 	sd_bus* bus_ = nullptr;
-	sd_bus_slot* name_owner_slot_ = nullptr;
 
 	bool cancelled_ = false;
-	// The daemon went away (its name has no owner any more) while a request was running
+	// The daemon went away while a request was running (GetResult could not be answered)
 	bool daemon_lost_ = false;
 	// start_authentication() failed because the daemon could not be reached, not because it said no
 	bool daemon_unreachable_ = false;
