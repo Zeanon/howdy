@@ -1,7 +1,6 @@
 import os
 import sys
 import pwd
-import time
 import unicodedata
 import json
 import syslog
@@ -17,7 +16,7 @@ from .file_util import (
 	write_model_file,
 )
 from .cli.auth import check_authorization
-from .caller import MissingSenderError, RateLimiter, may_access, query_caller_uid
+from .caller import MissingSenderError, is_privileged, query_caller_uid
 
 from dbus_next.aio import MessageBus
 from dbus_next import Message, MessageType, BusType
@@ -40,9 +39,7 @@ REMOVE_ERROR = "@management_interface@.Remove.Error"
 RENAME_ERROR = "@management_interface@.Rename.Error"
 CLEAR_ERROR = "@management_interface@.Clear.Error"
 COMPARE_ERROR = "@management_interface@.Compare.Error"
-KEEPALIVE_ERROR = "@management_interface@.KeepAlive.Error"
 # Compare is called too often by this user, the client waits a moment and goes on
-COMPARE_RATE_LIMITED_ERROR = "@management_interface@.Compare.RateLimited"
 
 
 POLKIT_BUS = "org.freedesktop.PolicyKit1"
@@ -54,20 +51,6 @@ POLKIT_ALLOW_USER_INTERACTION = 1
 
 
 IDLE_TIMEOUT = 30
-
-# A keep-alive like the one of the authentication daemon: a connection that polkit authorized for
-# Compare stays authorized for COMPARE_INITIAL_KEEPALIVE seconds, and every Compare or KeepAlive
-# call of the connection extends that to COMPARE_KEEPALIVE_EXTENSION seconds from then. Without a
-# call it is asked again. KeepAlive only extends what polkit allowed before, it allows nothing itself.
-COMPARE_INITIAL_KEEPALIVE = 2
-COMPARE_KEEPALIVE_EXTENSION = 1
-
-# How often a user may call Compare: howdy test makes up to ten rounds a second with a call for
-# every face, so this is a little more than it needs. Beyond that the answer is RateLimited, before
-# polkit is asked or a model is read. The calls of a user are counted together (not for each
-# connection: a program can open many), and KeepAlive does not count.
-COMPARE_RATE_PER_SECOND = 30
-COMPARE_BURST = 60
 
 
 def validate_label(label):
@@ -113,9 +96,6 @@ class ManagementInterface:
 		self.user_locks = {}
 		# Bus names that were authorized for Compare, with the time it ends. A bus name
 		# is never given to a second connection, so it can be remembered safely.
-		self.compare_authorized = {}
-		self.compare_limiter = RateLimiter(COMPARE_RATE_PER_SECOND, COMPARE_BURST)
-		self.last_rate_limit_log = None
 
 		self.idle_handle = None
 		self.shutdown_event = asyncio.Event()
@@ -128,7 +108,6 @@ class ManagementInterface:
 			"Rename": ("xsxs", self.rename),
 			"Clear": ("", self.clear),
 			"Compare": ("sad", self.compare),
-			"KeepAlive": ("", self.keep_alive),
 		}
 
 	def cancel_idle_timer(self):
@@ -215,46 +194,6 @@ class ManagementInterface:
 			raise NotAuthorized(str(exc)) from exc
 		return username
 
-	async def get_caller_for_compare(self, msg, min_len):
-		"""Compare is called for every frame of howdy test, so polkit is asked on the
-		first call of a connection only. After that only root and the user are let in
-		for as long as the connection keeps comparing."""
-		now = time.monotonic()
-		self.compare_authorized = {
-			name: end for name, end in self.compare_authorized.items() if end > now
-		}
-
-		if msg.sender in self.compare_authorized:
-			username = await self.get_caller_without_polkit(msg, min_len)
-			self.compare_authorized[msg.sender] = now + COMPARE_KEEPALIVE_EXTENSION
-			return username
-
-		username = await self.get_caller(msg, min_len)
-		self.compare_authorized[msg.sender] = (
-			time.monotonic() + COMPARE_INITIAL_KEEPALIVE
-		)
-		return username
-
-	async def get_caller_without_polkit(self, msg, min_len):
-		"""Like get_caller, but only root and the user are let in, polkit is not asked"""
-		try:
-			caller_uid = await query_caller_uid(self.bus, msg.sender)
-		except MissingSenderError as exc:
-			raise NotAuthorized(str(exc)) from exc
-
-		if len(msg.body) > min_len:
-			username = msg.body[0]
-		else:
-			username = pwd.getpwuid(caller_uid).pw_name
-
-		try:
-			target_uid = pwd.getpwnam(username).pw_uid
-		except KeyError:
-			raise ValueError(f"Unknown user: {username}") from None
-		if not may_access(caller_uid, target_uid):
-			raise NotAuthorized(f"Not authorized to modify models for user {username}")
-		return username
-
 	def reply_failure(self, msg, exc, error, failure):
 		"""Log a failed call and answer it with the error of its method, a refused
 		authorization with NotAuthorized"""
@@ -328,54 +267,31 @@ class ManagementInterface:
 		except Exception as exc:
 			self.reply_failure(msg, exc, LIST_ERROR, "Failed to list face models")
 
-	async def keep_alive(self, msg):
-		"""Extend the authorization a connection got for Compare, see COMPARE_INITIAL_KEEPALIVE.
-		It allows nothing itself. Reply: whether the connection was still authorized"""
-		try:
-			now = time.monotonic()
-			end = self.compare_authorized.get(msg.sender)
-			kept = end is not None and end > now
-			if kept:
-				self.compare_authorized[msg.sender] = now + COMPARE_KEEPALIVE_EXTENSION
-			self.bus.send(Message.new_method_return(msg, "b", [kept]))
-
-		except Exception as exc:
-			self.reply_failure(
-				msg, exc, KEEPALIVE_ERROR, "Failed to keep the authorization alive"
-			)
-
 	async def compare(self, msg):
 		"""Compare a face with the models of the user, which are not given out.
 		Reply: (found, value, label)"""
 		try:
-			# A user that calls Compare too often is told to slow down, before polkit is asked
-			# (a program that does not stop would otherwise have a password prompt for every
-			# call) or a model is read
+			# Compare answers how far a face is from the models of the user, for any face the caller
+			# sends. A program that may ask often enough could work out the models from the
+			# answers, so only root is let in (howdy test runs with sudo), and root needs no polkit:
+			# it can read the models anyway.
 			try:
 				caller_uid = await query_caller_uid(self.bus, msg.sender)
 			except MissingSenderError as exc:
 				raise NotAuthorized(str(exc)) from exc
-			now = time.monotonic()
-			if not self.compare_limiter.allow(caller_uid, now):
-				if (
-					self.last_rate_limit_log is None
-					or now - self.last_rate_limit_log > 60
-				):
-					self.last_rate_limit_log = now
-					syslog.syslog(
-						syslog.LOG_WARNING,
-						f"Compare is called too often by the user {caller_uid}, slowing it down",
-					)
-				self.bus.send(
-					Message.new_error(
-						msg,
-						COMPARE_RATE_LIMITED_ERROR,
-						"Too many comparisons, please slow down",
-					)
+			# (a daemon that does not run as root, in the tests, trusts its own user like root)
+			if not is_privileged(caller_uid, True):
+				raise NotAuthorized(
+					"Only root may compare faces, please run howdy test with sudo"
 				)
-				return
 
-			username = await self.get_caller_for_compare(msg, 2)
+			username = (
+				msg.body[0] if len(msg.body) > 2 else pwd.getpwuid(caller_uid).pw_name
+			)
+			try:
+				pwd.getpwnam(username)
+			except KeyError:
+				raise ValueError(f"Unknown user: {username}") from None
 			metric, face = msg.body[-2], msg.body[-1]
 
 			try:

@@ -102,11 +102,7 @@ MessagePtr send(sd_bus* bus, sd_bus_message* message, std::uint64_t timeout_usec
 		MessagePtr reply(raw_reply);
 		if (r < 0) {
 			const std::string text = error.message != nullptr ? error.message : std::strerror(-r);
-			const bool limited = error.name != nullptr && std::strcmp(error.name, paths::MANAGEMENT_COMPARE_RATE_LIMITED_ERROR) == 0;
 			sd_bus_error_free(&error);
-			if (limited) {
-				throw RateLimited(text);
-			}
 			throw std::runtime_error(text);
 		}
 		sd_bus_error_free(&error);
@@ -138,9 +134,6 @@ MessagePtr send(sd_bus* bus, sd_bus_message* message, std::uint64_t timeout_usec
 		}
 	}
 	if (!result.error.empty()) {
-		if (result.error_name == paths::MANAGEMENT_COMPARE_RATE_LIMITED_ERROR) {
-			throw RateLimited(result.error);
-		}
 		throw std::runtime_error(result.error);
 	}
 	return std::move(result.reply);
@@ -236,23 +229,6 @@ std::optional<FaceMatch> compare_face(
 		return std::nullopt;
 	}
 	return FaceMatch{value, label};
-}
-
-bool keep_alive(sd_bus* bus, std::uint64_t timeout_usec, const Cancelled& cancelled) {
-	sd_bus_message* raw = nullptr;
-	int r = sd_bus_message_new_method_call(bus, &raw, paths::MANAGEMENT_BUS, paths::MANAGEMENT_PATH, paths::MANAGEMENT_INTERFACE, "KeepAlive");
-	if (r < 0) {
-		throw std::runtime_error(std::string("Failed to create the call: ") + std::strerror(-r));
-	}
-	const MessagePtr message(raw);
-
-	const MessagePtr reply = send(bus, raw, timeout_usec, cancelled);
-
-	int kept = 0;
-	if (sd_bus_message_read(reply.get(), "b", &kept) < 0) {
-		throw std::runtime_error("Invalid reply of the management daemon");
-	}
-	return kept != 0;
 }
 
 } // namespace howdy

@@ -3,8 +3,7 @@
 #
 # Prints the reply of every call, or the name of its error, one per line. The environment
 # variable COMPARE_PAUSE is a pause in seconds between the calls, COMPARE_CONCURRENT=1 sends all the
-# calls at once. With COMPARE_KEEPALIVE (seconds)
-# KeepAlive is called that often during the pause, its answer is printed as "keepalive True/False".
+# calls at once.
 # The face is the list of the numbers.
 import os
 import sys
@@ -42,24 +41,9 @@ async def main():
 		bus.disconnect()
 		return
 	pause = float(os.environ.get("COMPARE_PAUSE", "0"))
-	keepalive = float(os.environ.get("COMPARE_KEEPALIVE", "0"))
 	for i in range(count):
-		if i:
-			left = pause
-			while left > 0:
-				step = min(keepalive, left) if keepalive else left
-				await asyncio.sleep(step)
-				left -= step
-				if keepalive:
-					kept = await bus.call(
-						Message(
-							destination="org.boltgolt.howdy.management",
-							path="/org/boltgolt/howdy/Management",
-							interface="org.boltgolt.howdy.Management",
-							member="KeepAlive",
-						)
-					)
-					print("keepalive", kept.body[0])
+		if i and pause:
+			await asyncio.sleep(pause)
 		reply = await bus.call(compare_message())
 		if reply.message_type == MessageType.ERROR:
 			print(reply.error_name)

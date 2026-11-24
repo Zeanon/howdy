@@ -91,44 +91,24 @@ expect "compare skips models of another size" "$(mcall Compare sad euclidean 2 0
 expect_contains "compare refuses an unknown metric" "$(mcall Compare sad cosine 3 0.1 0.2 0.3)" "Unknown metric cosine"
 expect_contains "compare refuses an empty face" "$(mcall Compare sad euclidean 0)" "Invalid face encoding"
 expect_contains "compare for another user is refused" "$(mcall Compare ssad root euclidean 3 0.1 0.2 0.3)" "Not authorized"
-# It is called for every frame: polkit is asked on the first call of a connection only
+# Compare is only for root (the daemon of the test trusts its own user like root) and needs no polkit:
+# it is called for every frame
 asked() { grep -c "org.boltgolt.howdy.Management" "$T/polkit.log" || true; }
 before="$(asked)"
 out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 4 euclidean 0.1 0.2 0.3)"
 expect "compare on one connection finds the model every time" "$(grep -c "first" <<< "$out")" 4
-expect "polkit is asked once for four calls" "$(($(asked) - before))" 1
-# The keep-alive, like the one of the authentication daemon: two seconds after polkit said yes, and
-# every call of the connection extends it to one second from then
-expect "KeepAlive of a connection that never compared is not kept" "$(mcall KeepAlive)" "b false"
-before="$(asked)"
-out="$(COMPARE_PAUSE=1.5 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 3 euclidean 0.1 0.2 0.3)"
-expect "compare finds the model after a pause" "$(grep -c "first" <<< "$out")" 3
-expect "polkit is asked again when the keep-alive ran out (two seconds, then one)" "$(($(asked) - before))" 2
-before="$(asked)"
-out="$(COMPARE_PAUSE=2.5 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 2 euclidean 0.1 0.2 0.3)"
-expect "polkit is asked again after more than two seconds without a call" "$(($(asked) - before))" 2
-before="$(asked)"
-out="$(COMPARE_PAUSE=2.5 COMPARE_KEEPALIVE=0.5 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 2 euclidean 0.1 0.2 0.3)"
-expect "KeepAlive pings are answered with true" "$(grep -c "keepalive True" <<< "$out")" 5
-expect "and polkit is asked once for the two calls" "$(($(asked) - before))" 1
-# A user that calls Compare too often is told to slow down, before polkit is asked
-before="$(asked)"
-out="$(COMPARE_CONCURRENT=1 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 120 euclidean 0.1 0.2 0.3)"
-limited="$(grep -c "Compare.RateLimited" <<< "$out")"
-# (not more than 120 at once: the bus lets a connection wait for 128 answers)
-if [ "$limited" -ge 40 ]; then echo "PASS  too many calls are answered with RateLimited ($limited of 120)"; else echo "FAIL  only $limited of 120 calls were limited"; failed=1; fi
-expect "the others are answered" "$(grep -c "first" <<< "$out")" "$((120 - limited))"
-if [ "$(($(asked) - before))" -le 70 ]; then echo "PASS  and polkit is not asked for the limited calls ($(($(asked) - before)) times)"; else echo "FAIL  polkit was asked $(($(asked) - before)) times"; failed=1; fi
-sleep 2.5
-out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 1 euclidean 0.1 0.2 0.3)"
-expect_contains "after a pause it is answered again" "$out" "first"
-# A refusal is not remembered, the next connection asks again
+expect "polkit is not asked for compare" "$(($(asked) - before))" 0
+# polkit does not matter for root
 echo deny > "$T/polkit.mode"
-before="$(asked)"
-out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 3 euclidean 0.1 0.2 0.3)"
-expect "polkit can refuse compare" "$(grep -c "org.boltgolt.howdy.Management.NotAuthorized" <<< "$out")" 3
-expect "a refusal is asked again every time" "$(($(asked) - before))" 3
+out="$("$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 2 euclidean 0.1 0.2 0.3)"
+expect "a refusal of polkit does not matter, root is let in" "$(grep -c "first" <<< "$out")" 2
 echo allow > "$T/polkit.mode"
+# There is no keep-alive any more
+expect_contains "KeepAlive does not exist any more" "$(mcall KeepAlive)" "Call failed"
+# Many calls at once are all answered (there is no limit for root)
+out="$(COMPARE_CONCURRENT=1 "$HOWDY_PYTHON" -I "$TEST_DIR/compare_calls.py" 120 euclidean 0.1 0.2 0.3)"
+# (not more than 120 at once: the bus lets a connection wait for 128 answers)
+expect "many calls at once are all answered" "$(grep -c "first" <<< "$out")" 120
 expect "rename" "$(mcall Rename xsxs 1 second 1700000100 "Living room")" "b true"
 expect_contains "the model has the new label" "$(mcall List s "$USER_NAME")" 'label\":\"Living room'
 expect_contains "the other models keep theirs" "$(mcall List s "$USER_NAME")" 'label\":\"first'
@@ -221,24 +201,20 @@ else
 	echo "gdbus not found, skipping the check of the error names"
 fi
 
-echo "--- the limit of the comparisons"
-CXXFLAGS+=(-I"$SRC_DIR")
-link "$T/rate_limiter_test" "$TEST_DIR/rate_limiter_test.cc"
-"$T/rate_limiter_test" || failed=1
-
 echo "--- a call that is cancelled"
-# howdy test gives its call up when the window is closed, while the daemon may wait for a polkit
-# that asks for a password. The client has to be free in a short time.
+# howdy test gives its call up when the window is closed, while the daemon may not answer (it is busy
+# or stuck). The client has to be free in a short time. The daemon is stopped for it (SIGSTOP).
 link "$T/cancel_test" "${BASE_SOURCES[@]}" "$TEST_DIR/cancel_test.cc"
 mcall Add s "$MODEL_JSON" > /dev/null
-echo slow > "$T/polkit.mode"
+daemon_pid="$(pgrep -f "^$T/management" | head -1)"
+kill -STOP "$daemon_pid"
 out="$("$T/cancel_test" "$USER_NAME" cancel)"
-expect_contains "a call that waits for polkit is cancelled" "$out" "cancelled "
+kill -CONT "$daemon_pid"
+expect_contains "a call that is not answered is cancelled" "$out" "cancelled "
 ms="${out##* }"
-if [ "${ms:-99999}" -lt 1500 ]; then echo "PASS  in a short time ($ms ms, polkit needs 5000)"; else echo "FAIL  it took $ms ms"; failed=1; fi
+if [ "${ms:-99999}" -lt 1500 ]; then echo "PASS  in a short time ($ms ms)"; else echo "FAIL  it took $ms ms"; failed=1; fi
 out="$("$T/cancel_test" "$USER_NAME" wait)"
 expect_contains "a call that is not cancelled gets its answer" "$out" "answered first "
-echo allow > "$T/polkit.mode"
 out="$("$T/cancel_test" "$USER_NAME" error)"
 expect_contains "and an error of the daemon comes through" "$out" "error Unknown metric cosine"
 mcall Clear > /dev/null
@@ -418,19 +394,24 @@ if [ "$HAS_XVFB" = 1 ]; then
 	echo "--- cli, test window (xvfb)"
 	mcall Add s "$MODEL_JSON" > /dev/null
 	cp "$T/genuine.dat" "$MODEL"
-	# The window never closes by itself, stop it after a few seconds
-	asked_before="$(asked)"
+	# Only root compares faces, so the command needs sudo: a user namespace is root for it, and the
+	# daemon of the test trusts its own user like root. The window never closes by itself, stop it after
+	# a few seconds
 	run xvfb-run -a timeout 12 "$HOWDY" test
+	expect_contains "test needs root" "$output" "Please run this command as root:"
+	expect_contains "and says how" "$output" "sudo howdy test"
+	asked_before="$(asked)"
+	run xvfb-run -a timeout 12 unshare -r "$HOWDY" test
 	expect_contains "test shows the detection" "$output" "Opening a window with a test feed"
 	expect_contains "test prints the texture" "$output" "texture: "
 	expect_contains "test prints the movement" "$output" "Micro-movement: "
 	expect_contains "test compares the face" "$output" "similarity: "
 	expect_missing "test compares through the daemon" "$output" "Could not compare"
-	# The cli asks before the window opens, the daemon once for the connection, not for every frame
-	expect "polkit is asked twice during the test" "$(($(asked) - asked_before))" 2
+	# Root needs no polkit for the comparisons
+	expect "polkit is not asked during the test" "$(($(asked) - asked_before))" 0
 	# The video is shown 1.5 times larger than the frames of the camera (360x480 here)
 	if command -v xwininfo > /dev/null; then
-		size="$(xvfb-run -a bash -c '"$0" test > /dev/null 2>&1 & pid=$!
+		size="$(xvfb-run -a bash -c 'unshare -r "$0" test > /dev/null 2>&1 & pid=$!
 			for _ in $(seq 40); do
 				sleep 0.5
 				xwininfo -name "Howdy Test" > /dev/null 2>&1 && break
@@ -451,31 +432,27 @@ if [ "$HAS_XVFB" = 1 ]; then
 			failed=1
 		fi
 	fi
-	# A camera that is there but can not be read at first (the face authentication of the polkit prompt
-	# may still hold it) is tried again, one that does not exist fails at once
-	cp "$T/still.mp4" "$T/busy.mp4"
-	chmod 000 "$T/busy.mp4"
+	# A camera that is there but can not be read at first (a face authentication may still hold it) is tried again, one that does not exist fails at once
+	# (a file that can not be read yet: root, which the command is here, reads every file)
+	: > "$T/busy.mp4"
 	write_config "$T/busy.mp4"
-	( sleep 2; chmod 644 "$T/busy.mp4" ) &
+	( sleep 2; cp "$T/still.mp4" "$T/busy.mp4" ) &
 	freeing=$!
-	run xvfb-run -a timeout 12 "$HOWDY" test
+	run xvfb-run -a timeout 12 unshare -r "$HOWDY" test
 	expect_contains "test waits for a camera that is busy" "$output" "Waiting for the camera"
 	expect_contains "and opens it when it is free" "$output" "Opening a window with a test feed"
 	wait "$freeing"
 	write_config /dev/does-not-exist
 	started=$SECONDS
-	run xvfb-run -a timeout 12 "$HOWDY" test
+	run xvfb-run -a timeout 12 unshare -r "$HOWDY" test
 	expect_missing "a camera that does not exist is not waited for" "$output" "Waiting for the camera"
 	if [ $((SECONDS - started)) -lt 4 ]; then echo "PASS  and it fails at once ($((SECONDS - started)) s)"; else echo "FAIL  it took $((SECONDS - started)) s"; failed=1; fi
 	write_config "$T/still.mp4"
-	# The password is asked before the camera is opened: the polkit prompt may start a face
-	# authentication (pam_howdy), which needs the camera. So a refusal comes before any camera error.
+	# Without root it does not look for the camera
 	write_config /dev/does-not-exist
-	echo deny > "$T/polkit.mode"
 	run xvfb-run -a timeout 12 "$HOWDY" test
-	expect_contains "test asks polkit before it opens the camera" "$output" "Authorization failed: Polkit authorization denied"
-	expect_missing "and does not look for the camera before" "$output" "camera"
-	echo allow > "$T/polkit.mode"
+	expect_contains "test asks for root before it opens the camera" "$output" "Please run this command as root:"
+	expect_missing "and does not look for the camera" "$output" "camera device"
 	write_config "$T/still.mp4"
 	mcall Clear > /dev/null
 else

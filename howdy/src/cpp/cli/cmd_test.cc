@@ -27,7 +27,6 @@
 #include "liveness.hh"
 #include "management_client.hh"
 #include "paths.hh"
-#include "polkit.hh"
 #include "rotation.hh"
 #include "util.hh"
 #include "video_capture.hh"
@@ -48,11 +47,6 @@ constexpr std::chrono::seconds CAMERA_WAIT{5};
 constexpr std::chrono::milliseconds CAMERA_RETRY_INTERVAL{250};
 // The shortest time between two rounds of comparisons
 constexpr std::chrono::milliseconds COMPARE_INTERVAL{100};
-// Without a face to compare the authorization of the connection is kept alive this often (the daemon
-// keeps it for a second after each call, like the authentication daemon does for its requests)
-constexpr std::chrono::milliseconds KEEPALIVE_INTERVAL{500};
-// How long the thread waits when the daemon says that the comparisons come too often
-constexpr std::chrono::milliseconds RATE_LIMIT_PAUSE{200};
 
 constexpr const char* WINDOW_NAME = "Howdy Test";
 // The video of the window is shown this much larger than the frames of the camera
@@ -152,67 +146,37 @@ class CompareWorker {
 
   private:
 	void run() {
-		// The first call may wait for the polkit password, a frame is not to wait long for the others
-		std::uint64_t timeout_usec = POLKIT_TIMEOUT_USEC;
 		auto next_allowed = Clock::now();
-		// The daemon only keeps the authorization after a comparison
-		bool authorized = false;
 		for (;;) {
 			std::map<std::size_t, Encoding> work;
-			bool ping = false;
 			{
 				std::unique_lock<std::mutex> lock(mutex_);
-				ping = !wake_.wait_for(lock, KEEPALIVE_INTERVAL, [this] { return stop_.load() || !pending_.empty(); });
+				wake_.wait(lock, [this] { return stop_.load() || !pending_.empty(); });
 				if (stop_) {
 					return;
 				}
-				if (!ping) {
-					// Not more often than every COMPARE_INTERVAL: the label is up to date ten times a second,
-					// and the daemon and the bus do not take the time the frames need. Faces that come in
-					// meanwhile replace the waiting ones.
-					if (wake_.wait_until(lock, next_allowed, [this] { return stop_.load(); })) {
-						return;
-					}
-					work.swap(pending_);
+				// Not more often than every COMPARE_INTERVAL: the label is up to date ten times a second,
+				// and the daemon and the bus do not take the time the frames need. Faces that come in
+				// meanwhile replace the waiting ones.
+				if (wake_.wait_until(lock, next_allowed, [this] { return stop_.load(); })) {
+					return;
 				}
-			}
-
-			if (ping) {
-				// No face for a while: keep the authorization alive. A failed ping is nothing to report, the
-				// next comparison tells if the daemon is gone.
-				if (authorized) {
-					try {
-						static_cast<void>(keep_alive(bus_.get(), COMPARE_FRAME_TIMEOUT_USEC, [this] { return stop_.load(); }));
-					} catch (const CallCancelled&) {
-						return;
-					} catch (const std::exception&) { // NOLINT(bugprone-empty-catch)
-					}
-				}
-				continue;
+				work.swap(pending_);
 			}
 			next_allowed = Clock::now() + COMPARE_INTERVAL;
 
 			for (auto& [slot, encoding] : work) {
 				std::optional<FaceMatch> found;
 				try {
-					found = compare_face(bus_.get(), user_, metric_, encoding, timeout_usec, [this] { return stop_.load(); });
+					found = compare_face(bus_.get(), user_, metric_, encoding, COMPARE_FRAME_TIMEOUT_USEC, [this] { return stop_.load(); });
 				} catch (const CallCancelled&) {
 					return;
-				} catch (const RateLimited&) {
-					// The daemon asks to slow down: wait a moment, the faces come again with the next frames
-					std::unique_lock<std::mutex> lock(mutex_);
-					if (wake_.wait_for(lock, RATE_LIMIT_PAUSE, [this] { return stop_.load(); })) {
-						return;
-					}
-					break;
 				} catch (const std::exception& exc) {
 					const std::lock_guard<std::mutex> lock(mutex_);
 					update_.state = State::Failed;
 					update_.error = exc.what();
 					return;
 				}
-				timeout_usec = COMPARE_FRAME_TIMEOUT_USEC;
-				authorized = true;
 
 				const std::lock_guard<std::mutex> lock(mutex_);
 				if (found.has_value()) {
@@ -269,8 +233,8 @@ struct Match {
 	bool accept = false;
 };
 
-// Open the camera. The polkit prompt may have started a face authentication (pam_howdy) just before,
-// and the camera is busy for a moment after that: the driver needs its time to stop the stream and to
+// Open the camera. A face authentication (pam_howdy) may have used it just before, and the camera is
+// busy for a moment after that: the driver needs its time to stop the stream and to
 // let go of the device. So a camera that is there but can not be read is tried again for a while
 // (reading one frame shows that), instead of a pause that is a guess and costs time when the camera is
 // free. A device path that does not exist fails at once.
@@ -605,17 +569,15 @@ bool quit_requested() {
 
 } // namespace
 
-int run_test(const Options& options) {
+int run_test(const Options& options, const std::vector<std::string>& original_arguments) {
 	// The window of OpenCV (Qt) is slow on a native Wayland window, the video stutters, and smooth
 	// when it runs through XWayland. Like the other windows of Howdy (GDK_BACKEND) it always uses X.
 	setenv("QT_QPA_PLATFORM", "xcb", 1);
 
-	// Ask for the password first, before the camera is opened and the window appears, and not in the
-	// middle of a frame. The polkit prompt may start a face authentication (pam_howdy), which needs the
-	// camera and fails when the camera is already in use. The management daemon asks polkit for the
-	// comparison later, on behalf of this connection, which the answer is remembered for.
+	// The daemon only compares faces for root: a program that may ask often enough could work out the
+	// models from the answers. Root needs no polkit for it.
+	require_root(original_arguments);
 	BusPtr bus = open_system_bus();
-	authorize(bus.get(), options);
 
 	// Read config from disk
 	const Config config((std::filesystem::path(paths::CONFIG_DIR) / "config.ini").string());

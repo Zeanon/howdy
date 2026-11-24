@@ -1,5 +1,5 @@
 // Test of the calls of the management client that can be given up: compare_face() waits for a
-// daemon that waits for polkit, and has to end in a short time when it is cancelled.
+// daemon that does not answer, and has to end in a short time when it is cancelled.
 // Usage: cancel_test <user> cancel|wait|error   (the system bus is DBUS_SYSTEM_BUS_ADDRESS)
 //
 // Prints one line with the result and the milliseconds it took.
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
 	const auto start = std::chrono::steady_clock::now();
 
 	if (what == "cancel") {
-		// The daemon asks a polkit that takes five seconds, the call is cancelled after 300 ms
+		// The daemon does not answer (the test stops it), the call is cancelled after 300 ms
 		std::atomic<bool> cancelled{false};
 		std::thread canceller([&] {
 			std::this_thread::sleep_for(std::chrono::milliseconds(300));

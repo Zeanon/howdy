@@ -1,14 +1,12 @@
 #pragma once
 
 #include <chrono>
-#include <map>
 #include <string>
 
 #include <systemd/sd-bus.h>
 #include <systemd/sd-event.h>
 
 #include "model_store.hh"
-#include "rate_limiter.hh"
 
 namespace howdy {
 
@@ -19,16 +17,13 @@ namespace howdy {
 //   Remove(id)            Remove(user, id)   -> b
 //   Clear()               Clear(user)        -> b
 //   Compare(metric, face) Compare(user, metric, face) -> (b found, d value, s label)
-//   KeepAlive()                                       -> b (the authorization for Compare was kept)
-//
-// Compare answers with the error ...Compare.RateLimited if a user calls it too often.
 //
 // Without a user the models of the caller are used. Every call is checked
-// against polkit on behalf of the caller. Compare is called for every frame of
-// howdy test, so polkit is asked on the first call of a connection only, the
-// connection is remembered while it keeps comparing or sends KeepAlive (see the keep-alive times below). The
-// metric is "euclidean" or "dot", the face an array of doubles. The service quits after a while
-// without requests, it is started by D-Bus activation again.
+// against polkit on behalf of the caller, except Compare: it is only for root (howdy test runs with
+// sudo), because the answers say how far a face is from the models, and a program that may ask
+// often enough could work out the models from them. The metric is "euclidean" or "dot", the face
+// an array of doubles. The service quits after a while without requests, it is started by D-Bus
+// activation again.
 class ManagementService {
   public:
 	ManagementService(sd_bus* bus, sd_event* event, ModelStore store);
@@ -42,20 +37,6 @@ class ManagementService {
 	// Time without requests until the service stops
 	static constexpr std::chrono::seconds IDLE_TIMEOUT{30};
 
-	// A keep-alive like the one of the authentication daemon: a connection that polkit authorized for
-	// Compare stays authorized for COMPARE_INITIAL_KEEPALIVE, and every Compare or KeepAlive call of
-	// the connection extends that to COMPARE_KEEPALIVE_EXTENSION from then. Without a call it is
-	// asked again. KeepAlive only extends what polkit allowed before, it allows nothing itself.
-	static constexpr std::chrono::seconds COMPARE_INITIAL_KEEPALIVE{2};
-	static constexpr std::chrono::seconds COMPARE_KEEPALIVE_EXTENSION{1};
-
-	// How often a user may call Compare: howdy test makes up to ten rounds a second with a call for
-	// every face, so this is a little more than it needs. Beyond that the answer is RateLimited, before
-	// polkit is asked or a model is read. The calls of a user are counted together (not for each
-	// connection: a program can open many), and KeepAlive does not count.
-	static constexpr double COMPARE_RATE_PER_SECOND = 30;
-	static constexpr double COMPARE_BURST = 60;
-
   private:
 	struct Request;
 
@@ -67,16 +48,10 @@ class ManagementService {
 	void execute(const Request& request);
 	void finish(Request* request);
 	void arm_idle_timer();
-	// A bus name is never given to a second connection, so it can be remembered safely
-	bool compare_authorized(const std::string& sender);
-	void remember_compare(const std::string& sender);
 
 	sd_bus* bus_;
 	sd_event* event_;
 	ModelStore store_;
-	std::map<std::string, std::chrono::steady_clock::time_point> compare_authorized_;
-	RateLimiter compare_limiter_{COMPARE_RATE_PER_SECOND, COMPARE_BURST};
-	std::chrono::steady_clock::time_point last_rate_limit_log_{};
 	sd_bus_slot* slot_ = nullptr;
 	sd_event_source* idle_timer_ = nullptr;
 	int pending_ = 0;

@@ -15,6 +15,11 @@
                send_interface="@popup_interface@"/>
         <allow receive_type="signal"
                receive_interface="@popup_interface@"/>
+        <!-- Only root compares faces (howdy test with sudo), see the management service -->
+        <allow send_destination="@management_bus@"
+               send_interface="@management_interface@"
+               send_type="method_call"
+               send_member="Compare"/>
     </policy>
 
     <!-- Normale Benutzer -->
@@ -57,14 +62,6 @@
                send_interface="@management_interface@"
                send_type="method_call"
                send_member="Clear"/>
-        <allow send_destination="@management_bus@"
-               send_interface="@management_interface@"
-               send_type="method_call"
-               send_member="Compare"/>
-        <allow send_destination="@management_bus@"
-               send_interface="@management_interface@"
-               send_type="method_call"
-               send_member="KeepAlive"/>
         <!-- Only the daemon (root) sends the popup signals. The system bus lets
              every user send signals by default, so anybody could show a text in
              the popup of another user. -->

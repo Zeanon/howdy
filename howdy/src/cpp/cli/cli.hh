@@ -86,7 +86,7 @@ int run_config(const Options& options, const std::vector<std::string>& original_
 int run_disable(const Options& options, const std::vector<std::string>& original_arguments);
 int run_set(const Options& options, const std::vector<std::string>& original_arguments);
 int run_snapshot(const Options& options);
-int run_test(const Options& options);
+int run_test(const Options& options, const std::vector<std::string>& original_arguments);
 int run_gui(const Options& options);
 
 // Re-run this command with root privileges (pkexec, gksudo, kdesudo or sudo)

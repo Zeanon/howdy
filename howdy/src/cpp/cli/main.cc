@@ -205,7 +205,7 @@ int dispatch(const Options& options, const std::vector<std::string>& original_ar
 		return run_snapshot(options);
 	}
 	if (options.command == "test") {
-		return run_test(options);
+		return run_test(options, original_arguments);
 	}
 
 	std::cout << "Howdy " << howdy::paths::VERSION << '\n';

@@ -32,14 +32,13 @@ struct Method {
 // from other failures
 constexpr const char* NOT_AUTHORIZED_ERROR = paths::MANAGEMENT_NOT_AUTHORIZED_ERROR;
 
-constexpr std::array<Method, 7> METHODS{{
+constexpr std::array<Method, 6> METHODS{{
 	{"Add", "s", paths::MANAGEMENT_ADD_ERROR, "Failed to add face model"},
 	{"List", "", paths::MANAGEMENT_LIST_ERROR, "Failed to list face models"},
 	{"Remove", "xsx", paths::MANAGEMENT_REMOVE_ERROR, "Failed to remove face model"},
 	{"Rename", "xsxs", paths::MANAGEMENT_RENAME_ERROR, "Failed to rename face model"},
 	{"Clear", "", paths::MANAGEMENT_CLEAR_ERROR, "Failed to clear face models"},
 	{"Compare", "sad", paths::MANAGEMENT_COMPARE_ERROR, "Failed to compare the face"},
-	{"KeepAlive", "", paths::MANAGEMENT_KEEPALIVE_ERROR, "Failed to keep the authorization alive"},
 }};
 
 void check(int r, const char* what) {
@@ -98,8 +97,6 @@ struct ManagementService::Request {
 	std::int64_t expected_time = 0;
 	// Compare: the face
 	std::vector<double> encoding;
-	// The bus name of the caller, for Compare
-	std::string sender;
 	// Rename: the new label
 	std::string label;
 };
@@ -146,7 +143,7 @@ int ManagementService::handle(sd_bus_message* message) {
 	++pending_;
 	sd_event_source_set_enabled(idle_timer_, SD_EVENT_OFF);
 
-	auto request = std::make_unique<Request>(Request{this, message, method, "", "", 0, "", 0, {}, "", ""});
+	auto request = std::make_unique<Request>(Request{this, message, method, "", "", 0, "", 0, {}, ""});
 	try {
 		if (with_user) {
 			const char* user = nullptr;
@@ -187,15 +184,15 @@ int ManagementService::handle(sd_bus_message* message) {
 
 		check_caller_may_manage(caller_uid, request->username);
 
-		// A user that calls Compare too often is told to slow down, before polkit is asked (a program
-		// that does not stop would otherwise have a password prompt for every call) or a model is read
-		if (method->name == "Compare" && !compare_limiter_.allow(caller_uid, std::chrono::steady_clock::now())) {
-			const auto now = std::chrono::steady_clock::now();
-			if (now - last_rate_limit_log_ > std::chrono::minutes(1)) {
-				last_rate_limit_log_ = now;
-				log(LOG_WARNING, "Compare is called too often by the user " + std::to_string(caller_uid) + ", slowing it down");
+		// Compare answers how far a face is from the models of the user, for any face the caller sends. A
+		// program that may ask often enough could work out the model from the answers, so only root is
+		// let in (howdy test runs with sudo), and root needs no polkit: it can read the models anyway.
+		if (method->name == "Compare") {
+			// (a daemon that does not run as root, in the tests, trusts its own user like root)
+			if (!is_privileged(caller_uid, true)) {
+				throw AuthorizationError("Only root may compare faces, please run howdy test with sudo");
 			}
-			reply_error(message, paths::MANAGEMENT_COMPARE_RATE_LIMITED_ERROR, "Too many comparisons, please slow down");
+			execute(*request);
 			--pending_;
 			arm_idle_timer();
 			return 1;
@@ -204,27 +201,6 @@ int ManagementService::handle(sd_bus_message* message) {
 		const char* sender = sd_bus_message_get_sender(message);
 		if (sender == nullptr) {
 			throw AuthorizationError("Missing D-Bus sender");
-		}
-
-		// KeepAlive only extends what polkit allowed to this connection, it allows nothing itself
-		if (method->name == "KeepAlive") {
-			request->sender = sender;
-			execute(*request);
-			--pending_;
-			arm_idle_timer();
-			return 1;
-		}
-
-		// Compare is called for every frame of howdy test: polkit is asked on the first call
-		// of a connection only, the caller was checked to be root or the user above
-		if (method->name == "Compare") {
-			request->sender = sender;
-			if (compare_authorized(request->sender)) {
-				execute(*request);
-				--pending_;
-				arm_idle_timer();
-				return 1;
-			}
 		}
 
 		sd_bus_message* call = new_check_authorization_call(bus_, sender);
@@ -256,9 +232,6 @@ int ManagementService::on_authorization(sd_bus_message* reply, void* userdata, s
 
 	try {
 		evaluate_check_authorization_reply(reply);
-		if (request->method->name == "Compare") {
-			self->remember_compare(request->sender);
-		}
 		self->execute(*request);
 	} catch (const AuthorizationError& exc) {
 		log(LOG_ERR, std::string(request->method->failure) + ": " + exc.what());
@@ -292,8 +265,6 @@ void ManagementService::execute(const Request& request) {
 	} else if (name == "Rename") {
 		store_.rename(request.username, request.model_id, request.expected_label, request.expected_time, request.label);
 		check(sd_bus_reply_method_return(request.message, "b", 1), "Failed to send the reply");
-	} else if (name == "KeepAlive") {
-		check(sd_bus_reply_method_return(request.message, "b", compare_authorized(request.sender) ? 1 : 0), "Failed to send the reply");
 	} else if (name == "Compare") {
 		Metric metric{};
 		if (request.argument == "euclidean") {
@@ -312,23 +283,6 @@ void ManagementService::execute(const Request& request) {
 		store_.clear(request.username);
 		check(sd_bus_reply_method_return(request.message, "b", 1), "Failed to send the reply");
 	}
-}
-
-bool ManagementService::compare_authorized(const std::string& sender) {
-	const auto now = std::chrono::steady_clock::now();
-	std::erase_if(compare_authorized_, [&](const auto& entry) { return entry.second < now; });
-
-	const auto found = compare_authorized_.find(sender);
-	if (found == compare_authorized_.end()) {
-		return false;
-	}
-	// Used again, so it stays
-	found->second = now + COMPARE_KEEPALIVE_EXTENSION;
-	return true;
-}
-
-void ManagementService::remember_compare(const std::string& sender) {
-	compare_authorized_[sender] = std::chrono::steady_clock::now() + COMPARE_INITIAL_KEEPALIVE;
 }
 
 void ManagementService::arm_idle_timer() {

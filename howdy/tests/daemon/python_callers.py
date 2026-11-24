@@ -88,7 +88,6 @@ from howdy import howdy_management_daemon as management_module  # noqa: E402
 from howdy.caller import (  # noqa: E402
 	CallerError,
 	MissingSenderError,
-	RateLimiter,
 	is_privileged,
 	may_access,
 	query_caller_uid,
@@ -430,32 +429,6 @@ class PolkitBus:
 
 asyncio.run(management())
 
-print("--- management daemon, the limit of the comparisons")
-limiter = RateLimiter(30, 60)
-check(
-	"the burst is allowed at once", sum(limiter.allow(1000, 0) for _ in range(100)), 60
-)
-check("then it is refused", limiter.allow(1000, 0), False)
-check(
-	"a refused try takes nothing: a thirtieth of a second brings one",
-	limiter.allow(1000, 0.035),
-	True,
-)
-check("and only one", limiter.allow(1000, 0.036), False)
-check(
-	"another user has a bucket of its own",
-	sum(limiter.allow(1001, 0) for _ in range(100)),
-	60,
-)
-check(
-	"after a long pause the burst is allowed, not more",
-	sum(limiter.allow(1000, 3600) for _ in range(100)),
-	60,
-)
-limiter = RateLimiter(30, 2)
-check("the burst of two", sum(limiter.allow(1, 10) for _ in range(5)), 2)
-check("a time before adds nothing", limiter.allow(1, 5), False)
-
 print("--- management daemon, comparing a face")
 from dbus_next import Message  # noqa: E402
 
@@ -519,7 +492,7 @@ async def comparing():
 	original = management_module.check_authorization
 	management_module.check_authorization = polkit
 
-	bus = Recorder({":1.9": DAEMON, ":1.10": DAEMON})
+	bus = Recorder({":1.9": DAEMON, ":1.11": OTHER})
 	interface = management_module.ManagementInterface(bus)
 
 	async def compare(signature, body, sender=":1.9"):
@@ -565,136 +538,54 @@ async def comparing():
 			await compare("sad", ["cosine", [1.0]]),
 			COMPARE_ERROR,
 		)
-		if DAEMON != 0:
-			check(
-				"the models of another user are refused",
-				await compare("ssad", ["root", "euclidean", [1.0]]),
-				NOT_AUTHORIZED_ERROR,
-			)
+		# Only root is let in (the daemon of the test trusts its own user like root), without polkit
+		check("polkit is not asked for compare", polkit_calls, [])
+		check(
+			"root compares for any user",
+			await compare("ssad", ["root", "euclidean", [1.0]]),
+			[False, 0.0, ""],
+		)
+		check(
+			"an unknown user is an error",
+			await compare("ssad", ["no-such-user-howdy", "euclidean", [1.0]]),
+			COMPARE_ERROR,
+		)
+		check(
+			"another user is refused",
+			await compare("sad", ["euclidean", [1.0]], sender=":1.11"),
+			NOT_AUTHORIZED_ERROR,
+		)
+		check(
+			"and with the user name",
+			await compare("ssad", [own, "euclidean", [1.0]], sender=":1.11"),
+			NOT_AUTHORIZED_ERROR,
+		)
+		check("and polkit is not asked for it", polkit_calls, [])
 
-		# Polkit is asked on the first call of a connection only
-		check(
-			"polkit is asked once for the calls of a connection",
-			polkit_calls,
-			[":1.9"] * 1,
-		)
-		await compare("sad", ["euclidean", [1.0]], sender=":1.10")
-		await compare("sad", ["euclidean", [1.0]], sender=":1.10")
-		check("another connection is asked itself", polkit_calls, [":1.9", ":1.10"])
-
-		# The remembered connection is only let in for the user it may manage
-		if DAEMON != 0:
-			check(
-				"a remembered connection may not compare the models of another user",
-				await compare("ssad", ["root", "euclidean", [1.0]]),
-				NOT_AUTHORIZED_ERROR,
-			)
-
-		# The keep-alive: two seconds after polkit said yes, then one second after each call
-		interface.compare_authorized.pop(":1.9", None)
-		await compare("sad", ["euclidean", [1.0]])
-		left = interface.compare_authorized[":1.9"] - time.monotonic()
-		check(
-			"two seconds after polkit said yes",
-			management_module.COMPARE_KEEPALIVE_EXTENSION
-			< left
-			<= management_module.COMPARE_INITIAL_KEEPALIVE,
-			True,
-		)
-		await compare("sad", ["euclidean", [1.0]])
-		check(
-			"and every call extends it to one second",
-			interface.compare_authorized[":1.9"] - time.monotonic()
-			<= management_module.COMPARE_KEEPALIVE_EXTENSION,
-			True,
-		)
-
-		async def keep_alive(sender=":1.9"):
-			bus.sent.clear()
-			call = Message(
-				destination="org.example.d",
-				path="/p",
-				interface="org.example.I",
-				member="KeepAlive",
-				sender=sender,
-				serial=1,
-			)
-			await interface.keep_alive(call)
-			return bus.sent[0].body
-
-		interface.compare_authorized[":1.9"] = time.monotonic() + 0.2
-		check(
-			"KeepAlive is kept for an authorized connection", await keep_alive(), [True]
-		)
-		check(
-			"and extends it to one second",
-			0.5
-			< interface.compare_authorized[":1.9"] - time.monotonic()
-			<= management_module.COMPARE_KEEPALIVE_EXTENSION,
-			True,
-		)
-		interface.compare_authorized[":1.9"] = time.monotonic() - 1
-		check("KeepAlive is not kept after it ran out", await keep_alive(), [False])
-		check("and does not authorize", ":1.9" in interface.compare_authorized, True)
-		del interface.compare_authorized[":1.9"]
-		check(
-			"KeepAlive of an unknown connection is not kept",
-			await keep_alive(":1.77"),
-			[False],
-		)
-		check(
-			"and does not authorize it",
-			":1.77" in interface.compare_authorized,
-			False,
-		)
-		# After the time it stays authorized without comparing, polkit is asked again
-		interface.compare_authorized[":1.9"] = time.monotonic() - 1
-		await compare("sad", ["euclidean", [1.0]])
-		check("an expired connection is asked again", polkit_calls[-1], ":1.9")
-		check(
-			"and the other one is kept", ":1.10" in interface.compare_authorized, True
-		)
-
-		# A user that calls Compare too often is told to slow down, before polkit is asked
-		polkit_refuses = False
-		interface.compare_authorized.clear()
-		interface.compare_limiter = RateLimiter(0.0001, 2)
-		count = len(polkit_calls)
-		replies = [await compare("sad", ["euclidean", [1.0]]) for _ in range(5)]
-		check(
-			"the burst is answered and then RateLimited",
-			[reply == RATE_LIMITED_ERROR for reply in replies],
-			[False, False, True, True, True],
-		)
-		check(
-			"polkit is asked for the answered calls only", len(polkit_calls) - count, 1
-		)
-		interface.compare_limiter = RateLimiter(
-			management_module.COMPARE_RATE_PER_SECOND, management_module.COMPARE_BURST
-		)
-
-		# A refusal is not remembered
+		# A refusal of polkit does not matter
 		polkit_refuses = True
-		interface.compare_authorized.clear()
-		count = len(polkit_calls)
-		for _ in range(2):
-			check(
-				"a refusal by polkit",
-				await compare("sad", ["euclidean", [1.0]]),
-				NOT_AUTHORIZED_ERROR,
-			)
-		check("is asked again every time", len(polkit_calls) - count, 2)
+		check(
+			"a refusal by polkit does not matter",
+			(await compare("sad", ["euclidean", [0.0, 0.9, 0.0, 0.0]]))[2],
+			"near",
+		)
+		polkit_refuses = False
+
 		check(
 			"no sender",
 			await compare("sad", ["euclidean", [1.0]], sender=None),
 			NOT_AUTHORIZED_ERROR,
+		)
+		check(
+			"KeepAlive is gone",
+			hasattr(interface, "keep_alive") or "KeepAlive" in interface.methods,
+			False,
 		)
 	finally:
 		management_module.check_authorization = original
 
 
 COMPARE_ERROR = management_module.COMPARE_ERROR
-RATE_LIMITED_ERROR = management_module.COMPARE_RATE_LIMITED_ERROR
 NOT_AUTHORIZED_ERROR = management_module.NOT_AUTHORIZED_ERROR
 asyncio.run(comparing())
 

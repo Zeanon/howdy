@@ -17,7 +17,6 @@ from dbus_next.aio import MessageBus
 from dbus_next import Message, MessageType, BusType
 
 from ..i18n import S  # type: ignore
-from .auth import check_authorization
 from .. import paths_factory  # type: ignore
 from .. import anti_spoof_core  # type: ignore
 from ..exit_codes import CompareResult  # type: ignore
@@ -44,9 +43,12 @@ if config.get("video", "recording_plugin", fallback="opencv") != "opencv":
 	)
 	sys.exit(CompareResult.InvalidDevice)
 
-# The models are not read here, the management daemon compares the faces with them. Ask for the
-# password first, before the camera is opened: the polkit prompt may start a face authentication
-# (pam_howdy), which needs the camera, and it fails when the camera is already in use.
+# The models are not read here, the management daemon compares the faces with them. It only does
+# that for root: a program that may ask often enough could work out the models from the answers.
+if os.geteuid() != 0:
+	print(S("Please run this command as root:\n\n\tsudo howdy test"))
+	sys.exit(1)
+
 user = builtins.howdy_args.user
 use_openvino = config.getboolean("face_authentication", "use_openvino", fallback=False)
 metric = "dot" if use_openvino else "euclidean"
@@ -70,11 +72,8 @@ FONT_SCALE_NORMAL = 0.5 * DISPLAY_SCALE
 
 # The shortest time in seconds between two rounds of comparisons
 COMPARE_INTERVAL = 0.1
-# Without a face to compare the authorization of the connection is kept alive this often in seconds
-# (the daemon keeps it for a second after each call, like the authentication daemon does for its requests)
-KEEPALIVE_INTERVAL = 0.5
-# How long the thread waits when the daemon says that the comparisons come too often, in seconds
-RATE_LIMIT_PAUSE = 0.2
+# How long a call may take, in seconds
+COMPARE_TIMEOUT = 10
 
 
 class CompareWorker:
@@ -93,7 +92,7 @@ class CompareWorker:
 		self.state = "running"
 		self.error = ""
 		self.matches = {}
-		self.authorization_error = None
+		self.start_error = None
 		self.thread = threading.Thread(target=self.run, daemon=True)
 		self.thread.start()
 		self.ready.wait()
@@ -124,7 +123,7 @@ class CompareWorker:
 					self.state = "failed"
 					self.error = str(exc) or type(exc).__name__
 				else:
-					self.authorization_error = str(exc) or type(exc).__name__
+					self.start_error = str(exc) or type(exc).__name__
 		finally:
 			self.ready.set()
 
@@ -133,41 +132,11 @@ class CompareWorker:
 		# dbus-next looks for the loop of the thread
 		asyncio.set_event_loop(loop)
 		bus = loop.run_until_complete(MessageBus(bus_type=BusType.SYSTEM).connect())
-		# Ask for the password now, before the window opens, and not in the middle of a
-		# frame. The management daemon asks polkit for the comparison later on behalf of
-		# this connection, which the answer is remembered for.
-		loop.run_until_complete(
-			check_authorization(bus=bus, caller_uid=os.geteuid(), target_user=user)
-		)
 		self.ready.set()
 
-		# The first call may wait for the polkit password, a frame is not to wait long for the others
-		timeout = 300
 		next_allowed = time.monotonic()
-		# The daemon only keeps the authorization after a comparison
-		authorized = False
 		while True:
-			if not self.wake.wait(timeout=KEEPALIVE_INTERVAL):
-				# No face for a while: keep the authorization alive. A failed ping is nothing to
-				# report, the next comparison tells if the daemon is gone.
-				if authorized:
-					try:
-						loop.run_until_complete(
-							asyncio.wait_for(
-								bus.call(
-									Message(
-										destination=MANAGEMENT_BUS,
-										path=MANAGEMENT_PATH,
-										interface=MANAGEMENT_INTERFACE,
-										member="KeepAlive",
-									)
-								),
-								timeout=10,
-							)
-						)
-					except Exception:  # noqa: BLE001, S110
-						pass
-				continue
+			self.wake.wait()
 			# Not more often than every COMPARE_INTERVAL: the label is up to date ten times a
 			# second, and the daemon and the bus do not take the time the frames need. Faces that
 			# come in meanwhile replace the waiting ones.
@@ -193,22 +162,11 @@ class CompareWorker:
 								body=[user, metric, face],
 							)
 						),
-						timeout=timeout,
+						timeout=COMPARE_TIMEOUT,
 					)
 				)
 				if reply.message_type == MessageType.ERROR:
-					if (
-						reply.error_name
-						== MANAGEMENT_INTERFACE + ".Compare.RateLimited"
-					):
-						# The daemon asks to slow down: wait a moment, the faces come again
-						# with the next frames
-						time.sleep(RATE_LIMIT_PAUSE)
-						break
 					raise RuntimeError(reply.body[0])
-				timeout = 10
-				authorized = True
-
 				found, value, label = reply.body
 				with self.lock:
 					if not found:
@@ -218,8 +176,8 @@ class CompareWorker:
 
 
 compare_worker = CompareWorker()
-if compare_worker.authorization_error is not None:
-	print(f"Authorization failed: {compare_worker.authorization_error}")
+if compare_worker.start_error is not None:
+	print(f"Could not reach the management daemon: {compare_worker.start_error}")
 	sys.exit(1)
 
 # How long a camera that is there but busy is waited for, and how often it is tried, in seconds
@@ -228,8 +186,8 @@ CAMERA_RETRY_INTERVAL = 0.25
 
 
 def open_camera():
-	"""Open the camera. The polkit prompt may have started a face authentication (pam_howdy)
-	just before, and the camera is busy for a moment after that: the driver needs its time to
+	"""Open the camera. A face authentication (pam_howdy) may have used it just before, and
+	the camera is busy for a moment after that: the driver needs its time to
 	stop the stream and to let go of the device. So a camera that is there but can not be read
 	is tried again for a while (reading one frame shows that), instead of a pause that is a
 	guess and costs time when the camera is free. A device path that does not exist fails at
