@@ -233,6 +233,7 @@ echo "--- the methods that can be used are announced"
 export FPRINTD_MODE_FILE="$T/fprintd.mode"
 echo wait > "$FPRINTD_MODE_FILE"
 start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+FPRINTD_PID=$BACKGROUND_PID
 wait_for_name net.reactivated.Fprint
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 init-message" > "$CONFDIR/howdy-test"
 "$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$T/etc/config.ini" "$T/etc/config.ini" fingerprint.enable=true fingerprint.timeout=6s
@@ -292,6 +293,34 @@ expect "nothing to use: nothing is said to the user" "$(grep -c '^MSG' <<< "$OUT
 scenario "no fingerprints, no face model" no-prints no
 expect "nothing to use with enrolled fingerprints missing: nothing is said" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
 expect "and it does not take long" "$([ "$SECONDS_TAKEN" -lt 3 ] && echo yes || echo no)" yes
+
+# A reader that is stuck (it does not answer Claim) does not hold the end of the authentication: the face
+# is done, the thread of the fingerprint is asked to stop and gives its call up
+scenario "stuck reader" stuck-claim yes
+expect "a stuck reader: authenticated by the face" "$(result_of)" 0
+expect "a stuck reader: the authentication is not held up by the reader" "$([ "$SECONDS_TAKEN" -lt 4 ] && echo yes || echo no)" yes
+
+# fprintd is replaced during the verification, by a new one that takes the name over at once (it was
+# restarted faster than it is noticed that it was gone). The verification does not go on there: the
+# fingerprint is over at once and not at the timeout (6 seconds), and no signal ends the program.
+echo wait > "$FPRINTD_MODE_FILE"
+rm -f "$MODEL"
+started=$SECONDS
+run_pam_in_background
+sleep 1
+start_background env FPRINTD_REPLACE=1 "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+replacing_pid=$BACKGROUND_PID
+status=0
+wait "$pam_pid" || status=$?
+OUT=$(cat "$T/pam_background.out")
+expect "fprintd replaced: the fingerprint is over before its timeout" "$([ $((SECONDS - started)) -lt 5 ] && echo yes || echo no)" yes
+expect "fprintd replaced: not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "fprintd replaced: the program is not ended by a signal" "$status" 0
+kill "$FPRINTD_PID" "$replacing_pid" 2> /dev/null || true
+wait "$FPRINTD_PID" "$replacing_pid" 2> /dev/null || true
+start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+FPRINTD_PID=$BACKGROUND_PID
+wait_for_name net.reactivated.Fprint
 
 # The face answers last when its daemon starts late, its notice comes after the one of the fingerprint,
 # set apart from it by a blank line like in the other order

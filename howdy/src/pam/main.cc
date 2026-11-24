@@ -1096,7 +1096,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			 */
 			pass_task.stop(false);
 			howdy_task.stop(true);
-			fingerprint_task.stop(true);
+			fingerprint_task.stop(false);
 
 			pam_res = pass_task.get();
 			if (pam_res == PAM_SUCCESS && !no_confirmation) {
@@ -1116,7 +1116,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			 * terminate all sub tasks
 			 */
 			howdy_task.stop(false);
-			fingerprint_task.stop(true);
+			fingerprint_task.stop(false);
 			workaround_function(workaround);
 
 			return howdy_status(howdy_task.get());
@@ -1132,12 +1132,15 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			 * terminate all sub tasks
 			 */
 			howdy_task.stop(true);
-			fingerprint_task.stop(true);
+			fingerprint_task.stop(false);
 			workaround_function(Workaround::Native);
 
 			// Give the signal back to the program, the one that was sent: it is delivered when the signals
-			// are unblocked again, on the return. A cancelled method without a signal is a SIGINT, like before.
-			raise(received_signal != 0 ? received_signal.load() : SIGINT);
+			// are unblocked again, on the return. A method that is cancelled or lost (fprintd or the daemon of
+			// the face went away) is no signal, the program must not get one: it would end the lock screen.
+			if (received_signal != 0) {
+				raise(received_signal.load());
+			}
 			return PAM_CONV_ERR;
 		}
 

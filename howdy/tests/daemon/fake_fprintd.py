@@ -7,13 +7,15 @@ change while the stand-in runs:
   match       the finger matches a second after VerifyStart
   wait        VerifyStart works, nobody touches the reader
   slow        like wait, but Claim takes 0.6 seconds, as a reader that is slow to open
+  stuck-claim like wait, but Claim does not answer (for 30 seconds), as a reader that is stuck
+FPRINTD_REPLACE=1 takes the name over from a stand-in that runs already (the owner of the name
+changes at once, as for a service that is restarted faster than it is noticed).
 """
 
 import asyncio
 import os
-import time
 
-from dbus_next import BusType, DBusError, Message, Variant
+from dbus_next import BusType, DBusError, Message, NameFlag, Variant
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method, signal
 
@@ -41,9 +43,11 @@ class Device(ServiceInterface):
 		super().__init__("net.reactivated.Fprint.Device")
 
 	@method()
-	def Claim(self, username: "s"):  # type: ignore
+	async def Claim(self, username: "s"):  # type: ignore
 		if mode() == "slow":
-			time.sleep(0.6)
+			await asyncio.sleep(0.6)
+		if mode() == "stuck-claim":
+			await asyncio.sleep(30)
 
 	@method()
 	def Release(self):
@@ -85,7 +89,12 @@ async def main():
 	bus.add_message_handler(properties)
 	bus.export("/net/reactivated/Fprint/Manager", Manager())
 	bus.export(DEVICE, Device())
-	await bus.request_name("net.reactivated.Fprint")
+	# The first one lets itself be replaced, the one that replaces takes over
+	if os.environ.get("FPRINTD_REPLACE"):
+		flags = NameFlag.REPLACE_EXISTING
+	else:
+		flags = NameFlag.ALLOW_REPLACEMENT
+	await bus.request_name("net.reactivated.Fprint", flags)
 	await asyncio.get_running_loop().create_future()
 
 

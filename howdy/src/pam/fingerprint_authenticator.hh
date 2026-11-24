@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -38,6 +39,11 @@ class FprintdAuthenticator {
 
 	void verify_stop();
 	void release();
+
+	// Calls a method of fprintd, see the definition
+	int call(
+		const char* path, const char* interface, const char* member, std::uint64_t timeout_usec, bool cancellable, sd_bus_message** reply, sd_bus_error* error,
+		const char* types, ...);
 
 	void process_events(std::chrono::steady_clock::time_point deadline);
 

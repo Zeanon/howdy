@@ -6,7 +6,11 @@
 #include <security/pam_ext.h>
 #include <sys/syslog.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <cstdarg>
+#include <cstdint>
+#include <string>
 #include <thread>
 
 #define S(msg) translate(msg)
@@ -27,7 +31,104 @@ constexpr const char* FPRINTD_ERROR_NO_ENROLLED_PRINTS = "net.reactivated.Fprint
 constexpr const char* FPRINTD_ERROR_NO_ACTION = "net.reactivated.Fprint.Error.NoActionInProgress";
 
 constexpr auto POLL_INTERVAL = std::chrono::milliseconds(50);
+
+// How long a call of fprintd may take (the default of the bus), and the shorter time for the calls that put
+// things back, which must not hold the end of the authentication for long
+constexpr std::uint64_t CALL_TIMEOUT_USEC = 25ULL * 1000000ULL;
+constexpr std::uint64_t PUT_BACK_TIMEOUT_USEC = 5ULL * 1000000ULL;
+
+// What an asynchronous call of fprintd is answered with
+struct CallState {
+	bool done = false;
+	bool failed = false;
+	sd_bus_message* reply = nullptr;
+	std::string error_name;
+	std::string error_message;
+};
+
+int on_call_reply(sd_bus_message* reply, void* userdata, sd_bus_error* /*ret_error*/) {
+	auto* state = static_cast<CallState*>(userdata);
+	state->done = true;
+
+	if (sd_bus_message_is_method_error(reply, nullptr) != 0) {
+		const sd_bus_error* error = sd_bus_message_get_error(reply);
+		state->failed = true;
+		if (error != nullptr && error->name != nullptr) {
+			state->error_name = error->name;
+		}
+		if (error != nullptr && error->message != nullptr) {
+			state->error_message = error->message;
+		}
+		return 0;
+	}
+
+	state->reply = sd_bus_message_ref(reply);
+	return 0;
+}
 } // namespace
+
+// Calls a method of fprintd and waits for the answer in slices, so that cancel() is noticed: a reader that
+// is stuck (it is reset when the computer wakes up) can hold a call for the whole time of the call. A
+// cancelled call returns -ECANCELED and its answer is dropped. The calls that put things back are not
+// cancellable, they have to be made after a cancel too. An error of fprintd is in `error`, the answer in `reply`.
+int FprintdAuthenticator::call(
+	const char* path, const char* interface, const char* member, std::uint64_t timeout_usec, bool cancellable, sd_bus_message** reply, sd_bus_error* error,
+	const char* types, ...) {
+	sd_bus_message* message = nullptr;
+	int r = sd_bus_message_new_method_call(bus_, &message, FPRINTD_BUS, path, interface, member);
+	if (r < 0) {
+		return r;
+	}
+
+	if (types[0] != '\0') {
+		va_list arguments;
+		va_start(arguments, types);
+		r = sd_bus_message_appendv(message, types, arguments);
+		va_end(arguments);
+		if (r < 0) {
+			sd_bus_message_unref(message);
+			return r;
+		}
+	}
+
+	CallState state;
+	sd_bus_slot* slot = nullptr;
+	r = sd_bus_call_async(bus_, &slot, message, on_call_reply, &state, timeout_usec);
+	sd_bus_message_unref(message);
+	if (r < 0) {
+		return r;
+	}
+
+	while (!state.done) {
+		if (cancellable && cancelled_) {
+			sd_bus_slot_unref(slot);
+			return -ECANCELED;
+		}
+
+		r = sd_bus_process(bus_, nullptr);
+		if (r < 0) {
+			sd_bus_slot_unref(slot);
+			return r;
+		}
+
+		if (r == 0 && !state.done) {
+			r = sd_bus_wait(bus_, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(POLL_INTERVAL).count()));
+			if (r < 0 && r != -EINTR) {
+				sd_bus_slot_unref(slot);
+				return r;
+			}
+		}
+	}
+	sd_bus_slot_unref(slot);
+
+	if (state.failed) {
+		sd_bus_error_set(error, state.error_name.empty() ? SD_BUS_ERROR_FAILED : state.error_name.c_str(), state.error_message.c_str());
+		return -EIO;
+	}
+
+	*reply = state.reply;
+	return 0;
+}
 
 FprintdAuthenticator::FprintdAuthenticator(std::string username, const std::function<int(int, const char*)>& conv_function)
 	: username_(std::move(username)), conv_function_(conv_function) {
@@ -65,11 +166,11 @@ bool FprintdAuthenticator::get_default_device() {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
-	const int r = sd_bus_call_method(bus_, FPRINTD_BUS, FPRINTD_MANAGER, FPRINTD_MANAGER_IFACE, "GetDefaultDevice", &error, &reply, "");
+	const int r = call(FPRINTD_MANAGER, FPRINTD_MANAGER_IFACE, "GetDefaultDevice", CALL_TIMEOUT_USEC, true, &reply, &error, "");
 
 	if (r < 0) {
 		sd_bus_error_free(&error);
-		result_ = Result::NoDevice;
+		result_ = r == -ECANCELED ? Result::Cancelled : Result::NoDevice;
 		return false;
 	}
 
@@ -96,12 +197,14 @@ bool FprintdAuthenticator::claim() {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
-	const int r = sd_bus_call_method(bus_, FPRINTD_BUS, device_.c_str(), FPRINTD_DEVICE_IFACE, "Claim", &error, &reply, "s", username_.c_str());
+	const int r = call(device_.c_str(), FPRINTD_DEVICE_IFACE, "Claim", CALL_TIMEOUT_USEC, true, &reply, &error, "s", username_.c_str());
 
 	sd_bus_message_unref(reply);
 
 	if (r < 0) {
-		if (sd_bus_error_has_name(&error, FPRINTD_ERROR_ALREADY_IN_USE)) {
+		if (r == -ECANCELED) {
+			result_ = Result::Cancelled;
+		} else if (sd_bus_error_has_name(&error, FPRINTD_ERROR_ALREADY_IN_USE)) {
 			result_ = Result::Busy;
 		} else {
 			result_ = Result::Error;
@@ -122,16 +225,12 @@ bool FprintdAuthenticator::get_scan_type() {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
-	const char* s;
-	int r;
-
-	r = sd_bus_call_method(
-		bus_, FPRINTD_BUS, device_.c_str(), "org.freedesktop.DBus.Properties", "Get", &error, &reply, "ss", FPRINTD_DEVICE_IFACE, "scan-type");
-
-	sd_bus_message_unref(reply);
+	int r = call(device_.c_str(), "org.freedesktop.DBus.Properties", "Get", CALL_TIMEOUT_USEC, true, &reply, &error, "ss", FPRINTD_DEVICE_IFACE, "scan-type");
 
 	if (r < 0) {
-		if (sd_bus_error_has_name(&error, FPRINTD_ERROR_ALREADY_IN_USE)) {
+		if (r == -ECANCELED) {
+			result_ = Result::Cancelled;
+		} else if (sd_bus_error_has_name(&error, FPRINTD_ERROR_ALREADY_IN_USE)) {
 			result_ = Result::Busy;
 		} else {
 			result_ = Result::Error;
@@ -143,19 +242,17 @@ bool FprintdAuthenticator::get_scan_type() {
 
 	sd_bus_error_free(&error);
 
+	// A scan type that can not be read is a press (the usual one), it is no reason to stop
+	const char* scan_type = nullptr;
 	r = sd_bus_message_enter_container(reply, 'v', "s");
-	if (r < 0) {
-		return sd_bus_error_set_errno(&error, r);
+	if (r >= 0) {
+		r = sd_bus_message_read(reply, "s", &scan_type);
 	}
-
-	r = sd_bus_message_read(reply, "s", &s);
-	if (r < 0) {
-		return sd_bus_error_set_errno(&error, r);
-	}
-
-	if (str_equal(s, "swipe")) {
+	if (r >= 0 && scan_type != nullptr && str_equal(scan_type, "swipe")) {
 		is_swipe_ = true;
 	}
+
+	sd_bus_message_unref(reply);
 
 	return true;
 }
@@ -176,12 +273,16 @@ bool FprintdAuthenticator::verify_start() {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
-	int r = sd_bus_call_method(bus_, FPRINTD_BUS, device_.c_str(), FPRINTD_DEVICE_IFACE, "VerifyStart", &error, &reply, "s", "any");
+	const int r = call(device_.c_str(), FPRINTD_DEVICE_IFACE, "VerifyStart", CALL_TIMEOUT_USEC, true, &reply, &error, "s", "any");
 
 	sd_bus_message_unref(reply);
 
 	if (r < 0) {
-		if (sd_bus_error_has_name(&error, FPRINTD_ERROR_NO_ENROLLED_PRINTS)) {
+		if (r == -ECANCELED) {
+			// The call is dropped, but fprintd may have started the verification: VerifyStop has to put it back
+			verify_started_ = true;
+			result_ = Result::Cancelled;
+		} else if (sd_bus_error_has_name(&error, FPRINTD_ERROR_NO_ENROLLED_PRINTS)) {
 
 			result_ = Result::NoEnrolledPrints;
 		} else if (sd_bus_error_has_name(&error, FPRINTD_ERROR_ALREADY_IN_USE)) {
@@ -219,8 +320,6 @@ void FprintdAuthenticator::process_events(std::chrono::steady_clock::time_point 
 			if (r == 0) {
 				break;
 			}
-
-			std::this_thread::sleep_for(POLL_INTERVAL);
 		}
 
 		if (finished_ || cancelled_) {
@@ -234,12 +333,13 @@ void FprintdAuthenticator::process_events(std::chrono::steady_clock::time_point 
 			return;
 		}
 
-		const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
+		// In slices, so that cancel() is noticed: nothing on the bus wakes the thread up for it
+		const auto remaining = std::min<std::chrono::microseconds>(std::chrono::duration_cast<std::chrono::microseconds>(deadline - now), POLL_INTERVAL);
 
 		/*
 		 * sd_bus_wait() expects microseconds.
 		 */
-		r = sd_bus_wait(bus_, remaining.count());
+		r = sd_bus_wait(bus_, static_cast<std::uint64_t>(remaining.count()));
 
 		if (r < 0) {
 			if (r == -EINTR) {
@@ -349,7 +449,7 @@ void FprintdAuthenticator::verify_stop() {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
-	const int r = sd_bus_call_method(bus_, FPRINTD_BUS, device_.c_str(), FPRINTD_DEVICE_IFACE, "VerifyStop", &error, &reply, "");
+	const int r = call(device_.c_str(), FPRINTD_DEVICE_IFACE, "VerifyStop", PUT_BACK_TIMEOUT_USEC, false, &reply, &error, "");
 
 	sd_bus_message_unref(reply);
 
@@ -375,7 +475,7 @@ void FprintdAuthenticator::release() {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
-	sd_bus_call_method(bus_, FPRINTD_BUS, device_.c_str(), FPRINTD_DEVICE_IFACE, "Release", &error, &reply, "");
+	call(device_.c_str(), FPRINTD_DEVICE_IFACE, "Release", PUT_BACK_TIMEOUT_USEC, false, &reply, &error, "");
 
 	sd_bus_message_unref(reply);
 	sd_bus_error_free(&error);
@@ -486,9 +586,10 @@ int FprintdAuthenticator::fprintd_name_owner_changed(sd_bus_message* message, vo
 	}
 
 	/*
-	 * fprintd disappeared.
+	 * fprintd disappeared, or was replaced by a new one (it was restarted before it was noticed): the
+	 * verification does not go on there either.
 	 */
-	if (new_owner == nullptr || new_owner[0] == '\0') {
+	if (old_owner != nullptr && old_owner[0] != '\0') {
 		self->result_ = FprintdAuthenticator::Result::Disconnected;
 		self->finished_ = true;
 	}
