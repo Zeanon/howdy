@@ -960,7 +960,9 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		};
 		FaceAuthenticator::Result rc = face_authenticator->authenticate(conv_function, on_scanning, static_cast<int>(max_face_auth_tries));
 
-		bool terminated = (rc == FaceAuthenticator::Result::Cancelled || rc == FaceAuthenticator::Result::Disconnected || terminate);
+		// A daemon that is lost is the failure of this method, the others go on. Only a cancel (another method
+		// won, a password was typed) or a signal ends the authentication.
+		bool terminated = (rc == FaceAuthenticator::Result::Cancelled || terminate);
 
 		{
 			std::unique_lock<std::mutex> lock(mutx);
@@ -1015,7 +1017,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		FprintdAuthenticator::Result rc =
 			fingerprint_authenticator->authenticate(fingerprint_timeout, detection_notice, on_scanning, static_cast<int>(max_fingerprint_tries));
 
-		bool terminated = (rc == FprintdAuthenticator::Result::Cancelled || rc == FprintdAuthenticator::Result::Disconnected || terminate);
+		// fprintd that is lost (the reader was reset) is the failure of this method, the others go on
+		bool terminated = (rc == FprintdAuthenticator::Result::Cancelled || terminate);
 
 		{
 			std::unique_lock<std::mutex> lock(mutx);
@@ -1160,7 +1163,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 	pass_task.stop(timeouted);
 	howdy_task.stop(timeouted);
-	fingerprint_task.stop(timeouted);
+	// cancel() was called above, the thread of the fingerprint ends by itself and puts the reader back
+	fingerprint_task.stop(false);
 
 	/*
 	 * Prefer the Howdy result for the existing Howdy error messages

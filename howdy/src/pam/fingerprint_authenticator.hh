@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -67,10 +68,16 @@ class FprintdAuthenticator {
 	bool claimed_ = false;
 	bool is_swipe_ = false;
 	bool verify_started_ = false;
+	// VerifyStop did not answer in time: the reader is stuck, nothing else is asked of it (the connection
+	// that is closed lets fprintd release it)
+	bool put_back_stuck_ = false;
 	bool scanning_notified_ = false;
 
-	bool cancelled_ = false;
+	// Set by cancel() from another thread, read in the loops that wait
+	std::atomic<bool> cancelled_{false};
 	bool finished_ = false;
+	// fprintd went away or was replaced at some time of the authentication
+	bool owner_replaced_ = false;
 
 	Result result_ = Result::Unset;
 };

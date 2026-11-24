@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <string>
@@ -59,7 +60,8 @@ class FaceAuthenticator {
 
 	sd_bus* bus_ = nullptr;
 
-	bool cancelled_ = false;
+	// Set by cancel() from another thread, read in the loops that wait
+	std::atomic<bool> cancelled_{false};
 	// The daemon went away while a request was running (GetResult could not be answered)
 	bool daemon_lost_ = false;
 	// start_authentication() failed because the daemon could not be reached, not because it said no

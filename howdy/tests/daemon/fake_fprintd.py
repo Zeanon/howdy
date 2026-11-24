@@ -8,6 +8,10 @@ change while the stand-in runs:
   wait        VerifyStart works, nobody touches the reader
   slow        like wait, but Claim takes 0.6 seconds, as a reader that is slow to open
   stuck-claim like wait, but Claim does not answer (for 30 seconds), as a reader that is stuck
+  match-slow-stop  like match, but VerifyStop takes 1.5 seconds, as a reader that is slow to stop
+  nomatch-slow-stop  like match-slow-stop, but the finger does not match
+  lose        like wait, but the stand-in ends 0.3 seconds after VerifyStart, as an fprintd that is gone
+The calls it gets are written to the file in FPRINTD_LOG (one name a line), if it is set.
 FPRINTD_REPLACE=1 takes the name over from a stand-in that runs already (the owner of the name
 changes at once, as for a service that is restarted faster than it is noticed).
 """
@@ -20,6 +24,13 @@ from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method, signal
 
 DEVICE = "/net/reactivated/Fprint/Device/0"
+
+
+def log(call):
+	path = os.environ.get("FPRINTD_LOG")
+	if path:
+		with open(path, "a") as handle:
+			handle.write(call + "\n")
 
 
 def mode():
@@ -44,6 +55,7 @@ class Device(ServiceInterface):
 
 	@method()
 	async def Claim(self, username: "s"):  # type: ignore
+		log("Claim")
 		if mode() == "slow":
 			await asyncio.sleep(0.6)
 		if mode() == "stuck-claim":
@@ -51,22 +63,31 @@ class Device(ServiceInterface):
 
 	@method()
 	def Release(self):
-		pass
+		log("Release")
 
 	@method()
 	def VerifyStart(self, finger: "s"):  # type: ignore
+		log("VerifyStart")
+		if mode() == "lose":
+			asyncio.get_running_loop().call_later(0.3, os._exit, 0)
 		if mode() == "no-prints":
 			raise DBusError(
 				"net.reactivated.Fprint.Error.NoEnrolledPrints", "No enrolled prints"
 			)
-		if mode() == "match":
+		if mode() in ("match", "match-slow-stop"):
 			asyncio.get_running_loop().call_later(
 				1, self.VerifyStatus, "verify-match", True
 			)
+		if mode() == "nomatch-slow-stop":
+			asyncio.get_running_loop().call_later(
+				1, self.VerifyStatus, "verify-no-match", True
+			)
 
 	@method()
-	def VerifyStop(self):
-		pass
+	async def VerifyStop(self):
+		log("VerifyStop")
+		if mode() in ("match-slow-stop", "nomatch-slow-stop"):
+			await asyncio.sleep(1.5)
 
 	@signal()
 	def VerifyStatus(self, result: "s", done: "b") -> "sb":  # type: ignore

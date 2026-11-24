@@ -211,15 +211,19 @@ second_pass() {
 	echo "--- second pass, as root in a user namespace"
 	if unshare -r true 2> /dev/null; then
 		HOWDY_ROOT_PASS=1 HOWDY_TEST_USER="$USER_NAME" WORK_DIR="$WORK_DIR" DAEMON_ONLY="$DAEMON_ONLY" unshare -r bash "${BASH_SOURCE[0]}" || failed=1
+	elif [ "${REQUIRE_ROOT_PASS:-0}" = 1 ]; then
+		echo "FAIL  user namespaces are not available, but the second pass is required (REQUIRE_ROOT_PASS=1)"
+		failed=1
 	else
 		echo "SKIP  user namespaces are not available, the tests of what only root may do did not run"
+		second_pass_skipped=1
 	fi
 }
 
 if [ "$DAEMON_ONLY" = 1 ]; then
 	second_pass
 	echo
-	[ "$failed" = 0 ] && echo "All tests passed" || echo "Some tests FAILED, logs in $T"
+	[ "$failed" = 0 ] && echo "All tests passed${second_pass_skipped:+, but the second pass (as root) was skipped}" || echo "Some tests FAILED, logs in $T"
 	exit "$failed"
 fi
 
@@ -427,5 +431,5 @@ fi
 second_pass
 
 echo
-[ "$failed" = 0 ] && echo "All tests passed" || echo "Some tests FAILED, logs in $T"
+[ "$failed" = 0 ] && echo "All tests passed${second_pass_skipped:+, but the second pass (as root) was skipped}" || echo "Some tests FAILED, logs in $T"
 exit $failed

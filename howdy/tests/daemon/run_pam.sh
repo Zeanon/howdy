@@ -26,6 +26,8 @@ if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 	"$CXX" -std=c++20 -fPIC -shared -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" \
 		"$PAM_SRC_DIR"/{main,face_authenticator,fingerprint_authenticator,enter_device}.cc -o "$PAM_DIR/pam_howdy.so" "${PAM_LIBS[@]}" -lpam -lpthread
 	"$CXX" -std=c++20 "$TEST_DIR/pam_test.cc" -o "$PAM_DIR/pam_test" -lpam
+	"$CXX" -std=c++20 -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' \
+		"$TEST_DIR/face_cancel_test.cc" "$PAM_SRC_DIR/face_authenticator.cc" -o "$PAM_DIR/face_cancel_test" "${PAM_LIBS[@]}" -lpthread
 	"$CXX" -shared -fPIC -x c "$TEST_DIR/fake_logind.c" -o "$PAM_DIR/fake_logind.so"
 	link_daemon "$T/daemon"
 
@@ -232,6 +234,8 @@ echo "--- the methods that can be used are announced"
 # fprintd on the private bus, its mode is read at every call
 export FPRINTD_MODE_FILE="$T/fprintd.mode"
 echo wait > "$FPRINTD_MODE_FILE"
+export FPRINTD_LOG="$T/fprintd.log"
+: > "$FPRINTD_LOG"
 start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
 FPRINTD_PID=$BACKGROUND_PID
 wait_for_name net.reactivated.Fprint
@@ -296,9 +300,25 @@ expect "and it does not take long" "$([ "$SECONDS_TAKEN" -lt 3 ] && echo yes || 
 
 # A reader that is stuck (it does not answer Claim) does not hold the end of the authentication: the face
 # is done, the thread of the fingerprint is asked to stop and gives its call up
+# The Claim that was given up is put back: fprintd may have claimed the reader
+: > "$FPRINTD_LOG"
 scenario "stuck reader" stuck-claim yes
 expect "a stuck reader: authenticated by the face" "$(result_of)" 0
 expect "a stuck reader: the authentication is not held up by the reader" "$([ "$SECONDS_TAKEN" -lt 4 ] && echo yes || echo no)" yes
+expect "a stuck reader: the Claim that was given up is released" "$(grep -c '^Release$' "$FPRINTD_LOG")" 1
+
+# fprintd is lost during the verification (the reader was reset): that is the failure of the fingerprint
+# and the others go on, the face authenticates. Nothing is sent to an fprintd that is gone.
+: > "$FPRINTD_LOG"
+scenario "fprintd lost" lose yes
+expect "fprintd lost: the face authenticates" "$(result_of)" 0
+expect "fprintd lost: the face is not held up" "$([ "$SECONDS_TAKEN" -lt 4 ] && echo yes || echo no)" yes
+expect "fprintd lost: the verification was started" "$(grep -c '^VerifyStart$' "$FPRINTD_LOG")" 1
+kill "$FPRINTD_PID" 2> /dev/null || true
+wait "$FPRINTD_PID" 2> /dev/null || true
+start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+FPRINTD_PID=$BACKGROUND_PID
+wait_for_name net.reactivated.Fprint
 
 # fprintd is replaced during the verification, by a new one that takes the name over at once (it was
 # restarted faster than it is noticed that it was gone). The verification does not go on there: the
@@ -321,6 +341,75 @@ wait "$FPRINTD_PID" "$replacing_pid" 2> /dev/null || true
 start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
 FPRINTD_PID=$BACKGROUND_PID
 wait_for_name net.reactivated.Fprint
+
+# Waits until the stand-in of fprintd has got VerifyStop (it logs it, and answers a while later)
+wait_for_verify_stop() {
+	local _
+	for _ in $(seq 100); do
+		grep -q '^VerifyStop$' "$FPRINTD_LOG" && return
+		sleep 0.1
+	done
+	expect "fprintd got VerifyStop in time" no yes
+}
+
+# fprintd is replaced after the finger matched, while the module puts the reader back (VerifyStop takes
+# a while). The match stays: it is not turned into a lost fprintd.
+echo match-slow-stop > "$FPRINTD_MODE_FILE"
+rm -f "$MODEL"
+: > "$FPRINTD_LOG"
+run_pam_in_background
+wait_for_verify_stop
+start_background env FPRINTD_REPLACE=1 "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+replacing_pid=$BACKGROUND_PID
+wait "$pam_pid"
+OUT=$(cat "$T/pam_background.out")
+expect "fprintd replaced after the match: authenticated by the finger" "$(result_of)" 0
+kill "$FPRINTD_PID" "$replacing_pid" 2> /dev/null || true
+wait "$FPRINTD_PID" "$replacing_pid" 2> /dev/null || true
+start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+FPRINTD_PID=$BACKGROUND_PID
+wait_for_name net.reactivated.Fprint
+
+# fprintd is replaced after a try that did not match, while the module puts the reader back. The next try is
+# not made at the new fprintd (the reader is not claimed there): the fingerprint is over, with one VerifyStart.
+echo "auth required $PAM_DIR/pam_howdy.so fingerprint:max-tries=2" > "$CONFDIR/howdy-test"
+echo nomatch-slow-stop > "$FPRINTD_MODE_FILE"
+rm -f "$MODEL"
+: > "$FPRINTD_LOG"
+run_pam_in_background
+wait_for_verify_stop
+start_background env FPRINTD_REPLACE=1 "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+replacing_pid=$BACKGROUND_PID
+wait "$pam_pid"
+OUT=$(cat "$T/pam_background.out")
+expect "fprintd replaced between two tries: not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "fprintd replaced between two tries: the second try is not made" "$(grep -c '^VerifyStart$' "$FPRINTD_LOG")" 1
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+kill "$FPRINTD_PID" "$replacing_pid" 2> /dev/null || true
+wait "$FPRINTD_PID" "$replacing_pid" 2> /dev/null || true
+start_background "$HOWDY_PYTHON" -I "$TEST_DIR/fake_fprintd.py"
+FPRINTD_PID=$BACKGROUND_PID
+wait_for_name net.reactivated.Fprint
+
+# The daemon of the face does not answer StartAuthentication (it is stopped, as slow after the computer woke
+# up) and the finger matches: the module does not wait for the face, it gives the call up
+echo match > "$FPRINTD_MODE_FILE"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+kill -STOP "$DAEMON_PID"
+started=$SECONDS
+run_pam
+kill -CONT "$DAEMON_PID"
+expect "a face daemon that does not answer: authenticated by the finger" "$(result_of)" 0
+expect "a face daemon that does not answer: the module is not held up by the face" "$([ $((SECONDS - started)) -lt 6 ] && echo yes || echo no)" yes
+
+# cancel() ends the wait for the answer of StartAuthentication (the module itself ends the thread by force
+# when another method wins, so this is tested with FaceAuthenticator alone)
+kill -STOP "$DAEMON_PID"
+CANCEL_OUT=$("$PAM_DIR/face_cancel_test" "$USER_NAME" 1000 2>&1)
+kill -CONT "$DAEMON_PID"
+expect "cancel() ends the wait for a daemon that does not answer" "$(awk '{print $2}' <<< "$CANCEL_OUT")" cancelled
+expect "and it does so at once" "$([ "$(awk '{print $3}' <<< "$CANCEL_OUT")" -lt 3000 ] && echo yes || echo no)" yes
 
 # The face answers last when its daemon starts late, its notice comes after the one of the fingerprint,
 # set apart from it by a blank line like in the other order

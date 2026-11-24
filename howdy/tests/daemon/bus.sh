@@ -21,6 +21,8 @@ stop_background() {
 	local pid
 	for pid in "${BACKGROUND_PIDS[@]}"; do
 		kill "$pid" 2> /dev/null || true
+		# (a process that was stopped by a test only ends when it goes on)
+		kill -CONT "$pid" 2> /dev/null || true
 	done
 	wait 2> /dev/null || true
 }

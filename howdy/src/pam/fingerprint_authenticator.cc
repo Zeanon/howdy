@@ -28,14 +28,12 @@ constexpr const char* FPRINTD_ERROR_ALREADY_IN_USE = "net.reactivated.Fprint.Err
 
 constexpr const char* FPRINTD_ERROR_NO_ENROLLED_PRINTS = "net.reactivated.Fprint.Error.NoEnrolledPrints";
 
-constexpr const char* FPRINTD_ERROR_NO_ACTION = "net.reactivated.Fprint.Error.NoActionInProgress";
-
 constexpr auto POLL_INTERVAL = std::chrono::milliseconds(50);
 
 // How long a call of fprintd may take (the default of the bus), and the shorter time for the calls that put
 // things back, which must not hold the end of the authentication for long
 constexpr std::uint64_t CALL_TIMEOUT_USEC = 25ULL * 1000000ULL;
-constexpr std::uint64_t PUT_BACK_TIMEOUT_USEC = 5ULL * 1000000ULL;
+constexpr std::uint64_t PUT_BACK_TIMEOUT_USEC = 2ULL * 1000000ULL;
 
 // What an asynchronous call of fprintd is answered with
 struct CallState {
@@ -203,6 +201,8 @@ bool FprintdAuthenticator::claim() {
 
 	if (r < 0) {
 		if (r == -ECANCELED) {
+			// The call is dropped, but fprintd may have claimed the reader: Release has to put it back
+			claimed_ = true;
 			result_ = Result::Cancelled;
 		} else if (sd_bus_error_has_name(&error, FPRINTD_ERROR_ALREADY_IN_USE)) {
 			result_ = Result::Busy;
@@ -392,6 +392,12 @@ FprintdAuthenticator::authenticate(std::chrono::milliseconds timeout, bool detec
 	bool no_match = true;
 	bool terminated = cancelled_;
 	while (retries < max_tries && no_match && !terminated) {
+		// fprintd was replaced while the last try was put back (nobody asked then): the reader is not claimed there
+		if (owner_replaced_) {
+			result_ = Result::Disconnected;
+			cleanup();
+			return result_;
+		}
 		finished_ = false;
 		if (!verify_start()) {
 			cleanup();
@@ -446,6 +452,12 @@ void FprintdAuthenticator::verify_stop() {
 		return;
 	}
 
+	// Nothing to stop at an fprintd that is gone, and a call would have the bus start it again
+	if (result_ == Result::Disconnected) {
+		verify_started_ = false;
+		return;
+	}
+
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
@@ -459,7 +471,8 @@ void FprintdAuthenticator::verify_stop() {
 	 * fprintd can already have stopped the verification after
 	 * emitting the final VerifyStatus.
 	 */
-	if (r < 0 && !sd_bus_error_has_name(&error, FPRINTD_ERROR_NO_ACTION)) {
+	if (r < 0 && (sd_bus_error_has_name(&error, SD_BUS_ERROR_NO_REPLY) != 0 || sd_bus_error_has_name(&error, SD_BUS_ERROR_TIMEOUT) != 0)) {
+		put_back_stuck_ = true;
 	}
 
 	sd_bus_error_free(&error);
@@ -469,6 +482,13 @@ void FprintdAuthenticator::verify_stop() {
 
 void FprintdAuthenticator::release() {
 	if (!claimed_ || !bus_) {
+		return;
+	}
+
+	// The same: nothing to release at an fprintd that is gone, and a reader that does not answer
+	// VerifyStop does not answer Release either, closing the connection releases it
+	if (result_ == Result::Disconnected || put_back_stuck_) {
+		claimed_ = false;
 		return;
 	}
 
@@ -590,8 +610,13 @@ int FprintdAuthenticator::fprintd_name_owner_changed(sd_bus_message* message, vo
 	 * verification does not go on there either.
 	 */
 	if (old_owner != nullptr && old_owner[0] != '\0') {
-		self->result_ = FprintdAuthenticator::Result::Disconnected;
-		self->finished_ = true;
+		// A result that is final stays (the put-back calls after a match process the bus too), the next try
+		// is not made at the new fprintd
+		self->owner_replaced_ = true;
+		if (!self->finished_) {
+			self->result_ = FprintdAuthenticator::Result::Disconnected;
+			self->finished_ = true;
+		}
 	}
 
 	return 0;
