@@ -145,6 +145,33 @@ expect "a daemon that is restarted during the request: the face authenticates" "
 expect "and it took the time of the restart" "$([ $((SECONDS - started)) -ge 2 ] && echo yes || echo no)" yes
 cp "$T/impostor.dat" "$MODEL"
 
+echo "--- the daemon starts late"
+# A daemon that is still starting (after the computer woke up) does not say yet whether the user has a face
+# model. The method that has not answered after a second is not announced, a user without a model would
+# be told to look into the camera. The notices of the face come when the daemon answers.
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 init-message" > "$CONFDIR/howdy-test"
+late_daemon() {
+	stop_daemon
+	run_pam_in_background
+	sleep 1.6
+	start_background "$T/daemon"
+	DAEMON_PID=$BACKGROUND_PID
+	wait "$pam_pid"
+	OUT=$(cat "$T/pam_background.out")
+}
+rm -f "$MODEL"
+late_daemon
+expect "a late daemon, no face model: nothing is announced" "$(has "Look directly into the camera")$(has "Facial authentication...")" nono
+expect "a late daemon, no face model: not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+late_daemon
+expect "a late daemon: the face authenticates" "$(result_of)" 0
+expect "a late daemon: the first notice is not given, the face has not answered" "$(has "Look directly into the camera")" no
+expect "a late daemon: the notices come when the face answers" "$(has "Facial authentication...")$(has "Please look directly into the camera")" yesyes
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+cp "$T/impostor.dat" "$MODEL"
+
 echo "--- a signal that ends the authentication goes on to the program"
 # The module catches SIGINT, SIGTERM and SIGQUIT while it authenticates, so that a Ctrl+C ends the
 # authentication, and gives the same signal back to the program when it is done. A program that does
@@ -230,6 +257,16 @@ expect "nothing to use: nothing is said to the user" "$(grep -c '^MSG' <<< "$OUT
 scenario "no fingerprints, no face model" no-prints no
 expect "nothing to use with enrolled fingerprints missing: nothing is said" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
 expect "and it does not take long" "$([ "$SECONDS_TAKEN" -lt 3 ] && echo yes || echo no)" yes
+
+# The face answers last when its daemon starts late, its notice comes after the one of the fingerprint,
+# set apart from it by a blank line like in the other order
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+echo wait > "$FPRINTD_MODE_FILE"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+late_daemon
+expect "a late daemon and a reader: authenticated by the face" "$(result_of)" 0
+expect "a late daemon and a reader: the face comes last, set apart by a blank line" "$(grep -v '^RESULT' <<< "$OUT" | sed 's/^MSG [0-9]*: //' | head -5 | tr '\n' '|')" "Fingerprint authentication...|Place your finger on the fingerprint reader||Facial authentication...|Please look directly into the camera|"
 
 echo "--- a remote session is skipped"
 # The environment can be changed by the user, the login session of logind can not

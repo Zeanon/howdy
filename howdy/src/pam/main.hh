@@ -4,6 +4,7 @@
 #include "fingerprint_authenticator.hh"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <set>
 #include <string>
@@ -20,9 +21,11 @@ static inline bool str_equal(const char* a, const char* b) {
 	return strcmp(a, b) == 0;
 }
 
-enum class ConfirmationType { Unset, Terminated, Howdy, Fingerprint, Password };
+enum class ConfirmationType : std::uint_fast8_t { Unset, Terminated, Howdy, Fingerprint, Password };
 
-enum class Workaround { Off, Input, Native };
+enum class Workaround : std::uint_fast8_t { Off, Input, Native };
+
+enum class Availability : std::uint_fast8_t { Unknown, Available, Unavailable };
 
 // Exit status codes returned by the compare process
 enum CompareResult : std::uint_fast8_t {
