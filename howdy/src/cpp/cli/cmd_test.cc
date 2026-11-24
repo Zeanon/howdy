@@ -58,6 +58,20 @@ constexpr const char* WINDOW_NAME = "Howdy Test";
 // The video of the window is shown this much larger than the frames of the camera
 constexpr double DISPLAY_SCALE = 1.5;
 
+// The overlay (text, bars, ellipses) is drawn on the enlarged video, not on the frame of the camera
+// before it is enlarged: drawn small and then stretched, the text is blurry. The positions and
+// sizes below are the ones of the frame, this turns them into pixels of the window.
+int px(double value) {
+	return static_cast<int>(std::lround(value * DISPLAY_SCALE));
+}
+
+cv::Point px(cv::Point point) {
+	return {px(point.x), px(point.y)};
+}
+
+constexpr double FONT_SCALE_SMALL = 0.3 * DISPLAY_SCALE;
+constexpr double FONT_SCALE_NORMAL = 0.5 * DISPLAY_SCALE;
+
 double certainty_to_probability(double certainty) {
 	const double c = std::max(0.0, std::min(1.0, certainty));
 	if (c >= 0.5) {
@@ -83,7 +97,9 @@ void on_mouse(int event, int /*x*/, int /*y*/, int /*flags*/, void* /*userdata*/
 
 // Print the status text by line number
 void print_text(cv::Mat& overlay, int line_number, const std::string& text) {
-	cv::putText(overlay, text, cv::Point(10, overlay.rows - 10 - (10 * line_number)), cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+	cv::putText(
+		overlay, text, cv::Point(px(10), overlay.rows - px(10) - px(10 * line_number)), cv::FONT_HERSHEY_SIMPLEX, FONT_SCALE_SMALL, cv::Scalar(0, 255, 0), 1,
+		cv::LINE_AA);
 }
 
 // Compares faces with the models through the management daemon, in a thread of its own: a call
@@ -410,15 +426,15 @@ std::array<double, 8> draw_histogram(const cv::Mat& gsframe, cv::Mat& overlay) {
 		// Top left point, 10px margins, and a bottom right point that makes the
 		// bar 10px thick, with a height of half the percentage
 		cv::rectangle(
-			overlay, cv::Point(20 + (10 * index), 10), cv::Point(10 + (10 * index), static_cast<int>((value_perc / 2) + 10)), cv::Scalar(0, 200, 0),
+			overlay, px(cv::Point(20 + (10 * index), 10)), px(cv::Point(10 + (10 * index), static_cast<int>((value_perc / 2) + 10))), cv::Scalar(0, 200, 0),
 			cv::FILLED);
 	}
 	return hist_perc;
 }
 
 // Print the status in the bottom left
-void draw_status(cv::Mat& overlay, const FrameCounter& counter, double rec_tm) {
-	print_text(overlay, 0, "RESOLUTION: " + std::to_string(overlay.rows) + "x" + std::to_string(overlay.cols));
+void draw_status(cv::Mat& overlay, const cv::Size& frame_size, const FrameCounter& counter, double rec_tm) {
+	print_text(overlay, 0, "RESOLUTION: " + std::to_string(frame_size.height) + "x" + std::to_string(frame_size.width));
 	print_text(overlay, 1, "FPS: " + std::to_string(counter.fps()));
 	print_text(overlay, 2, "FRAMES: " + std::to_string(counter.total_frames()));
 	print_text(overlay, 3, "RECOGNITION: " + std::to_string(static_cast<int>(std::lround(rec_tm * 1000))) + "ms");
@@ -426,7 +442,8 @@ void draw_status(cv::Mat& overlay, const FrameCounter& counter, double rec_tm) {
 	// Show that slow mode is on, if it's on
 	if (g_slow_mode) {
 		cv::putText(
-			overlay, "SLOW MODE", cv::Point(overlay.cols - 66, overlay.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+			overlay, "SLOW MODE", cv::Point(overlay.cols - px(66), overlay.rows - px(10)), cv::FONT_HERSHEY_SIMPLEX, FONT_SCALE_SMALL, cv::Scalar(0, 0, 255), 1,
+			cv::LINE_AA);
 	}
 }
 
@@ -507,10 +524,13 @@ bool label_face(
 	if (match.accept) {
 		// Turn the ellipse green and print the name of the model next to it
 		color = cv::Scalar(0, 230, 0);
-		cv::putText(overlay, match.label + " (" + fixed(match.certainty, 3) + ")", text_position, cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv::LINE_AA);
+		cv::putText(
+			overlay, match.label + " (" + fixed(match.certainty, 3) + ")", px(text_position), cv::FONT_HERSHEY_SIMPLEX, FONT_SCALE_NORMAL, color, 1,
+			cv::LINE_AA);
 	} else {
 		// If no approved matches, show red text
-		cv::putText(overlay, "no match (" + fixed(match.certainty, 3) + ")", text_position, cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv::LINE_AA);
+		cv::putText(
+			overlay, "no match (" + fixed(match.certainty, 3) + ")", px(text_position), cv::FONT_HERSHEY_SIMPLEX, FONT_SCALE_NORMAL, color, 1, cv::LINE_AA);
 	}
 	return true;
 }
@@ -540,13 +560,13 @@ void draw_face(TestContext& context, std::size_t index, const cv::Mat& frame, co
 	}
 
 	// Draw the ellipse
-	cv::ellipse(overlay, center, radius, 0, 0, 360, color, 3);
+	cv::ellipse(overlay, px(center), cv::Size(px(radius.width), px(radius.height)), 0, 0, 360, color, px(3));
 }
 
 // Detect the faces of an active frame and show the results, returns the recognition time
 double scan_frame(TestContext& context, const cv::Mat& frame, const cv::Mat& gsframe, cv::Mat& overlay) {
 	// Show that this is an active frame
-	cv::putText(overlay, "SCAN FRAME", cv::Point(gsframe.cols - 68, 16), cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+	cv::putText(overlay, "SCAN FRAME", px(cv::Point(gsframe.cols - 68, 16)), cv::FONT_HERSHEY_SIMPLEX, FONT_SCALE_SMALL, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
 
 	const auto recognition_start = Clock::now();
 	// Get the locations of all faces, upsampled once
@@ -638,31 +658,30 @@ int run_test(const Options& options) {
 		cv::Mat gsframe;
 		read_frames(*video_capture, rotate, counter.total_frames(), clahe, frame, gsframe);
 
-		// Make a frame to put overlays in
-		cv::Mat overlay;
-		cv::cvtColor(gsframe, overlay, cv::COLOR_GRAY2BGR);
-		cv::flip(overlay, overlay, 1);
+		// The video as it is shown, enlarged, and a copy of it to draw the overlays in
+		cv::Mat shown;
+		cv::cvtColor(gsframe, shown, cv::COLOR_GRAY2BGR);
+		cv::flip(shown, shown, 1);
+		cv::resize(shown, shown, cv::Size(), DISPLAY_SCALE, DISPLAY_SCALE, cv::INTER_CUBIC);
+		cv::Mat overlay = shown.clone();
 
 		const auto hist_perc = draw_histogram(gsframe, overlay);
-		draw_status(overlay, counter, rec_tm);
+		draw_status(overlay, gsframe.size(), counter, rec_tm);
 
 		// Ignore dark frames
 		if (hist_perc[0] > context.dark_threshold) {
 			// Show that this is an ignored frame in the top right
-			cv::putText(overlay, "DARK FRAME", cv::Point(gsframe.cols - 68, 16), cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+			cv::putText(
+				overlay, "DARK FRAME", px(cv::Point(gsframe.cols - 68, 16)), cv::FONT_HERSHEY_SIMPLEX, FONT_SCALE_SMALL, cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
 		} else {
 			rec_tm = scan_frame(context, frame, gsframe, overlay);
 		}
 
 		// Add the overlay to the frame with some transparency
 		const double alpha = 0.65;
-		cv::cvtColor(gsframe, gsframe, cv::COLOR_GRAY2BGR);
-		cv::flip(gsframe, gsframe, 1);
-		cv::addWeighted(overlay, alpha, gsframe, 1 - alpha, 0, gsframe);
+		cv::addWeighted(overlay, alpha, shown, 1 - alpha, 0, shown);
 
-		// Show the image in a window, enlarged
-		cv::resize(gsframe, gsframe, cv::Size(), DISPLAY_SCALE, DISPLAY_SCALE, cv::INTER_CUBIC);
-		cv::imshow(WINDOW_NAME, gsframe);
+		cv::imshow(WINDOW_NAME, shown);
 
 		if (quit_requested()) {
 			break;

@@ -55,6 +55,19 @@ metric = "dot" if use_openvino else "euclidean"
 # The video of the window is shown this much larger than the frames of the camera
 DISPLAY_SCALE = 1.5
 
+
+def px(*values):
+	"""The overlay (text, bars, ellipses) is drawn on the enlarged video, not on the frame of the
+	camera before it is enlarged: drawn small and then stretched, the text is blurry. The
+	positions and sizes in the code are the ones of the frame, this turns them into pixels of
+	the window."""
+	scaled = tuple(round(value * DISPLAY_SCALE) for value in values)
+	return scaled if len(scaled) > 1 else scaled[0]
+
+
+FONT_SCALE_SMALL = 0.3 * DISPLAY_SCALE
+FONT_SCALE_NORMAL = 0.5 * DISPLAY_SCALE
+
 # The shortest time in seconds between two rounds of comparisons
 COMPARE_INTERVAL = 0.1
 # Without a face to compare the authorization of the connection is kept alive this often in seconds
@@ -313,9 +326,9 @@ def print_text(line_number, text):
 	cv2.putText(
 		overlay,
 		text,
-		(10, height - 10 - (10 * line_number)),
+		(px(10), overlay.shape[0] - px(10) - px(10 * line_number)),
 		cv2.FONT_HERSHEY_SIMPLEX,
-		0.3,
+		FONT_SCALE_SMALL,
 		(0, 255, 0),
 		0,
 		cv2.LINE_AA,
@@ -441,8 +454,15 @@ try:
 		gsframe = rotate_frame(gsframe, rotate, 0)
 		gsframe = clahe.apply(gsframe)
 
-		# Make a frame to put overlays in
-		overlay = cv2.flip(cv2.cvtColor(gsframe.copy(), cv2.COLOR_GRAY2BGR), 1)
+		# The video as it is shown, enlarged, and a copy of it to draw the overlays in
+		shown = cv2.resize(
+			cv2.flip(cv2.cvtColor(gsframe, cv2.COLOR_GRAY2BGR), 1),
+			None,
+			fx=DISPLAY_SCALE,
+			fy=DISPLAY_SCALE,
+			interpolation=cv2.INTER_CUBIC,
+		)
+		overlay = shown.copy()
 
 		# Fetch the frame height and width
 		height, width = gsframe.shape[:2]
@@ -462,9 +482,9 @@ try:
 			hist_perc.append(value_perc)
 
 			# Top left point, 10px margins
-			p1 = (20 + (10 * index), 10)
+			p1 = px(20 + (10 * index), 10)
 			# Bottom right point makes the bar 10px thick, with an height of half the percentage
-			p2 = (10 + (10 * index), int(value_perc / 2 + 10))
+			p2 = px(10 + (10 * index), int(value_perc / 2 + 10))
 			# Draw the bar in green
 			cv2.rectangle(overlay, p1, p2, (0, 200, 0), thickness=cv2.FILLED)
 
@@ -479,9 +499,9 @@ try:
 			cv2.putText(
 				overlay,
 				S("SLOW MODE"),
-				(width - 66, height - 10),
+				(overlay.shape[1] - px(66), overlay.shape[0] - px(10)),
 				cv2.FONT_HERSHEY_SIMPLEX,
-				0.3,
+				FONT_SCALE_SMALL,
 				(0, 0, 255),
 				0,
 				cv2.LINE_AA,
@@ -493,9 +513,9 @@ try:
 			cv2.putText(
 				overlay,
 				S("DARK FRAME"),
-				(width - 68, 16),
+				px(width - 68, 16),
 				cv2.FONT_HERSHEY_SIMPLEX,
-				0.3,
+				FONT_SCALE_SMALL,
 				(0, 0, 255),
 				0,
 				cv2.LINE_AA,
@@ -505,9 +525,9 @@ try:
 			cv2.putText(
 				overlay,
 				S("SCAN FRAME"),
-				(width - 68, 16),
+				px(width - 68, 16),
 				cv2.FONT_HERSHEY_SIMPLEX,
-				0.3,
+				FONT_SCALE_SMALL,
 				(0, 255, 0),
 				0,
 				cv2.LINE_AA,
@@ -595,9 +615,9 @@ try:
 						cv2.putText(
 							overlay,
 							ellipse_text,
-							(int(x + r_horizontal / 3), y - r_vertical),
+							px(int(x + r_horizontal / 3), y - r_vertical),
 							cv2.FONT_HERSHEY_SIMPLEX,
-							0.5,
+							FONT_SCALE_NORMAL,
 							color,
 							1,
 							cv2.LINE_AA,
@@ -607,9 +627,9 @@ try:
 						cv2.putText(
 							overlay,
 							f"no match ({certainty:.3f})",
-							(int(x + r_horizontal / 3), y - r_vertical),
+							px(int(x + r_horizontal / 3), y - r_vertical),
 							cv2.FONT_HERSHEY_SIMPLEX,
-							0.5,
+							FONT_SCALE_NORMAL,
 							color,
 							1,
 							cv2.LINE_AA,
@@ -617,24 +637,22 @@ try:
 
 				# Draw the Ellipse
 				cv2.ellipse(
-					overlay, (x, y), (r_horizontal, r_vertical), 0, 0, 360, color, 3
+					overlay,
+					px(x, y),
+					px(r_horizontal, r_vertical),
+					0,
+					0,
+					360,
+					color,
+					px(3),
 				)  # Thickness 2 or 3?
 
 			print("-------------------------------------------------------")
 		# Add the overlay to the frame with some transparency
 		alpha = 0.65
-		gsframe = cv2.flip(cv2.cvtColor(gsframe, cv2.COLOR_GRAY2BGR), 1)
-		cv2.addWeighted(overlay, alpha, gsframe, 1 - alpha, 0, gsframe)
+		cv2.addWeighted(overlay, alpha, shown, 1 - alpha, 0, shown)
 
-		# Show the image in a window, enlarged
-		gsframe = cv2.resize(
-			gsframe,
-			None,
-			fx=DISPLAY_SCALE,
-			fy=DISPLAY_SCALE,
-			interpolation=cv2.INTER_CUBIC,
-		)
-		cv2.imshow("Howdy Test", gsframe)
+		cv2.imshow("Howdy Test", shown)
 
 		# Quit on any keypress
 		# if cv2.waitKey(1) != -1:
