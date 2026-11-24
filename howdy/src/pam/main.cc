@@ -2,13 +2,12 @@
 
 #include "enter_device.hh"
 #include "optional_task.hh"
+#include "translate.hh"
 
 #include <INIReader.h>
-#include <clocale>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <glob.h>
-#include <libintl.h>
 #include <spawn.h>
 #include <stdexcept>
 #include <termios.h>
@@ -31,7 +30,25 @@
 #include <optional>
 #include <string_view>
 
-#define S(msg) gettext(msg)
+#define S(msg) translate(msg)
+
+// Puts the signal mask of the thread back when the authentication is over
+class SignalMaskRestorer {
+  public:
+	explicit SignalMaskRestorer(const sigset_t& mask) : mask_(mask) {
+	}
+	~SignalMaskRestorer() {
+		pthread_sigmask(SIG_SETMASK, &mask_, nullptr);
+	}
+
+	SignalMaskRestorer(const SignalMaskRestorer&) = delete;
+	SignalMaskRestorer& operator=(const SignalMaskRestorer&) = delete;
+	SignalMaskRestorer(SignalMaskRestorer&&) = delete;
+	SignalMaskRestorer& operator=(SignalMaskRestorer&&) = delete;
+
+  private:
+	sigset_t mask_;
+};
 
 // How long the messages about the methods wait for the answer whether they can be used at all
 static const auto AVAILABILITY_WAIT = std::chrono::milliseconds(1000);
@@ -456,11 +473,6 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	}
 	const INIReader config(config_content->data(), config_content->size());
 
-	// Initialize gettext
-	setlocale(LC_ALL, "");
-	bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR);
-	textdomain(GETTEXT_PACKAGE);
-
 	// Error out if we could not read the config file
 	if (config.ParseError() != 0) {
 		syslog(LOG_ERR, "Failed to parse the configuration file: %d", config.ParseError());
@@ -735,7 +747,11 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	sigaddset(&set, SIGTERM);
 	sigaddset(&set, SIGQUIT);
 
-	pthread_sigmask(SIG_BLOCK, &set, nullptr);
+	// Only for the time of the authentication: the thread is not ours, the signals would stay blocked
+	// for the rest of its life, and the threads of the tasks (which have to inherit the mask) end here
+	sigset_t previous_mask;
+	pthread_sigmask(SIG_BLOCK, &set, &previous_mask);
+	const SignalMaskRestorer restore_mask(previous_mask);
 	/*
 	 * -----------------------------------------------------------------------
 	 * Dummy process to capture SIGINT/SIGTERM/SIGQUIT to terminate everything

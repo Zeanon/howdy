@@ -1,18 +1,18 @@
 #include "face_authenticator.hh"
 
 #include "main.hh"
+#include "translate.hh"
 #include <vars.hh>
 
 #include <atomic>
 #include <chrono>
-#include <libintl.h>
 #include <security/pam_ext.h>
 #include <syslog.h>
 
 #include <thread>
 #include <utility>
 
-#define S(msg) gettext(msg)
+#define S(msg) translate(msg)
 
 namespace {
 constexpr auto POLL_INTERVAL = std::chrono::milliseconds(50);

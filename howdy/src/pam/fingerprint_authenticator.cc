@@ -1,15 +1,15 @@
 #include "fingerprint_authenticator.hh"
 
 #include "main.hh"
+#include "translate.hh"
 
-#include <libintl.h>
 #include <security/pam_ext.h>
 #include <sys/syslog.h>
 
 #include <cerrno>
 #include <thread>
 
-#define S(msg) gettext(msg)
+#define S(msg) translate(msg)
 
 namespace {
 constexpr const char* FPRINTD_BUS = "net.reactivated.Fprint";
