@@ -27,17 +27,6 @@ enum class Workaround : std::uint_fast8_t { Off, Input, Native };
 
 enum class Availability : std::uint_fast8_t { Unknown, Available, Unavailable };
 
-// Exit status codes returned by the compare process
-enum CompareResult : std::uint_fast8_t {
-	Abort = 10,
-	Terminated = 11,
-	NoFaceModel = 12,
-	InvalidDevice = 13,
-	TooDark = 14,
-	TimeoutReached = 15,
-	Rubberstamp = 20,
-};
-
 // Part of the definition of pam_handle so we can access the authtok to reset it for password auth
 struct pam_handle {
 	char* authtok;

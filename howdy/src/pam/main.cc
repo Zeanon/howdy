@@ -25,6 +25,7 @@
 #include <cerrno>
 #include <condition_variable>
 #include <cstring>
+#include <format>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -140,55 +141,14 @@ optional_task<int>* fingerprint_task_ptr;
 bool timeouted = false;
 
 /**
- * Inspect the status code returned by the compare process
- * @param	status	The status code
+ * A message with a name in it: the text is translated before the name is put in, the translation has the
+ * "{}" of the name too. A translation that is broken does not end the program, the English text is used.
  */
-inline void howdy_error(int status, bool retry) {
-	// If the process has exited
-	if (WIFEXITED(status)) {
-		// Get the status code returned
-		status = WEXITSTATUS(status);
-
-		switch (status) {
-			case CompareResult::NoFaceModel:
-				if (blank_lines) {
-					conv_function(PAM_TEXT_INFO, "");
-				}
-				conv_function(PAM_ERROR_MSG, S(std::format("No face model known for {}", username).c_str()));
-				howdy_log(LOG_NOTICE, "Failure: no face model known");
-				break;
-			case CompareResult::TimeoutReached:
-				if (blank_lines) {
-					conv_function(PAM_TEXT_INFO, "");
-				}
-				if (timeout_notice) {
-					if (retry) {
-						conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached, please try again"));
-					} else {
-						conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached"));
-					}
-				}
-				howdy_log(LOG_ERR, "Failure: face authentication timeout reached");
-				break;
-			case CompareResult::Abort: howdy_log(LOG_ERR, "Failure: general abort"); break;
-			case CompareResult::TooDark:
-				if (blank_lines) {
-					conv_function(PAM_TEXT_INFO, "");
-				}
-				conv_function(PAM_ERROR_MSG, S("Face detection image too dark"));
-				howdy_log(LOG_ERR, "Failure: image too dark");
-				break;
-			case CompareResult::InvalidDevice: howdy_log(LOG_ERR, "Failure: not possible to open camera at configured path"); break;
-			default:
-				if (blank_lines) {
-					conv_function(PAM_TEXT_INFO, "");
-				}
-				conv_function(PAM_ERROR_MSG, std::string(S(" Unknown error: ") + status).c_str());
-				howdy_log(LOG_ERR, "Failure: unknown error %d", status);
-		}
-	} else if (WIFSIGNALED(status)) {
-		status = WTERMSIG(status);
-		howdy_log(LOG_ERR, "Child killed by signal %s (%d)", strsignal(status), status);
+inline std::string translate_with_name(const char* message, const std::string& name) {
+	try {
+		return std::vformat(S(message), std::make_format_args(name));
+	} catch (const std::format_error&) {
+		return std::vformat(message, std::make_format_args(name));
 	}
 }
 
@@ -205,11 +165,10 @@ inline int howdy_status(int status) {
 
 	howdy_log(LOG_INFO, "Authenticated with face authentication");
 	if (!no_confirmation) {
-		// Construct confirmation text from i18n string
 		if (blank_lines) {
 			conv_function(PAM_TEXT_INFO, "");
 		}
-		conv_function(PAM_TEXT_INFO, S(std::format("Face authenticated as {}", username).c_str()));
+		conv_function(PAM_TEXT_INFO, translate_with_name("Face authenticated as {}", username).c_str());
 	}
 
 	return PAM_SUCCESS;
@@ -915,7 +874,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 					LOG_ERR,
 					"Password authentication failed "
 					"(attempt %d/%d)",
-					retries, max_face_auth_tries);
+					retries, max_password_tries);
 
 				if (retries > 1 && blank_lines) {
 					conv_function(PAM_TEXT_INFO, "");
@@ -1095,7 +1054,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 				if (blank_lines) {
 					conv_function(PAM_TEXT_INFO, "");
 				}
-				conv_function(PAM_TEXT_INFO, S(std::format("Fingerprint authenticated as {}", username).c_str()));
+				conv_function(PAM_TEXT_INFO, translate_with_name("Fingerprint authenticated as {}", username).c_str());
 				howdy_log(LOG_INFO, "Authenticated with fingerprint");
 			}
 			return pam_res;
@@ -1116,7 +1075,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 			pam_res = pass_task.get();
 			if (pam_res == PAM_SUCCESS && !no_confirmation) {
-				conv_function(PAM_TEXT_INFO, S(std::format("Password authenticated as {}", username).c_str()));
+				conv_function(PAM_TEXT_INFO, translate_with_name("Password authenticated as {}", username).c_str());
 				howdy_log(LOG_INFO, "Authenticated with password");
 			}
 			return pam_res;
