@@ -1,6 +1,7 @@
 #include "main.hh"
 
 #include "enter_device.hh"
+#include "log.hh"
 #include "optional_task.hh"
 #include "translate.hh"
 
@@ -151,7 +152,7 @@ inline void howdy_error(int status, bool retry) {
 					conv_function(PAM_TEXT_INFO, "");
 				}
 				conv_function(PAM_ERROR_MSG, S(std::format("No face model known for {}", username).c_str()));
-				syslog(LOG_NOTICE, "Failure: no face model known");
+				howdy_log(LOG_NOTICE, "Failure: no face model known");
 				break;
 			case CompareResult::TimeoutReached:
 				if (blank_lines) {
@@ -164,27 +165,27 @@ inline void howdy_error(int status, bool retry) {
 						conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached"));
 					}
 				}
-				syslog(LOG_ERR, "Failure: face authentication timeout reached");
+				howdy_log(LOG_ERR, "Failure: face authentication timeout reached");
 				break;
-			case CompareResult::Abort: syslog(LOG_ERR, "Failure: general abort"); break;
+			case CompareResult::Abort: howdy_log(LOG_ERR, "Failure: general abort"); break;
 			case CompareResult::TooDark:
 				if (blank_lines) {
 					conv_function(PAM_TEXT_INFO, "");
 				}
 				conv_function(PAM_ERROR_MSG, S("Face detection image too dark"));
-				syslog(LOG_ERR, "Failure: image too dark");
+				howdy_log(LOG_ERR, "Failure: image too dark");
 				break;
-			case CompareResult::InvalidDevice: syslog(LOG_ERR, "Failure: not possible to open camera at configured path"); break;
+			case CompareResult::InvalidDevice: howdy_log(LOG_ERR, "Failure: not possible to open camera at configured path"); break;
 			default:
 				if (blank_lines) {
 					conv_function(PAM_TEXT_INFO, "");
 				}
 				conv_function(PAM_ERROR_MSG, std::string(S(" Unknown error: ") + status).c_str());
-				syslog(LOG_ERR, "Failure: unknown error %d", status);
+				howdy_log(LOG_ERR, "Failure: unknown error %d", status);
 		}
 	} else if (WIFSIGNALED(status)) {
 		status = WTERMSIG(status);
-		syslog(LOG_ERR, "Child killed by signal %s (%d)", strsignal(status), status);
+		howdy_log(LOG_ERR, "Child killed by signal %s (%d)", strsignal(status), status);
 	}
 }
 
@@ -199,7 +200,7 @@ inline int howdy_status(int status) {
 		return PAM_AUTH_ERR;
 	}
 
-	syslog(LOG_INFO, "Authenticated with face authentication");
+	howdy_log(LOG_INFO, "Authenticated with face authentication");
 	if (!no_confirmation) {
 		// Construct confirmation text from i18n string
 		if (blank_lines) {
@@ -416,19 +417,19 @@ inline void workaround_function(const Workaround& workaround) {
 					}
 
 					if (retries >= max_enter_tries) {
-						syslog(LOG_WARNING, "Failed to send enter input before the retries limit");
+						howdy_log(LOG_WARNING, "Failed to send enter input before the retries limit");
 						conv_function(
 							PAM_ERROR_MSG, S("Failed to send Enter press before the "
 											 "retries limit, waiting for user to press it instead"));
 					}
 				} catch (std::runtime_error& err) {
-					syslog(LOG_WARNING, "Failed to send enter input: %s", err.what());
+					howdy_log(LOG_WARNING, "Failed to send enter input: %s", err.what());
 					conv_function(
 						PAM_ERROR_MSG, S("Failed to send Enter press, waiting for user "
 										 "to press it instead"));
 				}
 			} else {
-				syslog(LOG_WARNING, "Insufficient permissions to create the fake device");
+				howdy_log(LOG_WARNING, "Insufficient permissions to create the fake device");
 				conv_function(
 					PAM_ERROR_MSG, S("Insufficient permissions to send Enter "
 									 "press, waiting for user to press it instead"));
@@ -474,16 +475,16 @@ inline bool is_removed_face_option(const std::string& arg) {
 inline std::optional<std::string> read_trusted_config(const char* path) {
 	const int fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
-		syslog(LOG_ERR, "Failed to open the configuration file %s: %s", path, strerror(errno));
+		howdy_log(LOG_ERR, "Failed to open the configuration file %s: %s", path, strerror(errno));
 		return std::nullopt;
 	}
 
 	struct stat info{};
 	std::optional<std::string> content;
 	if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
-		syslog(LOG_ERR, "The configuration file %s is not a regular file", path);
+		howdy_log(LOG_ERR, "The configuration file %s is not a regular file", path);
 	} else if (info.st_uid != 0 || (info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-		syslog(LOG_ERR, "Ignoring the configuration file %s: it must belong to root and must not be writable by others", path);
+		howdy_log(LOG_ERR, "Ignoring the configuration file %s: it must belong to root and must not be writable by others", path);
 	} else {
 		std::string data;
 		std::array<char, 4096> buffer{};
@@ -492,7 +493,7 @@ inline std::optional<std::string> read_trusted_config(const char* path) {
 			data.append(buffer.data(), static_cast<size_t>(count));
 		}
 		if (count < 0) {
-			syslog(LOG_ERR, "Failed to read the configuration file %s: %s", path, strerror(errno));
+			howdy_log(LOG_ERR, "Failed to read the configuration file %s: %s", path, strerror(errno));
 		} else {
 			content = std::move(data);
 		}
@@ -511,7 +512,6 @@ inline std::optional<std::string> read_trusted_config(const char* path) {
  * @return					Returns a PAM return code
  */
 inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, bool ask_auth_tok) { // NOLINT(readability-function-cognitive-complexity)
-	openlog("pam_howdy", 0, LOG_AUTHPRIV);
 
 	const auto config_content = read_trusted_config(CONFIG_FILE_PATH);
 	if (!config_content.has_value()) {
@@ -521,12 +521,12 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 	// Error out if we could not read the config file
 	if (config.ParseError() != 0) {
-		syslog(LOG_ERR, "Failed to parse the configuration file: %d", config.ParseError());
+		howdy_log(LOG_ERR, "Failed to parse the configuration file: %d", config.ParseError());
 		return PAM_SYSTEM_ERR;
 	}
 
 	if (config.GetBoolean("core", "disabled", false)) {
-		syslog(LOG_INFO, "Skipped authentication, Howdy is disabled");
+		howdy_log(LOG_INFO, "Skipped authentication, Howdy is disabled");
 		return PAM_IGNORE;
 	}
 
@@ -630,7 +630,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			show_auth_popup = std::optional<std::string>(arg.substr(10, arg.length()));
 		} else if (is_removed_face_option(arg)) {
 			// These settings were passed to the daemon, which only reads them from the config file now
-			syslog(LOG_WARNING, "The option '%s' is not supported any more, set it in the config file", arg.c_str());
+			howdy_log(LOG_WARNING, "The option '%s' is not supported any more, set it in the config file", arg.c_str());
 		} else if (arg.starts_with("global-timeout=")) {
 			global_timeout = str_to_seconds(arg.substr(15, arg.length()));
 		} else if (arg.starts_with("timeout=")) {
@@ -682,29 +682,29 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 	// Range checks for timeouts and max-tries
 	if (global_timeout.count() < 1) {
-		syslog(LOG_ERR, "Global-timeout needs to be greater than 0 or -1");
+		howdy_log(LOG_ERR, "Global-timeout needs to be greater than 0 or -1");
 		return PAM_SERVICE_ERR;
 	}
 
 	if (fingerprint_timeout.count() < 1) {
-		syslog(LOG_ERR, "Timeout for fingerprint needs to be greater than 0 or -1");
+		howdy_log(LOG_ERR, "Timeout for fingerprint needs to be greater than 0 or -1");
 		return PAM_SERVICE_ERR;
 	}
 
 	if (max_password_tries < 1) {
-		syslog(LOG_ERR, "Max-tries for password need to be greater than 0 or -1");
+		howdy_log(LOG_ERR, "Max-tries for password need to be greater than 0 or -1");
 		return PAM_SERVICE_ERR;
 	}
 	if (max_face_auth_tries < 1) {
-		syslog(LOG_ERR, "Max-tries for face-auth need to be greater than 0 or -1");
+		howdy_log(LOG_ERR, "Max-tries for face-auth need to be greater than 0 or -1");
 		return PAM_SERVICE_ERR;
 	}
 	if (max_fingerprint_tries < 1) {
-		syslog(LOG_ERR, "Max-tries for fingerprinr need to be greater than 0 or -1");
+		howdy_log(LOG_ERR, "Max-tries for fingerprinr need to be greater than 0 or -1");
 		return PAM_SERVICE_ERR;
 	}
 	if (max_enter_tries < 1) {
-		syslog(LOG_ERR, "Max-tries for enter need to be greater than 0 or -1");
+		howdy_log(LOG_ERR, "Max-tries for enter need to be greater than 0 or -1");
 		return PAM_SERVICE_ERR;
 	}
 
@@ -715,20 +715,20 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	// Get the username from PAM, needed to match correct face model
 	pam_res = pam_get_user(pam_handle, const_cast<const char**>(&username), nullptr);
 	if (pam_res != PAM_SUCCESS) {
-		syslog(LOG_ERR, "Failed to get username");
+		howdy_log(LOG_ERR, "Failed to get username");
 		return pam_res;
 	}
 
 	// The detection with the environment only, in case the one of the login session does not work:
 	/*
 	if (abort_if_ssh && (checkenv("SSH_CONNECTION") || checkenv("SSH_CLIENT") || checkenv("SSH_TTY") || checkenv("SSHD_OPTS"))) {
-		syslog(LOG_INFO, "Skipped authentication, SSH session detected");
+		howdy_log(LOG_INFO, "Skipped authentication, SSH session detected");
 		return PAM_IGNORE;
 	}
 	*/
 
 	if (abort_if_ssh && is_remote_session()) {
-		syslog(LOG_INFO, "Skipped authentication, remote session detected");
+		howdy_log(LOG_INFO, "Skipped authentication, remote session detected");
 		return PAM_IGNORE;
 	}
 
@@ -740,9 +740,9 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 		// GLOB_NOMATCH means there is no lid, which is normal on desktops
 		if (return_value != 0 && return_value != GLOB_NOMATCH) {
-			syslog(LOG_ERR, "Failed to read files from glob: %d", return_value);
+			howdy_log(LOG_ERR, "Failed to read files from glob: %d", return_value);
 			if (errno != 0) {
-				syslog(LOG_ERR, "Underlying error: %s (%d)", strerror(errno), errno);
+				howdy_log(LOG_ERR, "Underlying error: %s (%d)", strerror(errno), errno);
 			}
 		} else {
 			for (size_t i = 0; i < glob_result.gl_pathc; i++) {
@@ -753,7 +753,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 				if (lid_state.find("closed") != std::string::npos) {
 					globfree(&glob_result);
 
-					syslog(LOG_INFO, "Skipped authentication, closed lid detected");
+					howdy_log(LOG_INFO, "Skipped authentication, closed lid detected");
 					return PAM_IGNORE;
 				}
 			}
@@ -772,7 +772,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	// Retrieve the PAM conversation structure
 	pam_res = pam_get_item(pam_handle, PAM_CONV, conv_ptr);
 	if (pam_res != PAM_SUCCESS || conv == nullptr || conv->conv == nullptr) {
-		syslog(LOG_ERR, "Failed to acquire conversation");
+		howdy_log(LOG_ERR, "Failed to acquire conversation");
 		return PAM_SYSTEM_ERR;
 	}
 
@@ -847,7 +847,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 		auto* handle = dlopen(PAM_UNIX_PATH, RTLD_NOW);
 		if (!handle) {
-			syslog(LOG_ERR, "Could not load %s: %s", PAM_UNIX_PATH, dlerror());
+			howdy_log(LOG_ERR, "Could not load %s: %s", PAM_UNIX_PATH, dlerror());
 
 			{
 				std::unique_lock<std::mutex> lock(mutx);
@@ -866,7 +866,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 
 		const char* err = dlerror();
 		if (err) {
-			syslog(LOG_ERR, "Could not load passwort authentication function: %s", err);
+			howdy_log(LOG_ERR, "Could not load passwort authentication function: %s", err);
 
 			{
 				std::unique_lock<std::mutex> lock(mutx);
@@ -898,7 +898,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 				if (!password_nodelay) {
 					std::this_thread::sleep_for(password_delay);
 				}
-				syslog(
+				howdy_log(
 					LOG_ERR,
 					"Password authentication failed "
 					"(attempt %d/%d)",
@@ -1083,7 +1083,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 					conv_function(PAM_TEXT_INFO, "");
 				}
 				conv_function(PAM_TEXT_INFO, S(std::format("Fingerprint authenticated as {}", username).c_str()));
-				syslog(LOG_INFO, "Authenticated with fingerprint");
+				howdy_log(LOG_INFO, "Authenticated with fingerprint");
 			}
 			return pam_res;
 		}
@@ -1104,7 +1104,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			pam_res = pass_task.get();
 			if (pam_res == PAM_SUCCESS && !no_confirmation) {
 				conv_function(PAM_TEXT_INFO, S(std::format("Password authenticated as {}", username).c_str()));
-				syslog(LOG_INFO, "Authenticated with password");
+				howdy_log(LOG_INFO, "Authenticated with password");
 			}
 			return pam_res;
 		}

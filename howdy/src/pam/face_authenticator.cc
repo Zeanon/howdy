@@ -1,5 +1,6 @@
 #include "face_authenticator.hh"
 
+#include "log.hh"
 #include "main.hh"
 #include "translate.hh"
 #include <vars.hh>
@@ -84,7 +85,7 @@ bool FaceAuthenticator::connect() {
 	const int r = sd_bus_open_system(&bus_);
 
 	if (r < 0) {
-		syslog(LOG_ERR, "Face: D-Bus connection failed: %s", strerror(-r));
+		howdy_log(LOG_ERR, "Face: D-Bus connection failed: %s", strerror(-r));
 		result_ = Result::Disconnected;
 		return false;
 	}
@@ -138,7 +139,7 @@ bool FaceAuthenticator::start_authentication(std::chrono::steady_clock::time_poi
 			daemon_unreachable_ = true;
 		}
 		result_ = Result::Error;
-		syslog(LOG_ERR, "Face: StartAuthentication failed: %s", strerror(-r));
+		howdy_log(LOG_ERR, "Face: StartAuthentication failed: %s", strerror(-r));
 		return false;
 	}
 
@@ -153,7 +154,7 @@ bool FaceAuthenticator::start_authentication(std::chrono::steady_clock::time_poi
 		if (r < 0) {
 			sd_bus_slot_unref(slot);
 			result_ = Result::Error;
-			syslog(LOG_ERR, "Face: processing the bus failed: %s", strerror(-r));
+			howdy_log(LOG_ERR, "Face: processing the bus failed: %s", strerror(-r));
 			return false;
 		}
 		if (r == 0 && !state.done) {
@@ -161,7 +162,7 @@ bool FaceAuthenticator::start_authentication(std::chrono::steady_clock::time_poi
 			if (r < 0 && r != -EINTR) {
 				sd_bus_slot_unref(slot);
 				result_ = Result::Error;
-				syslog(LOG_ERR, "Face: waiting for the bus failed: %s", strerror(-r));
+				howdy_log(LOG_ERR, "Face: waiting for the bus failed: %s", strerror(-r));
 				return false;
 			}
 		}
@@ -178,7 +179,7 @@ bool FaceAuthenticator::start_authentication(std::chrono::steady_clock::time_poi
 			// a daemon that was lost during a request is a Disconnected, see process_events().
 			result_ = Result::Error;
 			daemon_unreachable_ = daemon_unreachable(state.error_name);
-			syslog(LOG_ERR, "Face: StartAuthentication failed: %s", state.error_message.empty() ? state.error_name.c_str() : state.error_message.c_str());
+			howdy_log(LOG_ERR, "Face: StartAuthentication failed: %s", state.error_message.empty() ? state.error_name.c_str() : state.error_message.c_str());
 		}
 		return false;
 	}
@@ -207,7 +208,7 @@ bool FaceAuthenticator::start_authentication_waiting(std::chrono::steady_clock::
 		}
 		if (!announced) {
 			announced = true;
-			syslog(LOG_NOTICE, busy ? "Face: the daemon is busy, waiting for it" : "Face: the daemon is not there, waiting for it");
+			howdy_log(LOG_NOTICE, busy ? "Face: the daemon is busy, waiting for it" : "Face: the daemon is not there, waiting for it");
 		}
 		// In small steps, a cancel (a password was typed) is not held up
 		for (auto waited = std::chrono::milliseconds(0); waited < RECONNECT_INTERVAL && !cancelled_; waited += POLL_INTERVAL) {
@@ -268,7 +269,7 @@ void FaceAuthenticator::cancel_request() {
 		sd_bus_call_method(bus_, HOWDY_BUS, AUTHENTICATION_PATH, AUTHENTICATION_INTERFACE, "CancelAuthentication", &error, &reply, "s", request_id_.c_str());
 
 	if (r < 0) {
-		syslog(LOG_WARNING, "Face: CancelAuthentication failed: %s", error.message ? error.message : strerror(-r));
+		howdy_log(LOG_WARNING, "Face: CancelAuthentication failed: %s", error.message ? error.message : strerror(-r));
 	}
 
 	sd_bus_message_unref(reply);
@@ -285,7 +286,7 @@ void FaceAuthenticator::cleanup() {
 				bus_, HOWDY_BUS, AUTHENTICATION_PATH, AUTHENTICATION_INTERFACE, "ClearAuthentication", &error, &reply, "s", request_id_.c_str());
 
 			if (r < 0) {
-				syslog(LOG_WARNING, "Face: ClearAuthentication failed: %s", error.message ? error.message : strerror(-r));
+				howdy_log(LOG_WARNING, "Face: ClearAuthentication failed: %s", error.message ? error.message : strerror(-r));
 			}
 
 			sd_bus_message_unref(reply);
@@ -315,7 +316,7 @@ void FaceAuthenticator::process_events(const std::function<void()>& on_scanning)
 				result_ = Result::UnknownRequest;
 			} else {
 				result_ = Result::Disconnected;
-				syslog(LOG_ERR, "Face: GetResult failed: %s", error.message ? error.message : strerror(-r));
+				howdy_log(LOG_ERR, "Face: GetResult failed: %s", error.message ? error.message : strerror(-r));
 			}
 
 			sd_bus_message_unref(reply);
@@ -387,7 +388,7 @@ FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv
 		// The daemon went away during the request (it is restarted, for example after the computer woke up):
 		// a new request, as long as it is back in time, and this is not one of the tries
 		if ((result_ == Result::Disconnected || result_ == Result::UnknownRequest) && !cancelled_ && std::chrono::steady_clock::now() < reconnect_deadline) {
-			syslog(LOG_NOTICE, "Face: the daemon went away, starting the request again");
+			howdy_log(LOG_NOTICE, "Face: the daemon went away, starting the request again");
 			request_started_ = false;
 			request_id_.clear();
 			continue;
@@ -400,7 +401,7 @@ FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv
 		retries++;
 		no_match = (result_ == Result::NoMatch || result_ == Result::Timeout);
 		if (no_match && !cancelled_) {
-			syslog(
+			howdy_log(
 				LOG_ERR,
 				"Face authentication failed "
 				"(attempt %d/%d)",

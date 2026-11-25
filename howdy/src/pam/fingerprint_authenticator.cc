@@ -1,5 +1,6 @@
 #include "fingerprint_authenticator.hh"
 
+#include "log.hh"
 #include "main.hh"
 #include "translate.hh"
 
@@ -428,7 +429,7 @@ FprintdAuthenticator::authenticate(std::chrono::milliseconds timeout, bool detec
 		retries++;
 		no_match = (result_ == Result::NoMatch);
 		if (no_match && !cancelled_) {
-			syslog(
+			howdy_log(
 				LOG_ERR,
 				"Fingerprint authentication failed "
 				"(attempt %d/%d)",
