@@ -41,7 +41,7 @@ unset SSH_CONNECTION SSH_CLIENT SSH_TTY SSHD_OPTS
 source "$(dirname "${BASH_SOURCE[0]}")/bus.sh"
 start_bus
 
-for tool in ffmpeg; do
+for tool in ffmpeg nm; do
 	command -v "$tool" > /dev/null || { echo "Missing $tool"; exit 1; }
 done
 
@@ -74,6 +74,13 @@ run_pam() {
 }
 result_of() { grep '^RESULT' <<< "$OUT" | cut -d' ' -f2; }
 has() { grep -qF "$1" <<< "$OUT" && echo yes || echo no; }
+
+echo "--- the log of the program"
+# openlog() and closelog() would change the log of the whole program that uses PAM, the module does not call them
+# (pam_get_user shows that nm has read the module, without it no openlog would be found either)
+symbols=$(nm -D --undefined-only "$PAM_DIR/pam_howdy.so" || true)
+expect "the symbols of the module are read" "$(grep -qE ' pam_get_user(@|$)' <<< "$symbols" && echo yes || echo no)" yes
+expect "the module leaves the log name of the program alone" "$(grep -cE ' (openlog|closelog)(@|$)' <<< "$symbols" || true)" 0
 
 echo "--- no face model"
 rm -f "$MODEL"

@@ -465,7 +465,7 @@ Use `howdy --help` or `man howdy` for the full list.
 
 ## Troubleshooting
 
-- Errors of the commands are printed to the terminal. The authentication daemon logs to the journal: `journalctl -u howdy-authentication.service`. PAM related messages end up in `/var/log/auth.log` or the journal.
+- Errors of the commands are printed to the terminal. The authentication daemon logs to the journal: `journalctl -u howdy-authentication.service`. PAM related messages end up in `/var/log/auth.log` or the journal. They carry the name of the program that uses PAM (`sudo`, the lock screen) and start with `pam_howdy: `, show them with `sudo journalctl -q -g "^pam_howdy: "`.
 - **"Face models are not installed" / missing model errors:** run the model installers from the [Models](#models) section.
 - **All frames are too dark:** increase `dark_threshold`, and check that the IR emitter actually lights up.
 - **No camera / permission denied:** check `device_path` and that the camera is allowed in the service override (step 3).
