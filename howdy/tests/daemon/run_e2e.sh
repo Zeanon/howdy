@@ -80,8 +80,13 @@ USER_NAME=nobody E "a user without a model is answered while a scan is running" 
 sleep 0.5
 expect "running" "$(call GetResult s "$id")" 's "RUNNING"'
 expect "cancel" "$(call CancelAuthentication s "$id")" "b true"
-sleep 0.5
-expect "cancelled" "$(call GetResult s "$id")" 's "CANCELLED"'
+# The daemon says CANCELLING until the scan has ended, that takes longer on a slow computer: waited for up to 10 seconds
+for _ in $(seq 100); do
+	result=$(call GetResult s "$id")
+	[ "$result" = 's "CANCELLING"' ] || break
+	sleep 0.1
+done
+expect "cancelled" "$result" 's "CANCELLED"'
 expect "cancel again" "$(call CancelAuthentication s "$id")" "b false"
 expect "clear" "$(call ClearAuthentication s "$id")" "b true"
 expect "result after clear" "$(call GetResult s "$id")" "Call failed: Unknown authentication request"
