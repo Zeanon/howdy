@@ -103,7 +103,8 @@ char* username = nullptr;
 
 char* orig_authtok = nullptr;
 pam_handle_t* pam_handle = nullptr;
-ConfirmationType confirmation_type = ConfirmationType::Unset;
+// Written with the mutex, also read without it
+std::atomic<ConfirmationType> confirmation_type{ConfirmationType::Unset};
 std::optional<EnterDevice> enter_device = std::nullopt;
 
 /**
@@ -1092,7 +1093,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	face_authenticator->cancel();
 	fingerprint_authenticator->cancel();
 
-	switch (confirmation_type) {
+	switch (confirmation_type.load()) {
 		/*
 		 * ---------------------------------------------------------------
 		 * Fingerprint authenticated first
