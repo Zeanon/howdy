@@ -54,6 +54,9 @@ class SignalMaskRestorer {
 
 // How long the messages about the methods wait for the answer whether they can be used at all
 static const auto AVAILABILITY_WAIT = std::chrono::milliseconds(1000);
+// How long the messages of the module wait after the start of the password task, so that its prompt comes
+// first. pam_unix does not tell when it has asked, it takes a few milliseconds.
+static const auto PROMPT_WAIT = std::chrono::milliseconds(100);
 // The start of the authentication, the wait for the answers of the methods counts from here
 static std::chrono::steady_clock::time_point auth_started;
 
@@ -353,6 +356,16 @@ inline void do_auth() {
 	}
 	if (password) {
 		pass_task_ptr->activate();
+	}
+
+	if (terminate || confirmation_type != ConfirmationType::Unset) {
+		return;
+	}
+
+	// A method may answer before the password prompt is there, its messages would come first then
+	if (password && (init_message || detection_notice || blank_lines)) {
+		std::unique_lock<std::mutex> lock(mutx);
+		convar.wait_until(lock, auth_started + PROMPT_WAIT, [] { return terminate || confirmation_type != ConfirmationType::Unset; });
 	}
 
 	if (terminate || confirmation_type != ConfirmationType::Unset) {
