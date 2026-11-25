@@ -154,14 +154,13 @@ inline std::string translate_with_name(const char* message, const std::string& n
 }
 
 /**
- * Format the success message if the status is successful or log the error in
- * the other case
- * @param	status	Status code
- * @return			Returns the conversation function return code
+ * Tell the user that the face has authenticated
+ * @param	status	What the face authentication returned
+ * @return			The status, unchanged
  */
 inline int howdy_status(int status) {
-	if (status != EXIT_SUCCESS) {
-		return PAM_AUTH_ERR;
+	if (status != PAM_SUCCESS) {
+		return status;
 	}
 
 	howdy_log(LOG_INFO, "Authenticated with face authentication");
@@ -173,6 +172,49 @@ inline int howdy_status(int status) {
 	}
 
 	return PAM_SUCCESS;
+}
+
+/**
+ * What the module returns when no method has succeeded: the result of the first method (face, fingerprint,
+ * password) with a failed attempt. PAM_CONV_ERR (an error of a method, a daemon that is not there) only if no
+ * method has a failed attempt, so that it does not hide a wrong password. PAM_AUTHINFO_UNAVAIL only if none of
+ * the methods can be used for the user: the lock screen does not ask a module that says so again until the
+ * screen is locked the next time.
+ */
+inline int failure_status() {
+	struct Method {
+		bool enabled;
+		bool finished;
+		int status;
+	};
+	const std::array<Method, 3> methods{{
+		{face_auth, howdy_finished, howdy_status_code},
+		{fingerprint, fingerprint_finished, fingerprint_status_code},
+		{password, password_finished, password_status_code},
+	}};
+
+	bool unavailable = false;
+	bool unanswered = false;
+	bool error = false;
+	for (const auto& method : methods) {
+		if (!method.enabled) {
+			continue;
+		}
+		if (!method.finished) {
+			unanswered = true;
+		} else if (method.status == PAM_AUTHINFO_UNAVAIL) {
+			unavailable = true;
+		} else if (method.status == PAM_CONV_ERR) {
+			error = true;
+		} else {
+			return method.status;
+		}
+	}
+
+	if (error) {
+		return PAM_CONV_ERR;
+	}
+	return unavailable && !unanswered ? PAM_AUTHINFO_UNAVAIL : PAM_AUTH_ERR;
 }
 
 /**
@@ -1143,23 +1185,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	// cancel() was called above, the thread of the fingerprint ends by itself and puts the reader back
 	fingerprint_task.stop(false);
 
-	/*
-	 * Prefer the Howdy result for the existing Howdy error messages
-	 * when Howdy actually ran to completion.
-	 */
-	if (howdy_finished) {
-		return howdy_status(howdy_task.get());
-	}
-
-	if (fingerprint_finished) {
-		return fingerprint_status_code;
-	}
-
-	if (password_finished) {
-		return password_status_code;
-	}
-
-	return PAM_AUTH_ERR;
+	// All tasks are over
+	return failure_status();
 }
 
 // Called by PAM when a user needs to be authenticated, for example by running

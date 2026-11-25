@@ -82,10 +82,12 @@ symbols=$(nm -D --undefined-only "$PAM_DIR/pam_howdy.so" || true)
 expect "the symbols of the module are read" "$(grep -qE ' pam_get_user(@|$)' <<< "$symbols" && echo yes || echo no)" yes
 expect "the module leaves the log name of the program alone" "$(grep -cE ' (openlog|closelog)(@|$)' <<< "$symbols" || true)" 0
 
+# What the module returns (pam_test prints the number): 7 PAM_AUTH_ERR, 9 PAM_AUTHINFO_UNAVAIL, 11 PAM_MAXTRIES, 19 PAM_CONV_ERR
 echo "--- no face model"
 rm -f "$MODEL"
 run_pam
 expect "the password is asked for, the face does not authenticate" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "without a face model the face is not available" "$(result_of)" 9
 expect "returns at once" "$([ "$SECONDS_TAKEN" -lt 2 ] && echo yes || echo no)" yes
 expect "nobody is asked to look into the camera" "$(has "Please look directly into the camera")" no
 expect "nothing is announced" "$(has "Facial authentication")" no
@@ -107,6 +109,7 @@ cp "$T/impostor.dat" "$MODEL"
 chmod 600 "$MODEL"
 run_pam
 expect "not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "a face that does not match: no tries left" "$(result_of)" 11
 expect "the user was asked to look into the camera" "$(has "Please look directly into the camera")" yes
 
 echo "--- the daemon is restarted"
@@ -210,6 +213,7 @@ status=0
 wait "$pam_pid" || status=$?
 OUT=$(cat "$T/pam_background.out")
 expect "no daemon: the face does not authenticate" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "no daemon: an error, not 'not available' (the lock screen asks again)" "$(result_of)" 19
 expect "no daemon: the program ends normally, not by a signal" "$status" 0
 expect "no daemon: the module waited for the daemon" "$([ $((SECONDS - started)) -ge 19 ] && echo yes || echo no)" yes
 start_background "$T/daemon"
@@ -299,11 +303,26 @@ expect "no face model: the user is told who authenticated" "$(has "Fingerprint a
 
 scenario "no reader" no-device no
 expect "nothing to use: not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
+expect "a missing reader may come back: a failed attempt" "$(result_of)" 7
 expect "nothing to use: nothing is said to the user" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
 
 scenario "no fingerprints, no face model" no-prints no
 expect "nothing to use with enrolled fingerprints missing: nothing is said" "$(grep -c '^MSG' <<< "$OUT" || true)" 0
 expect "and it does not take long" "$([ "$SECONDS_TAKEN" -lt 3 ] && echo yes || echo no)" yes
+expect "nothing that can be used: not available" "$(result_of)" 9
+
+# The face can not be used (no model), its result does not hide the one of the finger that does not match
+scenario "wrong finger" nomatch-slow-stop no
+expect "no face model, a wrong finger: the result of the fingerprint" "$(result_of)" 11
+
+# The face has an error (its daemon never comes, 20 seconds), the finger does not match: the failed attempt
+# is the result, not the error of the face
+stop_daemon
+scenario "wrong finger, no daemon" nomatch-slow-stop yes
+expect "no daemon, a wrong finger: the failed attempt, not the error of the face" "$(result_of)" 11
+start_background "$T/daemon"
+DAEMON_PID=$BACKGROUND_PID
+wait_for_name org.boltgolt.howdy.authentication
 
 # A reader that is stuck (it does not answer Claim) does not hold the end of the authentication: the face
 # is done, the thread of the fingerprint is asked to stop and gives its call up

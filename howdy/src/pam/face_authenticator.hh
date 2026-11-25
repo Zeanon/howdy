@@ -75,10 +75,12 @@ class FaceAuthenticator {
 inline int face_auth_result_to_pam_result(const FaceAuthenticator::Result& result) noexcept {
 	switch (result) {
 		case FaceAuthenticator::Result::Success: return PAM_SUCCESS;
-		case FaceAuthenticator::Result::Busy:
 		case FaceAuthenticator::Result::Unset:
-		case FaceAuthenticator::Result::NoDevice:
 		case FaceAuthenticator::Result::NoEnrolledFace: return PAM_AUTHINFO_UNAVAIL;
+		// A busy or missing camera may be over the next time: not PAM_AUTHINFO_UNAVAIL, the lock screen does not
+		// ask a module that says so again
+		case FaceAuthenticator::Result::Busy:
+		case FaceAuthenticator::Result::NoDevice:
 		case FaceAuthenticator::Result::NoMatch:
 		case FaceAuthenticator::Result::Timeout:
 		case FaceAuthenticator::Result::TooDark: return PAM_AUTH_ERR;

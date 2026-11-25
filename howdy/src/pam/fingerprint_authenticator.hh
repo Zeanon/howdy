@@ -85,10 +85,12 @@ class FprintdAuthenticator {
 inline const int fingerprint_result_to_pam_result(const FprintdAuthenticator::Result& result) noexcept {
 	switch (result) {
 		case FprintdAuthenticator::Result::Success: return PAM_SUCCESS;
-		case FprintdAuthenticator::Result::Busy:
 		case FprintdAuthenticator::Result::Unset:
-		case FprintdAuthenticator::Result::NoDevice:
 		case FprintdAuthenticator::Result::NoEnrolledPrints: return PAM_AUTHINFO_UNAVAIL;
+		// A busy or missing reader may be over the next time: not PAM_AUTHINFO_UNAVAIL, the lock screen does not
+		// ask a module that says so again
+		case FprintdAuthenticator::Result::Busy:
+		case FprintdAuthenticator::Result::NoDevice:
 		case FprintdAuthenticator::Result::NoMatch:
 		case FprintdAuthenticator::Result::Timeout: return PAM_AUTH_ERR;
 		case FprintdAuthenticator::Result::MaxTries: return PAM_MAXTRIES;
