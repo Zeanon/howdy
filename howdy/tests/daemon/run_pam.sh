@@ -234,6 +234,14 @@ expect "no daemon: the face does not authenticate" "$([ "$(result_of)" != 0 ] &&
 expect "no daemon: an error, not 'not available' (the lock screen asks again)" "$(result_of)" 19
 expect "no daemon: the program ends normally, not by a signal" "$status" 0
 expect "no daemon: the module waited for the daemon" "$([ $((SECONDS - started)) -ge 19 ] && echo yes || echo no)" yes
+
+# The global timeout is counted from the start, also while the module waits to announce a method that has
+# not answered
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 global-timeout=3" > "$CONFDIR/howdy-test"
+run_pam
+expect "no daemon, a global timeout: a failed attempt" "$(result_of)" 7
+expect "no daemon, a global timeout: it ends the wait for the notices" "$([ "$SECONDS_TAKEN" -lt 8 ] && echo yes || echo no)" yes
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
 start_background "$T/daemon"
 DAEMON_PID=$BACKGROUND_PID
 cp "$T/impostor.dat" "$MODEL"

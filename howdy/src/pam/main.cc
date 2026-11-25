@@ -223,7 +223,8 @@ inline int failure_status() {
 
 /**
  * What a method says about whether it can be used: waits for the answer until the authentication is
- * done, and with `bounded` until AVAILABILITY_WAIT after the start at the latest (Unknown then).
+ * done, at the latest until the global timeout, and with `bounded` until AVAILABILITY_WAIT after the
+ * start (Unknown then).
  */
 inline Availability wait_for_answer(bool enabled, const Availability& state, bool bounded) {
 	if (!enabled) {
@@ -231,11 +232,8 @@ inline Availability wait_for_answer(bool enabled, const Availability& state, boo
 	}
 	std::unique_lock<std::mutex> lock(mutx);
 	const auto answered = [&state] { return state != Availability::Unknown || terminate || confirmation_type != ConfirmationType::Unset; };
-	if (bounded) {
-		convar.wait_until(lock, auth_started + AVAILABILITY_WAIT, answered);
-	} else {
-		convar.wait(lock, answered);
-	}
+	const auto wait = bounded ? std::min<std::chrono::milliseconds>(AVAILABILITY_WAIT, global_timeout) : std::chrono::milliseconds(global_timeout);
+	convar.wait_until(lock, auth_started + wait, answered);
 	return state;
 }
 
@@ -325,7 +323,8 @@ inline void print_detection_notices() {
 	// A method that has not answered in time (the daemon of the face is still starting after the computer
 	// woke up) is announced when it does, if it can be used: without a face model there is nothing to say.
 	// This does not wait for good: the method answers when its task ends (Unavailable at the latest, after
-	// the 20 seconds the face waits for its daemon), and a success or an end of the authentication ends the wait.
+	// the 20 seconds the face waits for its daemon), a success or an end of the authentication ends the wait,
+	// and so does the global timeout.
 	if (face_state == Availability::Unknown) {
 		face_state = wait_for_answer(face_auth, face_availability, false);
 		if (face_state == Availability::Available && !done()) {
@@ -394,7 +393,8 @@ inline void do_auth() {
 	if (!terminate && confirmation_type == ConfirmationType::Unset) {
 		std::unique_lock<std::mutex> lock(mutx);
 
-		timeouted = !convar.wait_for(lock, global_timeout, [&]() -> bool {
+		// Counted from the start, the waits for the notices above are part of it
+		timeouted = !convar.wait_until(lock, auth_started + global_timeout, [&]() -> bool {
 			/*
 			 * One option authenticated successfully
 			 */
