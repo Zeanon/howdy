@@ -82,7 +82,8 @@ expect "running" "$(call GetResult s "$id")" 's "RUNNING"'
 expect "cancel" "$(call CancelAuthentication s "$id")" "b true"
 # The daemon says CANCELLING until the scan has ended, that takes longer on a slow computer: waited for up to 10 seconds
 for _ in $(seq 100); do
-	result=$(call GetResult s "$id")
+	# (a call that fails is the failure of the check below, not the end of the tests)
+	result=$(call GetResult s "$id") || true
 	[ "$result" = 's "CANCELLING"' ] || break
 	sleep 0.1
 done
