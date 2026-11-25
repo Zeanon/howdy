@@ -599,7 +599,7 @@ NOT_AUTHORIZED_ERROR = management_module.NOT_AUTHORIZED_ERROR
 asyncio.run(comparing())
 
 print("--- the D-Bus policy")
-import xml.etree.ElementTree as ElementTree  # noqa: E402
+from xml.etree import ElementTree
 
 POLICY = os.path.join(
 	SOURCE_DIR, "..", "..", "assets", "bin", "org.boltgolt.howdy.conf.in"
