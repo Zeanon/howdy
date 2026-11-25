@@ -1,5 +1,5 @@
-// Cancels FaceAuthenticator::authenticate() while the daemon does not answer StartAuthentication, and
-// prints the result and the time it took in milliseconds.
+// Cancels FaceAuthenticator::authenticate() (while the daemon does not answer StartAuthentication, or during
+// the scan), and prints the result and the time it took in milliseconds.
 // Usage: face_cancel_test <user> <milliseconds until cancel()>
 #include "../../src/pam/face_authenticator.hh"
 

@@ -112,6 +112,24 @@ expect "not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" y
 expect "a face that does not match: no tries left" "$(result_of)" 11
 expect "the user was asked to look into the camera" "$(has "Please look directly into the camera")" yes
 
+echo "--- the authentication is ended during the scan"
+# A cancelled face says so, and not that it is not available (the lock screen would not ask it again)
+CANCEL_OUT=$("$PAM_DIR/face_cancel_test" "$USER_NAME" 1000 2>&1)
+expect "cancel() during the scan: the result is cancelled" "$(awk '{print $2}' <<< "$CANCEL_OUT")" cancelled
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 global-timeout=1" > "$CONFDIR/howdy-test"
+sleep 2
+run_pam
+# (the face is ended by force here, the rule for a method that still says that it was cancelled is checked
+# with the fingerprint below)
+expect "the global timeout: a failed attempt" "$(result_of)" 7
+sleep 2
+
+echo "--- a wrong password and a face that does not match"
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay" > "$CONFDIR/howdy-test"
+run_pam
+expect "the result of the face, the first method with a failed attempt" "$(result_of)" 11
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+
 echo "--- the daemon is restarted"
 # The daemon is restarted when the computer wakes up and is gone for a few seconds. The module waits
 # for it and asks again, it does not fail: a failure would be a failed attempt for the lock screen.
@@ -323,6 +341,13 @@ expect "no daemon, a wrong finger: the failed attempt, not the error of the face
 start_background "$T/daemon"
 DAEMON_PID=$BACKGROUND_PID
 wait_for_name org.boltgolt.howdy.authentication
+
+# The global timeout ends the wait for the finger. The fingerprint says that it was cancelled, the module
+# that the attempt has failed.
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 global-timeout=2" > "$CONFDIR/howdy-test"
+scenario "global timeout" wait no
+expect "the global timeout, a cancelled fingerprint: a failed attempt" "$(result_of)" 7
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 init-message" > "$CONFDIR/howdy-test"
 
 # A reader that is stuck (it does not answer Claim) does not hold the end of the authentication: the face
 # is done, the thread of the fingerprint is asked to stop and gives its call up

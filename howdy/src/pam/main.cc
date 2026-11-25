@@ -179,7 +179,8 @@ inline int howdy_status(int status) {
  * password) with a failed attempt. PAM_CONV_ERR (an error of a method, a daemon that is not there) only if no
  * method has a failed attempt, so that it does not hide a wrong password. PAM_AUTHINFO_UNAVAIL only if none of
  * the methods can be used for the user: the lock screen does not ask a module that says so again until the
- * screen is locked the next time.
+ * screen is locked the next time. After the global timeout neither of the two: it is a failed attempt, also
+ * when a method that was cancelled still says so.
  */
 inline int failure_status() {
 	struct Method {
@@ -211,6 +212,9 @@ inline int failure_status() {
 		}
 	}
 
+	if (timeouted) {
+		return PAM_AUTH_ERR;
+	}
 	if (error) {
 		return PAM_CONV_ERR;
 	}
