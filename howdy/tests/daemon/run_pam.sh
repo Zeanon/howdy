@@ -28,6 +28,7 @@ if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 	"$CXX" -std=c++20 "$TEST_DIR/pam_test.cc" -o "$PAM_DIR/pam_test" -lpam
 	"$CXX" -std=c++20 -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' \
 		"$TEST_DIR/face_cancel_test.cc" "$PAM_SRC_DIR/face_authenticator.cc" -o "$PAM_DIR/face_cancel_test" "${PAM_LIBS[@]}" -lpthread
+	"$CXX" -std=c++20 -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" "$TEST_DIR/timeout_test.cc" -o "$PAM_DIR/timeout_test" "${PAM_LIBS[@]}"
 	"$CXX" -shared -fPIC -x c "$TEST_DIR/fake_logind.c" -o "$PAM_DIR/fake_logind.so"
 	link_daemon "$T/daemon"
 
@@ -83,6 +84,12 @@ expect "the symbols of the module are read" "$(grep -qE ' pam_get_user(@|$)' <<<
 expect "the module leaves the log name of the program alone" "$(grep -cE ' (openlog|closelog)(@|$)' <<< "$symbols" || true)" 0
 
 # What the module returns (pam_test prints the number): 7 PAM_AUTH_ERR, 9 PAM_AUTHINFO_UNAVAIL, 11 PAM_MAXTRIES, 19 PAM_CONV_ERR
+echo "--- how the timeouts are read"
+# (a "!" marks a value the module warns about in the log, it is still read as before)
+expect "documented timeouts are read without a warning" "$("$PAM_DIR/timeout_test" -1 30 30s 5m 30min 2h 1day)" "-1=4294967295 30=30 30s=30 5m=300 30min=1800 2h=7200 1day=86400 "
+expect "other values are warned about" "$("$PAM_DIR/timeout_test" -30 5x 5mx -1m abc 99999999999 | sed 's/=[0-9]*//g')" "-30! 5x! 5mx! -1m! abc! 99999999999! "
+expect "a delay is not negative and at most a minute" "$("$PAM_DIR/timeout_test" --delay 0 2s 1m -1 -5s 5m 2x abc 99999999999)" "0=0 2s=2 1m=60 -1=2! -5s=2! 5m=60! 2x=2! abc=2! 99999999999=2! "
+
 echo "--- no face model"
 rm -f "$MODEL"
 run_pam

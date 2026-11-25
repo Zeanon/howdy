@@ -2,7 +2,11 @@
 
 #include "face_authenticator.hh"
 #include "fingerprint_authenticator.hh"
+#include "log.hh"
 
+#include <algorithm>
+#include <array>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -68,7 +72,8 @@ inline bool str_to_bool(std::string str) {
 	return str == "true" || str == "yes" || str == "on" || str == "y" || str == "1";
 }
 
-inline std::chrono::seconds str_to_seconds(const std::string_view& str) {
+// `setting` is the name of what is read, for the warning in the log
+inline std::chrono::seconds str_to_seconds(const std::string_view& str, const char* setting = "timeout") {
 	int value = 0;
 
 	const auto* first = str.data();
@@ -77,7 +82,18 @@ inline std::chrono::seconds str_to_seconds(const std::string_view& str) {
 	const auto [ptr, ec] = std::from_chars(first, last, value);
 
 	if (ec != std::errc{}) {
+		howdy_log(LOG_WARNING, "The %s '%.*s' is not a number that can be read", setting, static_cast<int>(str.size()), str.data());
 		return std::chrono::seconds{0};
+	}
+
+	// What the config file documents (and seconds). Everything else is still read as it always was, a value that
+	// was refused now could lock somebody out, but it is said in the log
+	static constexpr std::array<std::string_view, 17> UNITS{"",		  "s",		 "sec", "secs", "second", "seconds", "m",	"min", "mins",
+															"minute", "minutes", "h",	"hour", "hours",  "d",		 "day", "days"};
+	const std::string_view unit(ptr, static_cast<size_t>(last - ptr));
+	if (std::ranges::find(UNITS, unit) == UNITS.end() || (value < 0 && !(value == -1 && unit.empty()))) {
+		howdy_log(
+			LOG_WARNING, "The %s '%.*s' is not valid, only -1 or a positive number with s, m, h or d is", setting, static_cast<int>(str.size()), str.data());
 	}
 
 	if (ptr == last) {
@@ -90,6 +106,32 @@ inline std::chrono::seconds str_to_seconds(const std::string_view& str) {
 		case 'm': return std::chrono::minutes{static_cast<unsigned>(value)};
 		default: return std::chrono::seconds{static_cast<unsigned>(value)};
 	}
+}
+
+// The wait after a wrong password
+constexpr auto DEFAULT_DELAY = std::chrono::seconds(2);
+constexpr auto MAX_DELAY = std::chrono::seconds(60);
+
+/**
+ * Like str_to_seconds() for a delay: it has no "-1", a negative one or one that can not be read is the default
+ * (a typo does not turn the delay off), and the password is not asked for later than after a minute.
+ */
+inline std::chrono::seconds str_to_delay(const std::string_view& str, const char* setting) {
+	if (str.starts_with('-')) {
+		howdy_log(LOG_WARNING, "The %s '%.*s' is negative, the default is used", setting, static_cast<int>(str.size()), str.data());
+		return DEFAULT_DELAY;
+	}
+	int value = 0;
+	if (std::from_chars(str.data(), str.data() + str.size(), value).ec != std::errc{}) {
+		howdy_log(LOG_WARNING, "The %s '%.*s' is not a number that can be read, the default is used", setting, static_cast<int>(str.size()), str.data());
+		return DEFAULT_DELAY;
+	}
+	const auto delay = str_to_seconds(str, setting);
+	if (delay > MAX_DELAY) {
+		howdy_log(LOG_WARNING, "The %s '%.*s' is too long, a minute is used", setting, static_cast<int>(str.size()), str.data());
+		return MAX_DELAY;
+	}
+	return delay;
 }
 
 /**

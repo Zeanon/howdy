@@ -568,21 +568,21 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	blacklist = split_string(config.GetString("core", "blacklist", ""), ',');
 
 	// "timeout" is the name the module has read before, it still goes first where it is set
-	global_timeout = str_to_seconds(config.GetString("core", "timeout", config.GetString("core", "global_timeout", "30min")));
+	global_timeout = str_to_seconds(config.GetString("core", "timeout", config.GetString("core", "global_timeout", "30min")), "global timeout");
 
 	face_auth = config.GetBoolean("face_authentication", "enable", true);
 	max_face_auth_tries = static_cast<unsigned>(config.GetInteger("face_authentication", "max_tries", 1));
 	std::optional<std::string> show_auth_popup = std::nullopt;
 
 	fingerprint = config.GetBoolean("fingerprint", "enable", false);
-	fingerprint_timeout = str_to_seconds(config.GetString("fingerprint", "timeout", "30s"));
+	fingerprint_timeout = str_to_seconds(config.GetString("fingerprint", "timeout", "30s"), "fingerprint timeout");
 	max_fingerprint_tries = static_cast<unsigned>(config.GetInteger("fingerprint", "max_tries", 3));
 
 	password = config.GetBoolean("password", "enable", false);
 	max_password_tries = static_cast<unsigned>(config.GetInteger("password", "max_tries", 3));
 	max_enter_tries = static_cast<unsigned>(config.GetInteger("password", "max_enter_tries", 5));
 	bool password_nodelay = config.GetBoolean("password", "nodelay", false);
-	std::chrono::seconds password_delay = str_to_seconds(config.GetString("password", "delay", "2s"));
+	std::chrono::seconds password_delay = str_to_delay(config.GetString("password", "delay", "2s"), "password delay");
 	Workaround workaround = get_workaround(config.GetString("core", "workaround", "off"));
 
 	std::vector<const char*> password_args;
@@ -655,14 +655,14 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 			// These settings were passed to the daemon, which only reads them from the config file now
 			howdy_log(LOG_WARNING, "The option '%s' is not supported any more, set it in the config file", arg.c_str());
 		} else if (arg.starts_with("global-timeout=")) {
-			global_timeout = str_to_seconds(arg.substr(15, arg.length()));
+			global_timeout = str_to_seconds(arg.substr(15, arg.length()), "global timeout");
 		} else if (arg.starts_with("timeout=")) {
 			face_auth_timeout = std::optional<std::string>(arg);
-			fingerprint_timeout = str_to_seconds(arg.substr(8, arg.length()));
+			fingerprint_timeout = str_to_seconds(arg.substr(8, arg.length()), "fingerprint timeout");
 		} else if (arg.starts_with("face-auth:timeout=")) {
 			face_auth_timeout = std::optional<std::string>(arg.substr(10, arg.length()));
 		} else if (arg.starts_with("fingerprint:timeout=")) {
-			fingerprint_timeout = str_to_seconds(arg.substr(20, arg.length()));
+			fingerprint_timeout = str_to_seconds(arg.substr(20, arg.length()), "fingerprint timeout");
 		} else if (arg.starts_with("max-tries=")) {
 			max_password_tries = static_cast<unsigned>(std::stoi(arg.substr(10, arg.length())));
 			max_face_auth_tries = static_cast<unsigned>(std::stoi(arg.substr(10, arg.length())));
@@ -676,7 +676,7 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		} else if (arg.starts_with("password:max-enter-tries=")) {
 			max_enter_tries = static_cast<unsigned>(std::stoi(arg.substr(25, arg.length())));
 		} else if (arg.starts_with("password:delay=")) {
-			password_delay = str_to_seconds(arg.substr(15, arg.length()));
+			password_delay = str_to_delay(arg.substr(15, arg.length()), "password delay");
 		} else if (arg.starts_with("workaround=")) {
 			workaround = get_workaround(arg.substr(11, arg.length()));
 		} else if (arg.starts_with("whitelist=")) {
