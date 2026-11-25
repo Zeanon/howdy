@@ -87,6 +87,7 @@ expect "the module leaves the log name of the program alone" "$(grep -cE ' (open
 echo "--- how the timeouts are read"
 # (a "!" marks a value the module warns about in the log, it is still read as before)
 expect "documented timeouts are read without a warning" "$("$PAM_DIR/timeout_test" -1 30 30s 5m 30min 2h 1day)" "-1=4294967295 30=30 30s=30 5m=300 30min=1800 2h=7200 1day=86400 "
+expect "many days do not wrap around to a short time" "$("$PAM_DIR/timeout_test" 178956971d)" "178956971d=15461882294400 "
 expect "other values are warned about" "$("$PAM_DIR/timeout_test" -30 5x 5mx -1m abc 99999999999 | sed 's/=[0-9]*//g')" "-30! 5x! 5mx! -1m! abc! 99999999999! "
 expect "a delay is not negative and at most a minute" "$("$PAM_DIR/timeout_test" --delay 0 2s 1m -1 -5s 5m 2x abc 99999999999)" "0=0 2s=2 1m=60 -1=2! -5s=2! 5m=60! 2x=2! abc=2! 99999999999=2! "
 

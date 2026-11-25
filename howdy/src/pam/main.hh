@@ -101,7 +101,8 @@ inline std::chrono::seconds str_to_seconds(const std::string_view& str, const ch
 	}
 
 	switch (*ptr) {
-		case 'd': return std::chrono::hours{static_cast<unsigned>(value) * 24};
+		// (in 64 bits, the hours of many days do not fit into an unsigned)
+		case 'd': return std::chrono::hours{std::int64_t{static_cast<unsigned>(value)} * 24};
 		case 'h': return std::chrono::hours{static_cast<unsigned>(value)};
 		case 'm': return std::chrono::minutes{static_cast<unsigned>(value)};
 		default: return std::chrono::seconds{static_cast<unsigned>(value)};
