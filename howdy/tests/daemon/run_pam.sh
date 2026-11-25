@@ -104,6 +104,12 @@ expect "the authentication is announced" "$(has "Facial authentication")" yes
 expect "the user is told who authenticated" "$(has "Face authenticated as $USER_NAME")" yes
 expect "the messages come in the order they always had" "$(grep '^MSG' <<< "$OUT" | head -3 | tr '\n' '|')" "MSG 4: Facial authentication...|MSG 4: Please look directly into the camera|MSG 4: |"
 
+# A huge timeout ("-1m" is billions of minutes) is a long one, not one that has already passed
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 global-timeout=-1m" > "$CONFDIR/howdy-test"
+run_pam
+expect "a huge global timeout: authenticated" "$(result_of)" 0
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+
 echo "--- foreign face"
 cp "$T/impostor.dat" "$MODEL"
 chmod 600 "$MODEL"
@@ -242,6 +248,15 @@ run_pam
 expect "no daemon, a global timeout: a failed attempt" "$(result_of)" 7
 expect "no daemon, a global timeout: it ends the wait for the notices" "$([ "$SECONDS_TAKEN" -lt 8 ] && echo yes || echo no)" yes
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+# The same from the config file, with the documented name and with the one that was read before
+cp "$T/etc/config.ini" "$T/config.ini.saved"
+for key in global_timeout timeout; do
+	"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$T/config.ini.saved" "$T/etc/config.ini" "core.$key=3"
+	chmod 644 "$T/etc/config.ini"
+	run_pam
+	expect "$key in the config file: a failed attempt after it" "$(result_of) $([ "$SECONDS_TAKEN" -lt 8 ] && echo in-time)" "7 in-time"
+done
+cp "$T/config.ini.saved" "$T/etc/config.ini"
 start_background "$T/daemon"
 DAEMON_PID=$BACKGROUND_PID
 cp "$T/impostor.dat" "$MODEL"

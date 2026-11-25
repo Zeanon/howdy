@@ -58,6 +58,9 @@ static const auto AVAILABILITY_WAIT = std::chrono::milliseconds(1000);
 // How long the messages of the module wait after the start of the password task, so that its prompt comes
 // first. pam_unix does not tell when it has asked, it takes a few milliseconds.
 static const auto PROMPT_WAIT = std::chrono::milliseconds(100);
+// The longest timeout, "-1" and other huge values mean it: added to the start in nanoseconds, they would
+// overflow and be in the past
+static const auto MAX_TIMEOUT = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::hours(24 * 365));
 // The start of the authentication, the wait for the answers of the methods counts from here
 static std::chrono::steady_clock::time_point auth_started;
 
@@ -564,7 +567,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 	whitelist = split_string(config.GetString("core", "whitelist", ""), ',');
 	blacklist = split_string(config.GetString("core", "blacklist", ""), ',');
 
-	global_timeout = str_to_seconds(config.GetString("core", "timeout", "30min"));
+	// "timeout" is the name the module has read before, it still goes first where it is set
+	global_timeout = str_to_seconds(config.GetString("core", "timeout", config.GetString("core", "global_timeout", "30min")));
 
 	face_auth = config.GetBoolean("face_authentication", "enable", true);
 	max_face_auth_tries = static_cast<unsigned>(config.GetInteger("face_authentication", "max_tries", 1));
@@ -709,6 +713,8 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		howdy_log(LOG_ERR, "Timeout for fingerprint needs to be greater than 0 or -1");
 		return PAM_SERVICE_ERR;
 	}
+	global_timeout = std::min(global_timeout, MAX_TIMEOUT);
+	fingerprint_timeout = std::min<decltype(fingerprint_timeout)>(fingerprint_timeout, MAX_TIMEOUT);
 
 	if (max_password_tries < 1) {
 		howdy_log(LOG_ERR, "Max-tries for password need to be greater than 0 or -1");
