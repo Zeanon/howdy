@@ -109,7 +109,8 @@ std::optional<EnterDevice> enter_device = std::nullopt;
  * ---------------------------------------------------------------
  */
 int pam_res = PAM_IGNORE;
-bool terminate = false;
+// Read by the loops of the tasks without the mutex
+std::atomic<bool> terminate{false};
 // The signal that ended the authentication (SIGINT, SIGTERM or SIGQUIT), 0 if it was not one
 std::atomic<int> received_signal{0};
 
@@ -786,9 +787,13 @@ inline int identify(pam_handle_t* pamh, int flags, int argc, const char** argv, 
 		sigwait(&set, &sig);
 
 		received_signal = sig;
-		terminate = true;
-		if (confirmation_type == ConfirmationType::Unset) {
-			confirmation_type = ConfirmationType::Terminated;
+		{
+			// With the mutex: the wait for the methods must not miss this between its check and its sleep
+			std::unique_lock<std::mutex> lock(mutx);
+			terminate = true;
+			if (confirmation_type == ConfirmationType::Unset) {
+				confirmation_type = ConfirmationType::Terminated;
+			}
 		}
 		convar.notify_one();
 		return;
