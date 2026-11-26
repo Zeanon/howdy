@@ -547,29 +547,29 @@ int FprintdAuthenticator::verify_status(sd_bus_message* message, void* userdata,
 	if (!done) {
 		if (str_equal(status, "verify-retry-scan")) {
 			if (self->is_swipe_) {
-				self->conv_function_(PAM_TEXT_INFO, "Swipe your finger again");
+				self->conv_function_(PAM_TEXT_INFO, S("Swipe your finger again"));
 			} else {
-				self->conv_function_(PAM_TEXT_INFO, "Place your finger on the reader again");
+				self->conv_function_(PAM_TEXT_INFO, S("Place your finger on the reader again"));
 			}
 		} else if (str_equal(status, "verify-finger-not-centered")) {
 			if (self->is_swipe_) {
-				self->conv_function_(PAM_TEXT_INFO, "Your finger was not centered, try swiping your finger again");
+				self->conv_function_(PAM_TEXT_INFO, S("Your finger was not centered, try swiping your finger again"));
 			} else {
-				self->conv_function_(PAM_TEXT_INFO, "Your finger was not centered, try touching the sensor again");
+				self->conv_function_(PAM_TEXT_INFO, S("Your finger was not centered, try touching the sensor again"));
 			}
 		} else if (str_equal(status, "verify-remove-and-retry")) {
 			if (self->is_swipe_) {
-				self->conv_function_(PAM_TEXT_INFO, "Remove your finger, and try swiping your finger again");
+				self->conv_function_(PAM_TEXT_INFO, S("Remove your finger, and try swiping your finger again"));
 			} else {
-				self->conv_function_(PAM_TEXT_INFO, "Remove your finger, and try touching the sensor again");
+				self->conv_function_(PAM_TEXT_INFO, S("Remove your finger, and try touching the sensor again"));
 			}
 		} else if (str_equal(status, "verify-swipe-too-short")) {
-			self->conv_function_(PAM_TEXT_INFO, "Swipe was too short, try again");
+			self->conv_function_(PAM_TEXT_INFO, S("Swipe was too short, try again"));
 		} else if (str_equal(status, "verify-too-fast")) {
 			if (self->is_swipe_) {
-				self->conv_function_(PAM_TEXT_INFO, "Swipe was too fast, try again");
+				self->conv_function_(PAM_TEXT_INFO, S("Swipe was too fast, try again"));
 			} else {
-				self->conv_function_(PAM_TEXT_INFO, "Finger scan was too fast, try again");
+				self->conv_function_(PAM_TEXT_INFO, S("Finger scan was too fast, try again"));
 			}
 		}
 		return 0;

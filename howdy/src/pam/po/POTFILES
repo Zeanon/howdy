@@ -1,1 +1,3 @@
 main.cc
+face_authenticator.cc
+fingerprint_authenticator.cc
