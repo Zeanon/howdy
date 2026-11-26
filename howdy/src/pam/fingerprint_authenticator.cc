@@ -432,8 +432,8 @@ FprintdAuthenticator::authenticate(std::chrono::milliseconds timeout, bool detec
 			howdy_log(
 				LOG_ERR,
 				"Fingerprint authentication failed "
-				"(attempt %d/%d)",
-				retries, max_tries);
+				"(attempt %d/%s)",
+				retries, tries_limit(max_tries).c_str());
 			if (retries < max_tries) {
 				conv_function_(PAM_ERROR_MSG, S("Failed to match fingerprint, please try again"));
 			} else {

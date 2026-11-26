@@ -58,10 +58,16 @@ static const auto AVAILABILITY_WAIT = std::chrono::milliseconds(1000);
 // How long the messages of the module wait after the start of the password task, so that its prompt comes
 // first. pam_unix does not tell when it has asked, it takes a few milliseconds.
 static const auto PROMPT_WAIT = std::chrono::milliseconds(100);
-// The longest timeout, "-1" and other huge values mean it: added to the start in nanoseconds, they would
-// overflow and be in the past
+// The longest possible timeout, a setting of -1 results in this value being used
 static const auto MAX_TIMEOUT = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::hours(24 * 365));
+// How often the delay after a wrong password looks whether the authentication is over
+static const auto DELAY_STEP = std::chrono::milliseconds(50);
+// The shortest wait before a password is asked for again after a prompt that got none
+static const auto NO_ANSWER_DELAY = std::chrono::seconds(1);
 static const auto DEFAULT_ENTER_TIMEOUT = std::chrono::duration<int, std::chrono::milliseconds::period>(500);
+// The most presses of Enter, also for "-1": a prompt that does not have the focus never ends, and every press goes
+// to the window that has it
+static constexpr unsigned int MAX_ENTER_TRIES = 20;
 
 /**
  * A message with a name in it: the text is translated before the name is put in, the translation has the
@@ -239,16 +245,16 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		global_timeout = str_to_seconds(config.GetString("core", "timeout", config.GetString("core", "global_timeout", "30min")), "global timeout");
 
 		face_auth = config.GetBoolean("face_authentication", "enable", true);
-		max_face_auth_tries = static_cast<unsigned>(config.GetInteger("face_authentication", "max_tries", 1));
+		max_face_auth_tries = config_tries(config.GetInteger("face_authentication", "max_tries", 1));
 		std::optional<std::string> show_auth_popup = std::nullopt;
 
 		fingerprint = config.GetBoolean("fingerprint", "enable", false);
 		fingerprint_timeout = str_to_seconds(config.GetString("fingerprint", "timeout", "30s"), "fingerprint timeout");
-		max_fingerprint_tries = static_cast<unsigned>(config.GetInteger("fingerprint", "max_tries", 3));
+		max_fingerprint_tries = config_tries(config.GetInteger("fingerprint", "max_tries", 3));
 
 		password = config.GetBoolean("password", "enable", false);
-		max_password_tries = static_cast<unsigned>(config.GetInteger("password", "max_tries", 3));
-		max_enter_tries = static_cast<unsigned>(config.GetInteger("password", "max_enter_tries", 5));
+		max_password_tries = config_tries(config.GetInteger("password", "max_tries", 3));
+		max_enter_tries = config_tries(config.GetInteger("password", "max_enter_tries", 5));
 		bool password_nodelay = config.GetBoolean("password", "nodelay", false);
 		std::chrono::seconds password_delay = str_to_delay(config.GetString("password", "delay", "2s"), "password delay");
 		Workaround workaround = get_workaround(config.GetString("core", "workaround", "off"));
@@ -294,11 +300,11 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			} else if (arg == "no-confirmation") {
 				no_confirmation = true;
 			} else if (arg.starts_with("no-confirmation=")) {
-				no_confirmation = str_to_bool(arg.substr(17, arg.length()));
+				no_confirmation = str_to_bool(arg.substr(16, arg.length()));
 			} else if (arg == "face-auth") {
 				face_auth = true;
 			} else if (arg.starts_with("face-auth=")) {
-				face_auth = str_to_bool(arg.substr(12, arg.length()));
+				face_auth = str_to_bool(arg.substr(10, arg.length()));
 			} else if (arg == "fingerprint") {
 				fingerprint = true;
 			} else if (arg.starts_with("fingerprint=")) {
@@ -332,17 +338,15 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			} else if (arg.starts_with("fingerprint:timeout=")) {
 				fingerprint_timeout = str_to_seconds(arg.substr(20, arg.length()), "fingerprint timeout");
 			} else if (arg.starts_with("max-tries=")) {
-				max_password_tries = static_cast<unsigned>(std::stoi(arg.substr(10, arg.length())));
-				max_face_auth_tries = static_cast<unsigned>(std::stoi(arg.substr(10, arg.length())));
-				max_fingerprint_tries = static_cast<unsigned>(std::stoi(arg.substr(10, arg.length())));
+				read_tries(arg.substr(10), {&max_password_tries, &max_face_auth_tries, &max_fingerprint_tries});
 			} else if (arg.starts_with("password:max-tries=")) {
-				max_password_tries = static_cast<unsigned>(std::stoi(arg.substr(19, arg.length())));
+				read_tries(arg.substr(19), {&max_password_tries});
 			} else if (arg.starts_with("face-auth:max-tries=")) {
-				max_face_auth_tries = static_cast<unsigned>(std::stoi(arg.substr(20, arg.length())));
+				read_tries(arg.substr(20), {&max_face_auth_tries});
 			} else if (arg.starts_with("fingerprint:max-tries=")) {
-				max_fingerprint_tries = static_cast<unsigned>(std::stoi(arg.substr(22, arg.length())));
+				read_tries(arg.substr(22), {&max_fingerprint_tries});
 			} else if (arg.starts_with("password:max-enter-tries=")) {
-				max_enter_tries = static_cast<unsigned>(std::stoi(arg.substr(25, arg.length())));
+				read_tries(arg.substr(25), {&max_enter_tries});
 			} else if (arg.starts_with("password:delay=")) {
 				password_delay = str_to_delay(arg.substr(15, arg.length()), "password delay");
 			} else if (arg.starts_with("workaround=")) {
@@ -352,7 +356,8 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			} else if (arg.starts_with("blacklist=")) {
 				blacklist = split_string(arg.substr(10, arg.length()), ',');
 			} else if (arg.starts_with("password:")) {
-				password_args.push_back(arg.substr(9, arg.length()).c_str());
+				// A pointer into the argument of PAM, which stays as long as the call (not into `arg`)
+				password_args.push_back(argv[i] + 9);
 			}
 		}
 
@@ -371,35 +376,44 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		password_args.shrink_to_fit();
 		password = password && ask_auth_tok;
 
-		// Range checks for timeouts and max-tries
+		// Range checks for timeouts and max-tries, those of a method that is off do not matter
 		if (global_timeout.count() < 1) {
 			howdy_log(LOG_ERR, "Global-timeout needs to be greater than 0 or -1");
 			return PAM_SERVICE_ERR;
 		}
 
-		if (fingerprint_timeout.count() < 1) {
+		if (fingerprint && fingerprint_timeout.count() < 1) {
 			howdy_log(LOG_ERR, "Timeout for fingerprint needs to be greater than 0 or -1");
 			return PAM_SERVICE_ERR;
 		}
 		global_timeout = std::min(global_timeout, MAX_TIMEOUT);
 		fingerprint_timeout = std::min<decltype(fingerprint_timeout)>(fingerprint_timeout, MAX_TIMEOUT);
 
-		if (max_password_tries < 1) {
+		if (password && max_password_tries < 1) {
 			howdy_log(LOG_ERR, "Max-tries for password need to be greater than 0 or -1");
 			return PAM_SERVICE_ERR;
 		}
-		if (max_face_auth_tries < 1) {
+		if (face_auth && max_face_auth_tries < 1) {
 			howdy_log(LOG_ERR, "Max-tries for face-auth need to be greater than 0 or -1");
 			return PAM_SERVICE_ERR;
 		}
-		if (max_fingerprint_tries < 1) {
+		if (fingerprint && max_fingerprint_tries < 1) {
 			howdy_log(LOG_ERR, "Max-tries for fingerprinr need to be greater than 0 or -1");
 			return PAM_SERVICE_ERR;
 		}
-		if (max_enter_tries < 1) {
+		if (password && max_enter_tries < 1) {
 			howdy_log(LOG_ERR, "Max-tries for enter need to be greater than 0 or -1");
 			return PAM_SERVICE_ERR;
 		}
+
+		// The authenticators count their tries in an int, -1 (no limit) would be none at all there
+		max_face_auth_tries = std::min<unsigned>(max_face_auth_tries, INT_MAX);
+		max_fingerprint_tries = std::min<unsigned>(max_fingerprint_tries, INT_MAX);
+		// (not for -1 and the other negative numbers, which no int holds and which are read as "no limit")
+		if (password && max_enter_tries > MAX_ENTER_TRIES && max_enter_tries <= INT_MAX) {
+			howdy_log(LOG_WARNING, "Max-tries for enter is %u, at most %u are used", max_enter_tries, MAX_ENTER_TRIES);
+		}
+		max_enter_tries = std::min(max_enter_tries, MAX_ENTER_TRIES);
 
 		// The terminal and the signals are of the whole program: they are only touched when it runs at a terminal
 		// (sudo, su), not when it asks in its own window, as the lock screen does
@@ -480,10 +494,14 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			const struct pam_message msg = {.msg_style = msg_type, .msg = msg_str};
 			const struct pam_message* msgp = &msg;
 
-			struct pam_response res = {};
-			struct pam_response* resp = &res;
-
-			return conv->conv(1, &msgp, &resp, conv->appdata_ptr);
+			struct pam_response* resp = nullptr;
+			const int result = conv->conv(1, &msgp, &resp, conv->appdata_ptr);
+			// The answer is allocated by the program and belongs to the caller, nothing is asked for here
+			if (result == PAM_SUCCESS && resp != nullptr) {
+				free(resp->resp); // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+				free(resp);		  // NOLINT(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+			}
+			return result;
 		};
 
 		sigset_t set;
@@ -587,6 +605,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			}
 
 			orig_authtok = pam_handle->authtok;
+			authtok_saved = true;
 
 			int rc = 0;
 			bool success = false;
@@ -601,21 +620,43 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 				keep_running = (!success && !terminate && confirmation_type == ConfirmationType::Unset);
 
 				retries++;
+				// Before the delay: the attempt has failed, also when another method wins during it
 				if (keep_running) {
-					if (!password_nodelay) {
-						std::this_thread::sleep_for(password_delay);
-					}
 					howdy_log(
 						LOG_ERR,
 						"Password authentication failed "
-						"(attempt %d/%d)",
-						retries, max_password_tries);
+						"(attempt %u/%s)",
+						retries, tries_limit(max_password_tries).c_str());
 
+					// The wrong password is not for the next try, and not for a module that comes after this one.
+					// pam_set_item() overwrites and frees it, a pointer that is only put back would leave it in
+					// memory. (The one of the last try stays, see drop_wrong_password().)
+					if (retries < max_password_tries) {
+						if (orig_authtok == nullptr) {
+							pam_set_item(pam_handle, PAM_AUTHTOK, nullptr);
+						} else {
+							pam_handle->authtok = orig_authtok;
+						}
+					}
+				}
+				auto delay = password_nodelay ? std::chrono::seconds(0) : password_delay;
+				if ((rc == PAM_AUTHTOK_ERR || rc == PAM_CONV_ERR) && retries < max_password_tries) {
+					delay = std::max<std::chrono::seconds>(delay, NO_ANSWER_DELAY);
+				}
+				if (keep_running && delay.count() > 0) {
+					// In small steps: another method may succeed during the delay, the password is not asked
+					// for again then
+					const auto delay_end = std::chrono::steady_clock::now() + delay;
+					while (keep_running && std::chrono::steady_clock::now() < delay_end) {
+						std::this_thread::sleep_for(DELAY_STEP);
+						keep_running = !terminate && confirmation_type == ConfirmationType::Unset;
+					}
+				}
+				if (keep_running) {
 					if (retries > 1 && blank_lines) {
 						conv_function(PAM_TEXT_INFO, "");
 					}
 					if (retries < max_password_tries) {
-						pam_handle->authtok = orig_authtok;
 						conv_function(PAM_ERROR_MSG, S("Password authentication failed, please try again"));
 					} else {
 						conv_function(PAM_ERROR_MSG, S("Password authentication failed"));
@@ -754,8 +795,13 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		 * EnterDevice
 		 * ---------------------------------------------------------------
 		 */
-		if (workaround == Workaround::Input && euidaccess("/dev/uinput", W_OK | R_OK) == 0) {
-			enter_device.emplace();
+		if (workaround == Workaround::Input && password && euidaccess("/dev/uinput", W_OK | R_OK) == 0) {
+			try {
+				enter_device.emplace();
+			} catch (const std::runtime_error& err) {
+				// Without it the user has to press enter, see workaround_function()
+				howdy_log(LOG_WARNING, "Failed to create the device for the enter press: %s", err.what());
+			}
 		}
 
 		do_auth();
@@ -763,8 +809,9 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		signal_task.stop(true);
 
 		// What has ended the wait, read before the methods are cancelled: a method that is cancelled says so, and
-		// that is not an end of the authentication by itself (after the global timeout)
-		const ConfirmationType decided = confirmation_type;
+		// that is not an end of the authentication by itself (after the global timeout). A signal ends it also
+		// when a method has won before: it was taken from the program, which has to get it back
+		const ConfirmationType decided = received_signal != 0 ? ConfirmationType::Terminated : confirmation_type.load();
 
 		face_authenticator->cancel();
 		fingerprint_authenticator->cancel();
@@ -782,6 +829,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 				// The prompt first: a thread of a method may be waiting for it with its message, in a program whose
 				// conversation answers one call at a time
 				workaround_function(workaround);
+				drop_wrong_password();
 				howdy_task.stop(false);
 				fingerprint_task.stop(false);
 
@@ -829,6 +877,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 				// The prompt first: a thread of a method may be waiting for it with its message, in a program whose
 				// conversation answers one call at a time
 				workaround_function(workaround);
+				drop_wrong_password();
 				howdy_task.stop(false);
 				fingerprint_task.stop(false);
 
@@ -928,6 +977,8 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 	char* username = nullptr;
 
 	char* orig_authtok = nullptr;
+	// The password task has started to ask, orig_authtok is the password that was there before
+	bool authtok_saved = false;
 	pam_handle_t* pam_handle = nullptr;
 	// Written with the mutex, also read without it
 	std::atomic<ConfirmationType> confirmation_type{ConfirmationType::Unset};
@@ -1230,6 +1281,47 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 	}
 
 	/**
+	 * Another method has authenticated: a password that was typed and not accepted (also the empty one of the
+	 * Enter that ends the prompt) is not for the modules after this one. Only after the password task has ended.
+	 */
+	void drop_wrong_password() {
+		if (authtok_saved && orig_authtok == nullptr && !password_success) {
+			pam_set_item(pam_handle, PAM_AUTHTOK, nullptr);
+		}
+	}
+
+	// Presses Enter until the password task has ended, up to max_enter_tries times, and tells the user if that
+	// did not end it
+	void end_prompt_with_enter() {
+		if (!enter_device.has_value()) {
+			howdy_log(LOG_WARNING, "No device to send the enter press with: no access to /dev/uinput, or it could not be created");
+			conv_function(
+				PAM_ERROR_MSG, S("Could not send Enter press, waiting for user "
+								 "to press it instead"));
+			return;
+		}
+		try {
+			bool ended = false;
+			for (unsigned int sent = 0; sent < max_enter_tries && !ended; sent++) {
+				enter_device.value().send_enter_press();
+				ended = pass_task_ptr->wait(DEFAULT_ENTER_TIMEOUT) != std::future_status::timeout;
+			}
+
+			if (!ended) {
+				howdy_log(LOG_WARNING, "Failed to send enter input before the retries limit");
+				conv_function(
+					PAM_ERROR_MSG, S("Failed to send Enter press before the "
+									 "retries limit, waiting for user to press it instead"));
+			}
+		} catch (std::runtime_error& err) {
+			howdy_log(LOG_WARNING, "Failed to send enter input: %s", err.what());
+			conv_function(
+				PAM_ERROR_MSG, S("Failed to send Enter press, waiting for user "
+								 "to press it instead"));
+		}
+	}
+
+	/**
 	 * Workaround function for the password prompt
 	 * @param	workaround		Workaround method to use
 	 */
@@ -1242,35 +1334,12 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			// a cancellation point
 			case Workaround::Native: pass_task_ptr->stop(true); break;
 			case Workaround::Input:
-				if (enter_device.has_value()) {
-					try {
-						unsigned int retries;
-
-						enter_device.value().send_enter_press();
-						for (retries = 1; retries < max_enter_tries && password && pass_task_ptr->active() &&
-										  pass_task_ptr->wait(DEFAULT_ENTER_TIMEOUT) == std::future_status::timeout;
-							 retries++) {
-							enter_device.value().send_enter_press();
-						}
-
-						if (retries >= max_enter_tries) {
-							howdy_log(LOG_WARNING, "Failed to send enter input before the retries limit");
-							conv_function(
-								PAM_ERROR_MSG, S("Failed to send Enter press before the "
-												 "retries limit, waiting for user to press it instead"));
-						}
-					} catch (std::runtime_error& err) {
-						howdy_log(LOG_WARNING, "Failed to send enter input: %s", err.what());
-						conv_function(
-							PAM_ERROR_MSG, S("Failed to send Enter press, waiting for user "
-											 "to press it instead"));
-					}
-				} else {
-					howdy_log(LOG_WARNING, "Insufficient permissions to create the fake device");
-					conv_function(
-						PAM_ERROR_MSG, S("Insufficient permissions to send Enter "
-										 "press, waiting for user to press it instead"));
+				// Only for a prompt that is open: an Enter without one goes to whatever has the focus. A task that
+				// waits after a wrong password ends by itself, it is given the time for that.
+				if (password && pass_task_ptr->active() && pass_task_ptr->wait(2 * DELAY_STEP) == std::future_status::timeout) {
+					end_prompt_with_enter();
 				}
+				[[fallthrough]];
 			// No automated workaround, the user has to press enter themselves
 			case Workaround::Off:
 				// We stop the thread (will block until the enter key is pressed if the

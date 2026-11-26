@@ -9,6 +9,9 @@
 //                              sudo does it, and an ECHO line says at the end whether the terminal echoes
 //   PAM_TEST_SERIAL=1          the conversation answers one call at a time: a message waits while a prompt is
 //                              open
+//   PAM_TEST_HOLD_PROMPT=<file>  a password prompt is answered once the file is there, as by somebody who is typing
+//   PAM_TEST_PROMPT_FAIL=1     a password prompt can not be answered, the conversation fails
+//   PAM_TEST_HOLD_MESSAGE=<file> showing "Please look directly into the camera" lasts until the file is there
 //   PAM_TEST_UBSAN_LOG=<path>  where UBSan writes its reports, if the program is built with it
 #include <chrono>
 #include <cstdio>
@@ -44,6 +47,17 @@ void log_time(const char* text) {
 	if (file != nullptr) {
 		std::fprintf(file, "%ld\t%s\n", ((now.tv_sec - start.tv_sec) * 1000) + ((now.tv_nsec - start.tv_nsec) / 1000000), text);
 		std::fclose(file);
+	}
+}
+
+// Waits until the file named by the variable is there, if the variable is set (a minute at most)
+void hold(const char* variable) {
+	const char* file = std::getenv(variable);
+	if (file == nullptr) {
+		return;
+	}
+	for (int i = 0; i < 1200 && access(file, F_OK) != 0; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
 }
 
@@ -89,10 +103,21 @@ int conversation(int count, const struct pam_message** messages, struct pam_resp
 	for (int i = 0; i < count; ++i) {
 		std::printf("MSG %d: %s\n", messages[i]->msg_style, messages[i]->msg);
 		log_time(messages[i]->msg);
+		if (std::strcmp(messages[i]->msg, "Please look directly into the camera") == 0) {
+			std::fflush(stdout);
+			hold("PAM_TEST_HOLD_MESSAGE");
+		}
 		// A wrong password for a prompt, nobody types here
 		if (messages[i]->msg_style == PAM_PROMPT_ECHO_OFF || messages[i]->msg_style == PAM_PROMPT_ECHO_ON) {
 			if (std::getenv("PAM_TEST_TTY_PROMPT") != nullptr) {
 				read_without_echo();
+			}
+			hold("PAM_TEST_HOLD_PROMPT");
+			if (std::getenv("PAM_TEST_PROMPT_FAIL") != nullptr) {
+				// (a password prompt comes alone)
+				free(*responses);
+				*responses = nullptr;
+				return PAM_CONV_ERR;
 			}
 			(*responses)[i].resp = strdup("wrong");
 		}

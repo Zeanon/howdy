@@ -39,7 +39,9 @@ if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 	for dir in /usr/lib/x86_64-linux-gnu/security /usr/lib64/security /usr/lib/aarch64-linux-gnu/security /usr/lib/security /lib/security; do
 		[ -f "$dir/pam_unix.so" ] && { PAM_UNIX="$dir/pam_unix.so"; break; }
 	done
-	sed -i "s|@pam_unix_path@|${PAM_UNIX:-/nonexistent/pam_unix.so}|" "$PAM_DIR/vars.hh"
+	# Between the two the one of the test, which writes down the arguments it gets
+	"$CXX" -shared -fPIC -fexceptions -x c -DREAL_PAM_UNIX="\"${PAM_UNIX:-/nonexistent/pam_unix.so}\"" "$TEST_DIR/fake_pam_unix.c" -o "$PAM_DIR/fake_pam_unix.so" -lpam
+	sed -i "s|@pam_unix_path@|$PAM_DIR/fake_pam_unix.so|" "$PAM_DIR/vars.hh"
 	read -r -a PAM_CFLAGS <<< "$(pkg-config --cflags INIReader libsystemd libevdev | system_includes)"
 	read -r -a PAM_LIBS <<< "$(pkg-config --libs INIReader libsystemd libevdev)"
 	"$CXX" -std=c++20 "${PAM_SANITIZE[@]}" -fPIC -shared -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" \
@@ -49,6 +51,7 @@ if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 		"$TEST_DIR/face_cancel_test.cc" "$PAM_SRC_DIR/face_authenticator.cc" -o "$PAM_DIR/face_cancel_test" "${PAM_LIBS[@]}" -lpthread
 	"$CXX" -std=c++20 "${PAM_SANITIZE[@]}" -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" "$TEST_DIR/timeout_test.cc" -o "$PAM_DIR/timeout_test" "${PAM_LIBS[@]}"
 	"$CXX" -shared -fPIC -x c "$TEST_DIR/fake_logind.c" -o "$PAM_DIR/fake_logind.so"
+	"$CXX" -shared -fPIC "${PAM_CFLAGS[@]}" -x c "$TEST_DIR/fake_uinput.c" -o "$PAM_DIR/fake_uinput.so"
 	link_daemon "$T/daemon"
 
 	command -v unshare > /dev/null || { echo "Missing unshare"; exit 1; }
@@ -90,16 +93,40 @@ CONFDIR="$PAM_DIR/pam.d"
 mkdir -p "$CONFDIR"
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
 
+# What is preloaded into the program: the login session of the test, and no real virtual keyboard
+PRELOAD="$PAM_DIR/fake_logind.so:$PAM_DIR/fake_uinput.so"
+
 # Runs the PAM stack, sets OUT (messages and result) and SECONDS_TAKEN
 run_pam() {
 	local start=${EPOCHREALTIME/[.,]/}
 	# fake_logind.so makes the login session a local one, or a remote one with HOWDY_TEST_REMOTE=1
 	# (a program that crashes fails the checks of its output, it does not end the tests)
-	OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1) || true
+	OUT=$(LD_PRELOAD="$PRELOAD" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1) || true
 	SECONDS_TAKEN=$(( (${EPOCHREALTIME/[.,]/} - start) / 1000000 ))
 }
 result_of() { grep '^RESULT' <<< "$OUT" | cut -d' ' -f2; }
 has() { grep -qF "$1" <<< "$OUT" && echo yes || echo no; }
+
+command -v dbus-monitor > /dev/null || { echo "Missing dbus-monitor"; exit 1; }
+# watch_face, then start the authentication, then wait_for_face: returns when the module has the result of the
+# face (it clears the request then), however long the recognition takes
+watch_face() {
+	dbus-monitor --address "$ADDR" "type='method_call',member='ClearAuthentication'" > "$T/face.monitor" 2>&1 &
+	monitor_pid=$!
+	BACKGROUND_PIDS+=("$monitor_pid")
+	sleep 0.5
+}
+wait_for_face() {
+	local _
+	for _ in $(seq 600); do
+		grep -q 'member=ClearAuthentication' "$T/face.monitor" && break
+		sleep 0.1
+	done
+	expect "the face is done" "$(grep -q 'member=ClearAuthentication' "$T/face.monitor" && echo yes || echo no)" yes
+	kill "$monitor_pid" 2> /dev/null || true
+	# The module takes the result right after that
+	sleep 0.5
+}
 
 echo "--- the log of the program"
 # openlog() and closelog() would change the log of the whole program that uses PAM, the module does not call them
@@ -160,7 +187,7 @@ repeated() {
 	chmod 600 "$MODEL"
 	chmod 600 "$T/$2.dat"
 	local status=0
-	OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" PAM_TEST_REPEAT=2 PAM_TEST_SWAP="$T/$2.dat:$MODEL" timeout 30 "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1) || status=$?
+	OUT=$(LD_PRELOAD="$PRELOAD" PAM_TEST_REPEAT=2 PAM_TEST_SWAP="$T/$2.dat:$MODEL" timeout 30 "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1) || status=$?
 	RESULTS="$(grep '^RESULT' <<< "$OUT" | cut -d' ' -f2 | tr '\n' ' ')exit $status"
 	sleep 1
 }
@@ -199,7 +226,7 @@ stop_daemon() {
 	while kill -0 "$DAEMON_PID" 2> /dev/null; do sleep 0.1; done
 }
 run_pam_in_background() {
-	( LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" > "$T/pam_background.out" 2>&1 ) &
+	( LD_PRELOAD="$PRELOAD" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" > "$T/pam_background.out" 2>&1 ) &
 	pam_pid=$!
 }
 
@@ -328,11 +355,12 @@ stop_daemon
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay" > "$CONFDIR/howdy-terminal"
 # (a background job of a shell ignores SIGINT and SIGQUIT, the program must not)
 signal_command() {
-	echo "ulimit -c 0; exec env --default-signal=INT,QUIT LD_PRELOAD='$PAM_DIR/fake_logind.so' '$PAM_DIR/pam_test' '$CONFDIR' $1 '$USER_NAME' > '$T/pam_signal.out' 2>&1"
+	echo "ulimit -c 0; exec env --default-signal=INT,QUIT LD_PRELOAD='$PRELOAD' '$PAM_DIR/pam_test' '$CONFDIR' $1 '$USER_NAME' > '$T/pam_signal.out' 2>&1"
 }
 # blocked <pid>: whether the first thread of the process blocks SIGINT
 blocked() { echo $(( (16#$(awk '/^SigBlk/ {print $2}' "/proc/$1/status") & 2) != 0 )); }
 # The input of script, which stays open without anything to read
+rm -f "$T/no_input"
 mkfifo "$T/no_input"
 exec 9<> "$T/no_input"
 for signal in INT TERM QUIT; do
@@ -444,6 +472,22 @@ rm -f "$T/pam_signal.out"
 timeout 30 script -qec "bash '$T/foreground.sh' \"$(signal_command howdy-prompt)\"" /dev/null <&9 > /dev/null || true
 expect "brought to the foreground: authenticated by the face" "$(grep '^RESULT' "$T/pam_signal.out" | cut -d' ' -f2)" 0
 expect "brought to the foreground: the terminal echoes" "$(grep '^ECHO' "$T/pam_signal.out" | cut -d' ' -f2)" on
+
+# SIGINT after the face has won, while the module still shows a message: the signal ends the program all the same
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-late"
+rm -f "$T/pam_signal.out" "$T/show_message"
+watch_face
+PAM_TEST_HOLD_MESSAGE="$T/show_message" script -qec "$(signal_command howdy-late)" /dev/null <&9 > /dev/null &
+script_pid=$!
+# The face is done, the message is still on its way
+wait_for_face
+signal_pid=$(pgrep -n -f "pam_test $CONFDIR howdy-late")
+kill -INT "$signal_pid"
+sleep 0.5
+touch "$T/show_message"
+status=0
+wait "$script_pid" || status=$?
+expect "SIGINT after a method has won: ends the program" "$status" 130
 exec 9>&-
 
 echo "--- the methods that can be used are announced"
@@ -543,7 +587,7 @@ echo wait > "$FPRINTD_MODE_FILE"
 cp "$T/genuine.dat" "$MODEL"
 chmod 600 "$MODEL"
 status=0
-OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" PAM_TEST_PARALLEL=howdy-face timeout 30 "$PAM_DIR/pam_test" "$CONFDIR" howdy-finger "$USER_NAME" 2>&1) || status=$?
+OUT=$(LD_PRELOAD="$PRELOAD" PAM_TEST_PARALLEL=howdy-face timeout 30 "$PAM_DIR/pam_test" "$CONFDIR" howdy-finger "$USER_NAME" 2>&1) || status=$?
 expect "at the same time: the face authenticates its own" "$(grep '^PARALLEL' <<< "$OUT" | cut -d' ' -f2)" 0
 expect "at the same time: the other one is not authenticated by it" "$(result_of)" 7
 expect "at the same time: the program goes on" "$status" 0
@@ -684,6 +728,7 @@ echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay 
 echo late-match > "$FPRINTD_MODE_FILE"
 cp "$T/impostor.dat" "$MODEL"
 chmod 600 "$MODEL"
+rm -f "$T/no_input_serial"
 mkfifo "$T/no_input_serial"
 exec 9<> "$T/no_input_serial"
 rm -f "$T/pam_signal.out"
@@ -710,6 +755,125 @@ late_daemon
 expect "a late daemon and a reader: authenticated by the face" "$(result_of)" 0
 expect "a late daemon and a reader: the face comes last, set apart by a blank line" "$(grep -v '^RESULT' <<< "$OUT" | sed 's/^MSG [0-9]*: //' | head -5 | tr '\n' '|')" "Fingerprint authentication...|Place your finger on the fingerprint reader||Facial authentication...|Please look directly into the camera|"
 
+echo "--- the options of the module"
+echo no-prints > "$FPRINTD_MODE_FILE"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+# Runs the stack with the module and the options $*
+with_options() {
+	echo "auth required $PAM_DIR/pam_howdy.so $*" > "$CONFDIR/howdy-test"
+	run_pam
+}
+for value in true yes 1; do
+	with_options max-tries=1 "face-auth=$value"
+	expect "face-auth=$value: the face authenticates" "$(result_of)" 0
+done
+with_options max-tries=1 face-auth=false
+expect "face-auth=false: the face does not authenticate" "$([ "$(result_of)" != 0 ] && echo yes || echo no) $(has "Please look directly into the camera")" "yes no"
+with_options max-tries=1 no-confirmation=true
+expect "no-confirmation=true: nobody is told who authenticated" "$(result_of) $(has "Face authenticated as")" "0 no"
+with_options max-tries=1 no-confirmation=false
+expect "no-confirmation=false: the user is told" "$(result_of) $(has "Face authenticated as")" "0 yes"
+# A number that can not be read leaves the one of the config file, the program goes on
+for option in max-tries=abc face-auth:max-tries= fingerprint:max-tries=99999999999 password:max-tries=x password:max-enter-tries=y; do
+	with_options "$option"
+	expect "$option: the program goes on, the face authenticates" "$(result_of)" 0
+done
+# -1 is no limit, also for the methods that count in an int (it was no try at all there), other negative
+# numbers are read like it
+for tries in -1 -5; do
+	with_options "face-auth:max-tries=$tries"
+	expect "face-auth:max-tries=$tries: the face authenticates" "$(result_of)" 0
+	echo match > "$FPRINTD_MODE_FILE"
+	with_options face-auth=false "fingerprint:max-tries=$tries"
+	expect "fingerprint:max-tries=$tries: the finger authenticates" "$(result_of)" 0
+	echo no-prints > "$FPRINTD_MODE_FILE"
+done
+cp "$T/etc/config.ini" "$T/config.ini.saved"
+"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$T/config.ini.saved" "$T/etc/config.ini" face_authentication.max_tries=-1 fingerprint.max_tries=-1
+chmod 644 "$T/etc/config.ini"
+echo "auth required $PAM_DIR/pam_howdy.so" > "$CONFDIR/howdy-test"
+run_pam
+expect "max_tries=-1 in the config file: the face authenticates" "$(result_of)" 0
+echo match > "$FPRINTD_MODE_FILE"
+with_options face-auth=false
+expect "max_tries=-1 in the config file: the finger authenticates" "$(result_of)" 0
+echo no-prints > "$FPRINTD_MODE_FILE"
+cp "$T/config.ini.saved" "$T/etc/config.ini"
+# The options after "password:" go to pam_unix, with the ones the module adds
+cp "$T/impostor.dat" "$MODEL"
+chmod 600 "$MODEL"
+export PAM_TEST_UNIX_ARGS="$T/pam_unix.args"
+rm -f "$PAM_TEST_UNIX_ARGS"
+with_options max-tries=1 password password:nodelay password:max-tries=1 password:nullok password:authtok_type=HOWDY
+expect "the options after password: reach pam_unix" "$(tr '\n' ' ' < "$PAM_TEST_UNIX_ARGS" || true)" "nullok authtok_type=HOWDY nodelay "
+unset PAM_TEST_UNIX_ARGS
+# The face authenticates during the delay after a wrong password: the password is not asked for again, and
+# the delay is not waited for
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+with_options max-tries=1 password password:delay=20s password:max-tries=3 workaround=off
+expect "the face wins during the delay: authenticated" "$(result_of)" 0
+expect "the face wins during the delay: asked for the password once" "$(grep -c '^MSG 1:' <<< "$OUT" || true)" 1
+expect "the face wins during the delay: the delay is not waited for" "$([ "$SECONDS_TAKEN" -lt 8 ] && echo yes || echo "$SECONDS_TAKEN s")" yes
+# The module after this one does not get the wrong password
+printf 'auth required %s\n' "$PAM_DIR/pam_howdy.so max-tries=1 password password:delay=20s password:max-tries=3 workaround=off" \
+	"$PAM_DIR/fake_pam_unix.so show_authtok" > "$CONFDIR/howdy-test"
+run_pam
+expect "the face wins during the delay: the next module gets no password" "$(result_of) $(grep -o 'AUTHTOK [a-z]*' <<< "$OUT" || true)" "0 AUTHTOK unset"
+# The same when the face wins after the last try has failed, and while the prompt is still open
+printf 'auth required %s\n' "$PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay password:max-tries=1 workaround=off" \
+	"$PAM_DIR/fake_pam_unix.so show_authtok" > "$CONFDIR/howdy-test"
+run_pam
+expect "the face wins after the last try: the next module gets no password" "$(result_of) $(grep -o 'AUTHTOK [a-z]*' <<< "$OUT" || true)" "0 AUTHTOK unset"
+printf 'auth required %s\n' "$PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay password:max-tries=3 workaround=off" \
+	"$PAM_DIR/fake_pam_unix.so show_authtok" > "$CONFDIR/howdy-test"
+rm -f "$T/answer_prompt"
+watch_face
+export PAM_TEST_HOLD_PROMPT="$T/answer_prompt"
+run_pam_in_background
+unset PAM_TEST_HOLD_PROMPT
+wait_for_face
+touch "$T/answer_prompt"
+wait "$pam_pid" || true
+OUT=$(cat "$T/pam_background.out")
+expect "the face wins while the prompt is open: the next module gets no password" "$(result_of) $(grep -o 'AUTHTOK [a-z]*' <<< "$OUT" || true)" "0 AUTHTOK unset"
+# A prompt that can not be answered is not asked again at once, also without a delay and without a limit
+PAM_TEST_PROMPT_FAIL=1 with_options face-auth=false fingerprint=false password password:nodelay password:max-tries=-1 global-timeout=3
+prompts=$(grep -c '^MSG 1:' <<< "$OUT" || true)
+expect "a prompt that fails: asked again with a pause" "$([ "$prompts" -ge 2 ] && [ "$prompts" -le 4 ] && echo yes || echo "$prompts prompts")" yes
+# No pause when it is not asked again
+start=${EPOCHREALTIME/[.,]/}
+PAM_TEST_PROMPT_FAIL=1 with_options face-auth=false fingerprint=false password password:nodelay password:max-tries=1
+took=$(((${EPOCHREALTIME/[.,]/} - start) / 1000))
+expect "a prompt that fails at the last try: no pause" "$(grep -c '^MSG 1:' <<< "$OUT" || true) $([ "$took" -lt 900 ] && echo at-once || echo "$took ms")" "1 at-once"
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+
+echo "--- the workaround with an Enter press"
+# fake_uinput.so stands in for the virtual keyboard
+export PAM_TEST_UINPUT_LOG="$T/uinput.log"
+# with_keyboard <ok|fail> <options of the module>, sets OUT and PRESSES
+with_keyboard() {
+	local state=$1
+	shift
+	rm -f "$PAM_TEST_UINPUT_LOG"
+	PAM_TEST_UINPUT=$state with_options max-tries=1 workaround=input "$@"
+	PRESSES=$(grep -c ENTER "$PAM_TEST_UINPUT_LOG" 2> /dev/null || true)
+	PRESSES=${PRESSES:-0}
+}
+rm -f "$T/enter_pressed"
+PAM_TEST_HOLD_PROMPT="$T/enter_pressed" PAM_TEST_UINPUT_ANSWER="$T/enter_pressed" with_keyboard ok password password:nodelay password:max-tries=1 password:max-enter-tries=1
+expect "one press ends the prompt: authenticated, one press" "$(result_of) $PRESSES" "0 1"
+expect "one press ends the prompt: no error is shown" "$(has "Failed to send Enter")" no
+with_keyboard ok password=false password:max-enter-tries=0
+expect "no password: authenticated, no press and no message about it" "$(result_of) $PRESSES $(has "Enter press")" "0 0 no"
+with_keyboard ok password password:nodelay password:max-tries=1
+expect "no prompt that is open any more: authenticated, no press" "$(result_of) $PRESSES $(has "Enter press")" "0 0 no"
+with_keyboard fail password password:nodelay password:max-tries=1
+expect "the device can not be created: the program goes on" "$(result_of)" 0
+unset PAM_TEST_UINPUT_LOG
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
+
 echo "--- a remote session is skipped"
 # The environment can be changed by the user, the login session of logind can not
 echo no-prints > "$FPRINTD_MODE_FILE"
@@ -718,6 +882,8 @@ chmod 600 "$MODEL"
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
 run_pam
 expect "a local session: the face authenticates" "$(result_of)" 0
+SSH_TTY_OLD=/dev/pts/9 SSH_CLIENT_CONFIG=x run_pam
+expect "variables that only start like those of ssh: not skipped" "$(result_of)" 0
 SSH_CONNECTION="192.0.2.1 5000 192.0.2.2 22" run_pam
 # The module returns PAM_IGNORE, which libpam makes PAM_PERM_DENIED (6) if it is the only module. A face that does not match would be 7.
 expect "ssh in the environment: skipped" "$(result_of)" 6

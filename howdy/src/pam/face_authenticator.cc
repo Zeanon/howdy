@@ -196,7 +196,9 @@ bool FaceAuthenticator::start_authentication(std::chrono::steady_clock::time_poi
 	}
 
 	for (const auto& arg : args_) {
-		r = sd_bus_message_append(message, "s", arg);
+		if (r >= 0) {
+			r = sd_bus_message_append(message, "s", arg);
+		}
 	}
 
 	if (r >= 0) {
@@ -496,8 +498,8 @@ FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv
 			howdy_log(
 				LOG_ERR,
 				"Face authentication failed "
-				"(attempt %d/%d)",
-				retries, max_tries);
+				"(attempt %d/%s)",
+				retries, tries_limit(max_tries).c_str());
 			if (retries < max_tries) {
 				conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached, please try again"));
 			} else {

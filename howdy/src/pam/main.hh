@@ -8,9 +8,12 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <set>
+#include <stdexcept>
 #include <string>
 
 #include <systemd/sd-login.h>
@@ -109,6 +112,39 @@ inline std::chrono::seconds str_to_seconds(const std::string_view& str, const ch
 	}
 }
 
+// A number of tries has -1 for no limit. Other negative numbers are read like it, as they always were
+// (a value that was refused now could lock somebody out), but it is said in the log
+inline void check_tries(long value) {
+	if (value < -1) {
+		howdy_log(LOG_WARNING, "The number of tries '%ld' is not valid, only -1 or a positive number is", value);
+	}
+}
+
+// A number of tries of an option of the module, for each of `targets`. One that can not be read leaves them as
+// they were and is said in the log, the exception of std::stoi() would end the program that uses PAM.
+inline void read_tries(const std::string& str, std::initializer_list<unsigned int*> targets) {
+	try {
+		const int value = std::stoi(str);
+		check_tries(value);
+		for (auto* tries : targets) {
+			*tries = static_cast<unsigned>(value);
+		}
+	} catch (const std::logic_error&) {
+		howdy_log(LOG_WARNING, "The number of tries '%s' is not a number that can be read", str.c_str());
+	}
+}
+
+// The limit of the tries for the log, "-1" and other numbers that no int holds are none
+inline std::string tries_limit(long long tries) {
+	return tries >= INT_MAX ? std::string("no limit") : std::to_string(tries);
+}
+
+// A number of tries of the config file
+inline unsigned int config_tries(long value) {
+	check_tries(value);
+	return static_cast<unsigned>(value);
+}
+
 // The wait after a wrong password
 constexpr auto DEFAULT_DELAY = std::chrono::seconds(2);
 constexpr auto MAX_DELAY = std::chrono::seconds(60);
@@ -152,7 +188,8 @@ inline bool checkenv(const char* name) {
 	auto len = strlen(name);
 
 	for (char** env = environ; *env != nullptr; env++) {
-		if (strncmp(*env, name, len) == 0) {
+		// The whole name, not a longer one that starts like it
+		if (strncmp(*env, name, len) == 0 && (*env)[len] == '=') {
 			return true;
 		}
 	}
