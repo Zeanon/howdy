@@ -11,8 +11,7 @@ if [[ " $* " == *" --reconfigure "* ]]; then
     echo "######################################"
 
 
-    find "$(dirname -- "$BUILD_DIR")" \
-        -type d -name build -prune -exec sudo rm -rf -- {} +
+    sudo rm -rf -- "$BUILD_DIR"
     meson setup "$BUILD_DIR" "$(dirname -- "$BUILD_DIR")" --python.install-env venv
 fi
 
