@@ -4,18 +4,9 @@ A comprehensive bash-based CLI tool for managing Howdy face authentication on Li
 
 ## Overview
 
-This interactive bash script provides a user-friendly menu-driven interface to install, configure, and manage Howdy facial recognition for Linux authentication. It supports multiple distributions and handles all common Howdy operations through a simple terminal interface.
+This interactive bash script provides a user-friendly menu-driven interface to configure and manage an installed Howdy through a simple terminal interface. It does not install Howdy, see the README of the project for that.
 
 ## Features
-
-### 🎯 Multi-Distribution Support
-- **Ubuntu/Linux Mint**
-  - Ubuntu 22.04 and earlier: Official PPA (`ppa:boltgolt/howdy`)
-  - **Ubuntu 24.04+**: Unofficial PPA (`ppa:ubuntuhandbook1/howdy`) with automatic dependency installation
-- **Fedora/RHEL** family via COPR repository
-- **Debian** with manual installation instructions
-- **Arch Linux** with AUR installation guide
-- Automatic OS detection and version-specific installation
 
 ### 📸 Face Model Management
 - **Add** new face models with interactive camera capture
@@ -40,14 +31,9 @@ This interactive bash script provides a user-friendly menu-driven interface to i
 ## Requirements
 
 - **Operating System**: Linux (Ubuntu, Fedora, Debian, Arch, or derivatives)
-- **Privileges**: Installing Howdy and changing the configuration need root, start `howdy-cli` with `sudo` for these actions. Adding, listing, testing and removing face models work as a normal user, they are authorized by polkit (action `org.boltgolt.howdy.Management`)
-- **Dependencies** (auto-installed on Ubuntu/Debian):
-  - `v4l-utils` - Camera device management
-  - `python3-opencv` - Computer vision library
-  - `python3-numpy` - Numerical processing
-  - `libpam-python` - PAM integration
-  - `libinireader0` - Configuration file parsing
-  - `software-properties-common` - PPA management
+- **Howdy** installed, see the README of the project
+- **Privileges**: Changing the configuration needs root, start `howdy-cli` with `sudo` for these actions. Adding, listing, testing and removing face models work as a normal user, they are authorized by polkit (action `org.boltgolt.howdy.Management`)
+- `v4l-utils` for the camera device selection
 
 ## Installation
 
@@ -67,7 +53,7 @@ The prefix and the config path of the build (`-Dprefix=...`, `-Dconfig_dir=...`)
 howdy-cli
 ```
 
-Installing Howdy and changing the configuration need root, start the manager with `sudo howdy-cli` for these actions. Without root these menu entries stop with a message and return to the menu. For the face models (add, list, test, remove) polkit asks for your authorization if it is needed. If it is denied, the action ends and the menu is shown again.
+Changing the configuration needs root, start the manager with `sudo howdy-cli` for these actions. Without root these menu entries stop with a message and return to the menu. For the face models (add, list, test, remove) polkit asks for your authorization if it is needed. If it is denied, the action ends and the menu is shown again.
 
 ## Usage
 
@@ -80,7 +66,6 @@ When you run the script, you'll see an interactive menu:
      HOWDY FACE AUTH MANAGER (BASH)
 ======================================
 
-I) Install Howdy
 A) Add face model
 T) Test face recognition
 L) List face models
@@ -94,23 +79,17 @@ Enter the letter of the entry (upper or lower case). If an action fails, the mes
 
 ### First-Time Setup
 
-1. **Install Howdy** (`I`, needs root)
-   - The script will detect your distribution
-   - Automatically select the appropriate installation method
-   - Install all required dependencies
-   - For Ubuntu 24.04+, it will use the community PPA
-
-2. **Configure Camera** (`C`, then `1`, needs root)
+1. **Configure Camera** (`C`, then `1`, needs root)
    - View all available camera devices
    - Select your IR camera (e.g., `/dev/video0`)
    - Camera path is saved to Howdy config
 
-3. **Add Face Model** (`A`)
+2. **Add Face Model** (`A`)
    - Look at the camera when prompted
    - Your face will be captured and enrolled
    - Model is saved for authentication
 
-4. **Test Recognition** (`T`)
+3. **Test Recognition** (`T`)
    - Verify that Howdy can recognize your face
    - Get immediate feedback on recognition success
 
@@ -141,32 +120,6 @@ All entries that change the configuration need root.
 1. **Disable completely** - Turn off Howdy for all authentication
 2. **Enable Howdy** - Instructions to re-enable via config file
 
-## Supported Distributions
-
-### Ubuntu Family
-- Ubuntu 22.04 and earlier (Official PPA)
-- **Ubuntu 24.04, 24.10, 25.04+** (Unofficial PPA)
-- Linux Mint
-- Pop!_OS
-- Elementary OS
-- Zorin OS
-
-### Fedora Family
-- Fedora (via COPR: `alvarogarinf/howdy`)
-- RHEL
-- CentOS
-- Rocky Linux
-- AlmaLinux
-
-### Debian
-- Manual installation via `.deb` package from [Howdy releases](https://github.com/boltgolt/howdy/releases)
-
-### Arch Family
-- Arch Linux (via AUR: `yay -S howdy` or `paru -S howdy`)
-- Manjaro
-- EndeavourOS
-- Garuda Linux
-
 ## Technical Details
 
 ### Script Structure
@@ -176,8 +129,6 @@ The script is organized into logical sections:
 - **Helpers**: Error handling, root privilege checking, pause functionality
 - **Polkit**: Authorization for the face model commands (`authorize`)
 - **Menu actions**: Every action runs in its own subshell (`run_action`), a failing command ends the action, not the manager
-- **OS Detection**: Automatic distribution and version detection
-- **Installation**: Distribution-specific Howdy installation logic
 - **Camera Configuration**: Device detection and configuration
 - **Menu Actions**: Face model management, testing, configuration
 - **Main Menu**: Interactive menu loop
@@ -191,8 +142,6 @@ Howdy configuration is stored in the config directory that meson set when the ma
 - `require_root()` - Stops an action that needs root privileges
 - `authorize()` - Asks polkit for the management action once
 - `run_action()` - Runs a menu action and returns to the menu if it fails
-- `detect_os()` - Identifies Linux distribution and version
-- `install_howdy()` - Handles distribution-specific installation
 - `configure_camera()` - Sets up camera device
 - `add_face()` - Enrolls new face model
 - `test_face()` - Tests face recognition
@@ -206,15 +155,9 @@ Howdy configuration is stored in the config directory that meson set when the ma
 # Install the command again
 sudo meson install -C build --no-rebuild --tags cli_manager
 
-# Run it, with sudo for installing and configuring
+# Run it, with sudo for configuring
 sudo howdy-cli
 ```
-
-### Howdy installation fails
-- **Ubuntu 24.04+**: The script uses an unofficial PPA. Review the warning and press Enter to continue.
-- **Debian**: Download the `.deb` package manually from GitHub releases
-- **Arch**: Install via AUR using `yay` or `paru`
-- Ensure you have an active internet connection
 
 ### Camera not detected
 ```bash
@@ -233,7 +176,7 @@ ls -l /dev/video*
 - Test in good lighting conditions
 
 ### Permission errors
-- Installing Howdy and changing the configuration need root: start the manager with `sudo howdy-cli`
+- Changing the configuration needs root: start the manager with `sudo howdy-cli`
 - Adding, listing and removing face models ask polkit for an authorization. If you deny it, the action ends and the menu is shown again
 - Check that the config file (by default `/usr/local/etc/howdy/config.ini`) is writable for root
 
@@ -248,10 +191,8 @@ sudo chmod 644 /usr/local/etc/howdy/config.ini
 
 ## Known Limitations
 
-- Installing Howdy and changing the configuration need root
+- Changing the configuration needs root
 - IR camera required for face authentication
-- Ubuntu 24.04+ uses unofficial community PPA
-- Some distributions require manual Howdy installation
 - Configuration changes require script restart to take effect
 
 ## Security Considerations
@@ -306,8 +247,6 @@ howdy-cli/
 Contributions are welcome! Please ensure:
 - Code follows bash best practices
 - Error handling is comprehensive
-- All distributions are properly supported
-- Changes are tested on multiple distros
 
 ## License
 
@@ -316,24 +255,17 @@ This project is provided as-is for managing Howdy face authentication.
 ## Credits
 
 - **Howdy**: [boltgolt/howdy](https://github.com/boltgolt/howdy) - The underlying face authentication system
-- **Ubuntu 24.04+ PPA**: [UbuntuHandbook](https://ubuntuhandbook.org/) - Community-maintained PPA
 - **v4l-utils**: Video4Linux utilities for camera management
 
 ## Resources
 
 - [Howdy GitHub Repository](https://github.com/boltgolt/howdy)
 - [Howdy Documentation](https://github.com/boltgolt/howdy/wiki)
-- [Ubuntu PPA (Official)](https://launchpad.net/~boltgolt/+archive/ubuntu/howdy)
-- [Ubuntu PPA (Unofficial 24.04+)](https://launchpad.net/~ubuntuhandbook1/+archive/ubuntu/howdy)
-- [Fedora COPR](https://copr.fedorainfracloud.org/coprs/alvarogarinf/howdy/)
-- [AUR Package](https://aur.archlinux.org/packages/howdy)
 
 ## Changelog
 
 ### Current Version
 - Interactive bash-based CLI tool
-- Multi-distribution support with automatic detection
-- Ubuntu 24.04+ support via unofficial PPA
 - Comprehensive configuration management
 - Face model management (add, list, remove, clear)
 - Camera device configuration with auto-detection

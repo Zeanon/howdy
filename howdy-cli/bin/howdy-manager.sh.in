@@ -34,7 +34,7 @@ POLKIT_ACTION="@management_interface@"
 # Managing face models needs the polkit action of the Howdy management daemon.
 # Ask for it once, the authorization is retained for a short time and covers the
 # calls of howdy below. Does nothing for root, without polkit or as long as the
-# action is not installed (Howdy is not installed yet).
+# action is not installed (Howdy is not installed yet, see the README of the project).
 authorize() {
     [[ $EUID -eq 0 ]] && return 0
     command -v pkcheck >/dev/null || return 0
@@ -61,107 +61,6 @@ run_action() {
         KEEP_OUTPUT=1
     fi
     return 0
-}
-
-# ----------------------------
-# Detect OS
-# ----------------------------
-detect_os() {
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        DISTRO="$ID"
-        VERSION="$VERSION_ID"
-    else
-        read -rp "Enter distro (ubuntu/fedora/debian/arch): " DISTRO
-        read -rp "Enter version: " VERSION
-    fi
-
-    DISTRO="$(echo "$DISTRO" | tr 'A-Z' 'a-z')"
-    echo "Installing dependencies..."
-    apt update
-    apt install -y \
-        software-properties-common \
-        v4l-utils \
-        python3-opencv \
-        python3-numpy \
-        libpam-python \
-        libinireader0
-}
-
-# ----------------------------
-# Install Howdy
-# ----------------------------
-install_howdy() {
-    require_root
-    detect_os
-
-    echo
-    echo "Detected: $DISTRO $VERSION"
-    echo
-
-    case "$DISTRO" in
-        ubuntu|linuxmint)
-            MAJOR="${VERSION%%.*}"
-
-            if [[ "$MAJOR" -ge 24 ]]; then
-                echo "⚠️ Ubuntu $VERSION detected"
-                echo "Using UbuntuHandbook PPA (community-maintained)"
-                pause
-
-                apt update
-                apt install -y software-properties-common v4l-utils
-                add-apt-repository -y ppa:ubuntuhandbook1/howdy
-                apt update
-                apt install -y howdy
-            else
-                echo "Using official Howdy PPA"
-                apt update
-                apt install -y software-properties-common v4l-utils
-                add-apt-repository -y ppa:boltgolt/howdy
-                apt update
-                apt install -y howdy
-            fi
-            ;;
-
-        fedora)
-            echo "Installing Howdy via Fedora COPR"
-            dnf copr enable -y principis/howdy
-            dnf --refresh install -y howdy v4l-utils
-            ;;
-
-        debian)
-            echo
-            echo "Debian detected."
-            echo "Download .deb from:"
-            echo "https://github.com/boltgolt/howdy/releases"
-            echo
-            echo "Then install with:"
-            echo "sudo apt install gdebi"
-            echo "sudo gdebi howdy_x.y.z_amd64.deb"
-            pause
-            return
-            ;;
-
-        arch)
-            echo
-            echo "Arch Linux detected."
-            echo "Install Howdy from AUR:"
-            echo "yay -S howdy"
-            echo "or"
-            echo "paru -S howdy"
-            pause
-            return
-            ;;
-
-        *)
-            error_exit "Unsupported distro: $DISTRO"
-            ;;
-    esac
-
-    command -v howdy >/dev/null || error_exit "Howdy installation failed"
-    echo "✅ Howdy installed successfully"
-    authorize || true
-    pause
 }
 
 # ----------------------------
@@ -338,7 +237,6 @@ main_menu() {
     echo "     HOWDY FACE AUTH MANAGER (BASH)"
     echo "======================================"
     echo
-    echo "I) Install Howdy"
     echo "A) Add face model"
     echo "T) Test face recognition"
     echo "L) List face models"
@@ -350,7 +248,6 @@ main_menu() {
     read -rp "Choose an option: " CHOICE
 
     case "$CHOICE" in
-        I|i) run_action install_howdy ;;
         A|a) run_action add_face ;;
         T|t) run_action test_face ;;
         L|l) run_action list_models ;;
