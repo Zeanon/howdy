@@ -703,15 +703,6 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		 */
 		auto fingerprint_authenticator = std::make_shared<FprintdAuthenticator>(username, conv_function);
 		optional_task<int> fingerprint_task([&]() -> int {
-			/*
-			 * Make the thread asynchronously cancellable.
-			 *
-			 * authenticate() may block while fprintd waits for the
-			 * user's finger.
-			 */
-			pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
-			pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
-
 			// fprintd waits for the finger, so the user has enrolled fingerprints and there is a reader
 			const auto on_scanning = [this] {
 				{
