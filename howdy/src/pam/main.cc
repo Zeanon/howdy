@@ -651,12 +651,6 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		 */
 		auto face_authenticator = std::make_shared<FaceAuthenticator>(username, args);
 		optional_task<int> howdy_task([&]() -> int {
-			/*
-			 * Make the thread asynchronously cancellable.
-			 */
-			pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
-			pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
-
 			// The daemon looks for the face, so the user has a face model
 			const auto on_scanning = [this] {
 				{
@@ -671,6 +665,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			// won, a password was typed) or a signal ends the authentication.
 			bool terminated = (rc == FaceAuthenticator::Result::Cancelled || terminate);
 
+			bool timed_out = false;
 			{
 				std::unique_lock<std::mutex> lock(mutx);
 
@@ -688,11 +683,15 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 					} else if (terminated) {
 						confirmation_type = ConfirmationType::Terminated;
 					} else if (rc == FaceAuthenticator::Result::Timeout && timeout_notice) {
-						conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached"));
+						timed_out = true;
 					}
 				}
 			}
 			convar.notify_one();
+			// Without the mutex: the conversation of the program may wait, the other methods must not
+			if (timed_out) {
+				conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached"));
+			}
 			return howdy_status_code;
 		});
 		howdy_task_ptr = &howdy_task;
@@ -727,6 +726,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			// fprintd that is lost (the reader was reset) is the failure of this method, the others go on
 			bool terminated = (rc == FprintdAuthenticator::Result::Cancelled || terminate);
 
+			bool timed_out = false;
 			{
 				std::unique_lock<std::mutex> lock(mutx);
 
@@ -744,12 +744,16 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 					} else if (terminated) {
 						confirmation_type = ConfirmationType::Terminated;
 					} else if (rc == FprintdAuthenticator::Result::Timeout && timeout_notice) {
-						conv_function(PAM_ERROR_MSG, S("Fingerprint authentication timeout reached"));
+						timed_out = true;
 					}
 				}
 			}
 
 			convar.notify_one();
+			// Without the mutex: the conversation of the program may wait, the other methods must not
+			if (timed_out) {
+				conv_function(PAM_ERROR_MSG, S("Fingerprint authentication timeout reached"));
+			}
 			return fingerprint_status_code;
 		});
 		fingerprint_task_ptr = &fingerprint_task;
@@ -767,10 +771,14 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 
 		signal_task.stop(true);
 
+		// What has ended the wait, read before the methods are cancelled: a method that is cancelled says so, and
+		// that is not an end of the authentication by itself (after the global timeout)
+		const ConfirmationType decided = confirmation_type;
+
 		face_authenticator->cancel();
 		fingerprint_authenticator->cancel();
 
-		switch (confirmation_type.load()) {
+		switch (decided) {
 			/*
 			 * ---------------------------------------------------------------
 			 * Fingerprint authenticated first
@@ -780,9 +788,11 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 				/**
 				 * terminate all sub tasks
 				 */
-				howdy_task.stop(true);
-				fingerprint_task.stop(false);
+				// The prompt first: a thread of a method may be waiting for it with its message, in a program whose
+				// conversation answers one call at a time
 				workaround_function(workaround);
+				howdy_task.stop(false);
+				fingerprint_task.stop(false);
 
 				pam_res = fingerprint_task.get();
 				if (pam_res == PAM_SUCCESS && !no_confirmation) {
@@ -805,7 +815,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 				 * terminate all sub tasks
 				 */
 				pass_task.stop(false);
-				howdy_task.stop(true);
+				howdy_task.stop(false);
 				fingerprint_task.stop(false);
 
 				pam_res = pass_task.get();
@@ -825,9 +835,11 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 				/**
 				 * terminate all sub tasks
 				 */
+				// The prompt first: a thread of a method may be waiting for it with its message, in a program whose
+				// conversation answers one call at a time
+				workaround_function(workaround);
 				howdy_task.stop(false);
 				fingerprint_task.stop(false);
-				workaround_function(workaround);
 
 				return howdy_status(howdy_task.get());
 			}
@@ -841,9 +853,11 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 				/**
 				 * terminate all sub tasks
 				 */
-				howdy_task.stop(true);
-				fingerprint_task.stop(false);
+				// The prompt first: a thread of a method may be waiting for it with its message, in a program whose
+				// conversation answers one call at a time
 				workaround_function(Workaround::Native);
+				howdy_task.stop(false);
+				fingerprint_task.stop(false);
 
 				// Give the signal back to the program, the one that was sent: it is delivered when the signals
 				// are unblocked again, on the return. A method that is cancelled or lost (fprintd or the daemon of
@@ -873,7 +887,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		if (timeouted) {
 			terminal.restore_flags();
 		}
-		howdy_task.stop(timeouted);
+		howdy_task.stop(false);
 		// cancel() was called above, the thread of the fingerprint ends by itself and puts the reader back
 		fingerprint_task.stop(false);
 

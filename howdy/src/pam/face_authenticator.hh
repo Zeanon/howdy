@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -47,8 +48,11 @@ class FaceAuthenticator {
 	// Like start_authentication(), but a daemon that is not there (it restarts, it is started by the bus)
 	// is waited for until the deadline, so that a short absence is not a failed authentication
 	bool start_authentication_waiting(std::chrono::steady_clock::time_point deadline);
+	// Calls GetResult, CancelAuthentication or ClearAuthentication for the request, see the definition
+	int call(const char* member, std::uint64_t timeout_usec, bool cancellable, sd_bus_message** reply, sd_bus_error* error);
 	void cancel_request();
 	void process_events(const std::function<void()>& on_scanning);
+	void sleep_unless_cancelled(std::chrono::milliseconds time) const;
 	void cleanup();
 
 	static Result map_status(const char* status) noexcept;
@@ -67,6 +71,8 @@ class FaceAuthenticator {
 	// start_authentication() failed because the daemon could not be reached, not because it said no
 	bool daemon_unreachable_ = false;
 	bool request_started_ = false;
+	// CancelAuthentication was not answered in time: the daemon is stuck, nothing else is asked of it
+	bool daemon_stuck_ = false;
 	bool scanning_notified_ = false;
 
 	Result result_ = Result::Unset;

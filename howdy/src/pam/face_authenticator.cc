@@ -29,6 +29,10 @@ constexpr auto RECONNECT_INTERVAL = std::chrono::milliseconds(250);
 // The daemon says Busy while another authentication of the user runs (or one that nobody asks for any more,
 // until its keepalive ends). No request was made then, so it can be asked again for this long.
 constexpr auto BUSY_TIMEOUT = std::chrono::seconds(5);
+// How long a call about the request may take, and the shorter time for the calls that end it, which must not
+// hold the end of the authentication for long
+constexpr std::uint64_t CALL_TIMEOUT_USEC = 2ULL * 1000000ULL;
+constexpr std::uint64_t PUT_BACK_TIMEOUT_USEC = 1ULL * 1000000ULL;
 
 // The call could not be answered because the daemon went away or was not there. A timeout is not
 // this: the daemon may have the request and just not have answered yet, a new request would be a second one.
@@ -71,7 +75,85 @@ int on_start_reply(sd_bus_message* reply, void* userdata, sd_bus_error* /*ret_er
 	state->request_id = request_id;
 	return 0;
 }
+// What an asynchronous call about the request is answered with
+struct CallState {
+	bool done = false;
+	bool failed = false;
+	sd_bus_message* reply = nullptr;
+	std::string error_name;
+	std::string error_message;
+};
+
+int on_call_reply(sd_bus_message* reply, void* userdata, sd_bus_error* /*ret_error*/) {
+	auto* state = static_cast<CallState*>(userdata);
+	state->done = true;
+
+	if (sd_bus_message_is_method_error(reply, nullptr) != 0) {
+		const sd_bus_error* error = sd_bus_message_get_error(reply);
+		state->failed = true;
+		if (error != nullptr && error->name != nullptr) {
+			state->error_name = error->name;
+		}
+		if (error != nullptr && error->message != nullptr) {
+			state->error_message = error->message;
+		}
+		return 0;
+	}
+
+	state->reply = sd_bus_message_ref(reply);
+	return 0;
+}
 } // namespace
+
+// Calls a method of the daemon with the request id and waits for the answer in slices, so that cancel() is
+// noticed: the thread is not ended by force, and a daemon that does not answer must not hold it. A cancelled
+// call returns -ECANCELED and its answer is dropped. The calls that end the request are not cancellable, they
+// are made after a cancel. An error of the daemon is in `error`, the answer in `reply`.
+int FaceAuthenticator::call(const char* member, std::uint64_t timeout_usec, bool cancellable, sd_bus_message** reply, sd_bus_error* error) {
+	sd_bus_message* message = nullptr;
+	int r = sd_bus_message_new_method_call(bus_, &message, HOWDY_BUS, AUTHENTICATION_PATH, AUTHENTICATION_INTERFACE, member);
+	if (r >= 0) {
+		r = sd_bus_message_append(message, "s", request_id_.c_str());
+	}
+
+	CallState state;
+	sd_bus_slot* slot = nullptr;
+	if (r >= 0) {
+		r = sd_bus_call_async(bus_, &slot, message, on_call_reply, &state, timeout_usec);
+	}
+	sd_bus_message_unref(message);
+	if (r < 0) {
+		return r;
+	}
+
+	while (!state.done) {
+		if (cancellable && cancelled_) {
+			sd_bus_slot_unref(slot);
+			return -ECANCELED;
+		}
+
+		r = sd_bus_process(bus_, nullptr);
+		if (r == 0 && !state.done) {
+			r = sd_bus_wait(bus_, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(POLL_INTERVAL).count()));
+			if (r == -EINTR) {
+				r = 0;
+			}
+		}
+		if (r < 0) {
+			sd_bus_slot_unref(slot);
+			return r;
+		}
+	}
+	sd_bus_slot_unref(slot);
+
+	if (state.failed) {
+		sd_bus_error_set(error, state.error_name.empty() ? SD_BUS_ERROR_FAILED : state.error_name.c_str(), state.error_message.c_str());
+		return -EIO;
+	}
+
+	*reply = state.reply;
+	return 0;
+}
 
 FaceAuthenticator::FaceAuthenticator(std::string username, std::vector<char const*> args) : username_(std::move(username)), args_(std::move(args)) {
 }
@@ -203,17 +285,18 @@ bool FaceAuthenticator::start_authentication_waiting(std::chrono::steady_clock::
 		}
 		const auto now = std::chrono::steady_clock::now();
 		const bool busy = result_ == Result::Busy && now < busy_deadline;
-		if ((!daemon_unreachable_ && !busy) || cancelled_ || now >= deadline) {
+		if (cancelled_) {
+			result_ = Result::Cancelled;
+			return false;
+		}
+		if ((!daemon_unreachable_ && !busy) || now >= deadline) {
 			return false;
 		}
 		if (!announced) {
 			announced = true;
 			howdy_log(LOG_NOTICE, busy ? "Face: the daemon is busy, waiting for it" : "Face: the daemon is not there, waiting for it");
 		}
-		// In small steps, a cancel (a password was typed) is not held up
-		for (auto waited = std::chrono::milliseconds(0); waited < RECONNECT_INTERVAL && !cancelled_; waited += POLL_INTERVAL) {
-			std::this_thread::sleep_for(POLL_INTERVAL);
-		}
+		sleep_unless_cancelled(RECONNECT_INTERVAL);
 	}
 }
 
@@ -265,10 +348,10 @@ void FaceAuthenticator::cancel_request() {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message* reply = nullptr;
 
-	const int r =
-		sd_bus_call_method(bus_, HOWDY_BUS, AUTHENTICATION_PATH, AUTHENTICATION_INTERFACE, "CancelAuthentication", &error, &reply, "s", request_id_.c_str());
+	const int r = call("CancelAuthentication", PUT_BACK_TIMEOUT_USEC, false, &reply, &error);
 
 	if (r < 0) {
+		daemon_stuck_ = sd_bus_error_has_name(&error, SD_BUS_ERROR_NO_REPLY) != 0 || sd_bus_error_has_name(&error, SD_BUS_ERROR_TIMEOUT) != 0;
 		howdy_log(LOG_WARNING, "Face: CancelAuthentication failed: %s", error.message ? error.message : strerror(-r));
 	}
 
@@ -278,12 +361,12 @@ void FaceAuthenticator::cancel_request() {
 
 void FaceAuthenticator::cleanup() {
 	if (bus_) {
-		// Nothing to clear at a daemon that is gone (and the call would have the bus start it)
-		if (request_started_ && !daemon_lost_) {
+		// Nothing to clear at a daemon that is gone (and the call would have the bus start it), and one that does
+		// not answer the cancel does not answer this either, it ends the request by itself
+		if (request_started_ && !daemon_lost_ && !daemon_stuck_) {
 			sd_bus_error error = SD_BUS_ERROR_NULL;
 			sd_bus_message* reply = nullptr;
-			const int r = sd_bus_call_method(
-				bus_, HOWDY_BUS, AUTHENTICATION_PATH, AUTHENTICATION_INTERFACE, "ClearAuthentication", &error, &reply, "s", request_id_.c_str());
+			const int r = call("ClearAuthentication", PUT_BACK_TIMEOUT_USEC, false, &reply, &error);
 
 			if (r < 0) {
 				howdy_log(LOG_WARNING, "Face: ClearAuthentication failed: %s", error.message ? error.message : strerror(-r));
@@ -298,6 +381,7 @@ void FaceAuthenticator::cleanup() {
 	}
 
 	request_started_ = false;
+	daemon_stuck_ = false;
 	request_id_.clear();
 }
 
@@ -307,7 +391,12 @@ void FaceAuthenticator::process_events(const std::function<void()>& on_scanning)
 		sd_bus_error error = SD_BUS_ERROR_NULL;
 		sd_bus_message* reply = nullptr;
 
-		r = sd_bus_call_method(bus_, HOWDY_BUS, AUTHENTICATION_PATH, AUTHENTICATION_INTERFACE, "GetResult", &error, &reply, "s", request_id_.c_str());
+		r = call("GetResult", CALL_TIMEOUT_USEC, true, &reply, &error);
+
+		// The request is cancelled below
+		if (r == -ECANCELED) {
+			break;
+		}
 
 		if (r < 0) {
 			// Both mean that the daemon went away, and came back without the request or is not back yet
@@ -394,7 +483,7 @@ FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv
 			continue;
 		}
 
-		if (result_ == Result::NoDevice) {
+		if (result_ == Result::NoDevice && !cancelled_) {
 			conv_function(PAM_ERROR_MSG, S("Howdy could not find a camera device at the path specified in the config file."));
 		}
 
@@ -412,13 +501,20 @@ FaceAuthenticator::authenticate(const std::function<int(int, const char*)>& conv
 				conv_function(PAM_ERROR_MSG, S("Face authentication timeout reached"));
 				result_ = Result::MaxTries;
 			}
-			std::this_thread::sleep_for(NO_MATCH_WAIT_TIME);
+			sleep_unless_cancelled(NO_MATCH_WAIT_TIME);
 		}
 
 		terminated = (cancelled_ || result_ == Result::Cancelled || result_ == Result::Disconnected);
 	}
 	cleanup();
 	return result_;
+}
+
+// In small steps, a cancel (a password was typed) is not held up
+void FaceAuthenticator::sleep_unless_cancelled(std::chrono::milliseconds time) const {
+	for (auto waited = std::chrono::milliseconds(0); waited < time && !cancelled_; waited += POLL_INTERVAL) {
+		std::this_thread::sleep_for(POLL_INTERVAL);
+	}
 }
 
 void FaceAuthenticator::cancel() noexcept {

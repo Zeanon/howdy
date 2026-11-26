@@ -7,6 +7,8 @@
 //                              its own in a second thread, its result is a PARALLEL line
 //   PAM_TEST_TTY_PROMPT=1      a password prompt waits for a line at the terminal (/dev/tty) without echo, as
 //                              sudo does it, and an ECHO line says at the end whether the terminal echoes
+//   PAM_TEST_SERIAL=1          the conversation answers one call at a time: a message waits while a prompt is
+//                              open
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +16,7 @@
 #include <ctime>
 #include <fcntl.h>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <termios.h>
 #include <thread>
@@ -74,6 +77,12 @@ void print_echo() {
 }
 
 int conversation(int count, const struct pam_message** messages, struct pam_response** responses, void* /*data*/) {
+	// (a thread that is ended while it waits at the prompt releases the lock)
+	static std::mutex serial;
+	std::unique_lock<std::mutex> lock(serial, std::defer_lock);
+	if (std::getenv("PAM_TEST_SERIAL") != nullptr) {
+		lock.lock();
+	}
 	*responses = static_cast<struct pam_response*>(calloc(static_cast<size_t>(count), sizeof(struct pam_response)));
 	for (int i = 0; i < count; ++i) {
 		std::printf("MSG %d: %s\n", messages[i]->msg_style, messages[i]->msg);

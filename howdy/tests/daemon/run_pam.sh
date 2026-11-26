@@ -629,8 +629,46 @@ kill -CONT "$DAEMON_PID"
 expect "a face daemon that does not answer: authenticated by the finger" "$(result_of)" 0
 expect "a face daemon that does not answer: the module is not held up by the face" "$([ $((SECONDS - started)) -lt 6 ] && echo yes || echo no)" yes
 
-# cancel() ends the wait for the answer of StartAuthentication (the module itself ends the thread by force
-# when another method wins, so this is tested with FaceAuthenticator alone)
+# The daemon stops to answer during the scan (it hangs) and the finger matches: the thread of the face is asked
+# to stop, not ended by force, and the module does not wait long for the daemon.
+echo match > "$FPRINTD_MODE_FILE"
+cp "$T/impostor.dat" "$MODEL"
+chmod 600 "$MODEL"
+: > "$FPRINTD_LOG"
+start=${EPOCHREALTIME/[.,]/}
+run_pam_in_background
+for _ in $(seq 100); do
+	grep -q '^VerifyStart$' "$FPRINTD_LOG" && break
+	sleep 0.05
+done
+sleep 0.5
+kill -STOP "$DAEMON_PID"
+status=0
+wait "$pam_pid" || status=$?
+took=$(((${EPOCHREALTIME/[.,]/} - start) / 1000))
+kill -CONT "$DAEMON_PID"
+OUT=$(cat "$T/pam_background.out")
+expect "a face daemon that hangs during the scan: authenticated by the finger" "$(result_of) $status" "0 0"
+expect "a face daemon that hangs during the scan: the module does not wait for it" "$([ "$took" -lt 4500 ] && echo yes || echo "$took ms")" yes
+sleep 2
+
+# A program whose conversation waits while its password prompt is open: the thread of the face is stuck with
+# its message when the finger matches. The prompt is ended first, then the threads are waited for. (Without
+# notices of the module, which would wait for the prompt, too.)
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay workaround=native detection-notice=false blank-lines=false" > "$CONFDIR/howdy-serial"
+echo late-match > "$FPRINTD_MODE_FILE"
+cp "$T/impostor.dat" "$MODEL"
+chmod 600 "$MODEL"
+mkfifo "$T/no_input_serial"
+exec 9<> "$T/no_input_serial"
+rm -f "$T/pam_signal.out"
+status=0
+timeout 20 script -qec "PAM_TEST_SERIAL=1 PAM_TEST_TTY_PROMPT=1 sh -c \"$(signal_command howdy-serial)\"" /dev/null <&9 > /dev/null || status=$?
+exec 9>&-
+expect "a conversation that waits at the prompt: authenticated by the finger" "$(grep '^RESULT' "$T/pam_signal.out" | cut -d' ' -f2) $status" "0 0"
+expect "a conversation that waits at the prompt: the face was stuck with its message" "$(grep -c 'Face authentication timeout reached' "$T/pam_signal.out" || true)" 1
+
+# cancel() ends the wait for the answer of StartAuthentication, here with FaceAuthenticator alone
 kill -STOP "$DAEMON_PID"
 CANCEL_OUT=$("$PAM_DIR/face_cancel_test" "$USER_NAME" 1000 2>&1)
 kill -CONT "$DAEMON_PID"

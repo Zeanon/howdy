@@ -10,6 +10,7 @@ change while the stand-in runs:
   stuck-claim like wait, but Claim does not answer (for 30 seconds), as a reader that is stuck
   match-slow-stop  like match, but VerifyStop takes 1.5 seconds, as a reader that is slow to stop
   nomatch-slow-stop  like match-slow-stop, but the finger does not match
+  late-match  like match, but the finger matches 5 seconds after VerifyStart
   lose        like wait, but the stand-in ends 0.3 seconds after VerifyStart, as an fprintd that is gone
 The calls it gets are written to the file in FPRINTD_LOG (one name a line), if it is set.
 FPRINTD_REPLACE=1 takes the name over from a stand-in that runs already (the owner of the name
@@ -77,6 +78,10 @@ class Device(ServiceInterface):
 		if mode() in ("match", "match-slow-stop"):
 			asyncio.get_running_loop().call_later(
 				1, self.VerifyStatus, "verify-match", True
+			)
+		if mode() == "late-match":
+			asyncio.get_running_loop().call_later(
+				5, self.VerifyStatus, "verify-match", True
 			)
 		if mode() == "nomatch-slow-stop":
 			asyncio.get_running_loop().call_later(
