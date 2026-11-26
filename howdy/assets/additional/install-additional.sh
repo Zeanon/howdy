@@ -6,6 +6,8 @@ if [[ "$EUID" != 0 ]]; then
 fi
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+# The files come from next to this script, not from the directory it is started from
+cd -- "$SCRIPT_DIR" || exit 1
 
 read -p "Install kde-fingerprint pam file? [y|N]" kde
 kde="${kde:=N}"

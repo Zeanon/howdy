@@ -10,6 +10,8 @@ fi
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Also for the chmod below, which must not touch the files of the directory it is started from
+cd -- "$SCRIPT_DIR"
 CACHE_DIR="@openvino_cache_dir@"
 
 OPENZOO_URL="https://storage.openvinotoolkit.org/repositories/open_model_zoo"

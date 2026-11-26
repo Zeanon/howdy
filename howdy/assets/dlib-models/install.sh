@@ -5,6 +5,9 @@ if [[ "$EUID" != 0 ]]; then
     exit 1
 fi
 
+# The files belong next to this script, wherever it is started from
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+
 if command -v wget >/dev/null 2>&1; then
     _PROGRESS_OPT=()
     if wget --help 2>&1 | grep -q -- '--show-progress'; then
