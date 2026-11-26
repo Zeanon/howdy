@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 
@@ -34,6 +35,21 @@ constexpr std::size_t MAX_MODELS_PER_USER = 64;
 bool has_id(const nlohmann::json& model, std::int64_t model_id) {
 	const auto id = model.find("id");
 	return id != model.end() && id->is_number_integer() && id->get<std::int64_t>() == model_id;
+}
+
+inline std::optional<std::int64_t> model_time(const nlohmann::json& model) {
+	const auto time = model.find("time");
+	if (time == model.end() || !time->is_number()) {
+		return std::nullopt;
+	}
+
+	const long double value = time->get<long double>();
+
+	if (!std::isfinite(value) || value < static_cast<long double>(std::numeric_limits<std::int64_t>::min()) || value >= std::ldexp(1.0L, 63)) {
+		return std::nullopt;
+	}
+
+	return static_cast<std::int64_t>(value);
 }
 
 // The text goes to terminals and dialogs: no control characters, which includes the C1 ones that some
@@ -69,9 +85,9 @@ void validate_label(const std::string& label) {
 // date and the id means another model by now. The label alone is not enough, models may share one.
 void check_model(const nlohmann::json& model, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time) {
 	const auto label = model.find("label");
-	const auto time = model.find("time");
 	const bool same_label = label != model.end() && label->is_string() && label->get<std::string>() == expected_label;
-	const bool same_time = time != model.end() && time->is_number() && static_cast<std::int64_t>(time->get<double>()) == expected_time;
+	const auto time = model_time(model);
+	const bool same_time = time.has_value() && *time == expected_time;
 	if (!same_label || !same_time) {
 		throw std::runtime_error("Model " + std::to_string(model_id) + " has changed since the list was loaded, please reload the list");
 	}
@@ -90,7 +106,7 @@ void validate_new_model(const nlohmann::json& model) {
 	if (!model.is_object()) {
 		throw std::runtime_error("Model must be a dictionary");
 	}
-	if (!model.contains("time") || !model.at("time").is_number()) {
+	if (!model_time(model).has_value()) {
 		throw std::runtime_error("Model has no valid time");
 	}
 	if (!model.contains("label") || !model.at("label").is_string()) {
