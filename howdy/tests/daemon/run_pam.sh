@@ -25,7 +25,7 @@ if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 	read -r -a PAM_LIBS <<< "$(pkg-config --libs INIReader libsystemd libevdev)"
 	"$CXX" -std=c++20 -fPIC -shared -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" \
 		"$PAM_SRC_DIR"/{main,face_authenticator,fingerprint_authenticator,enter_device}.cc -o "$PAM_DIR/pam_howdy.so" "${PAM_LIBS[@]}" -lpam -lpthread
-	"$CXX" -std=c++20 "$TEST_DIR/pam_test.cc" -o "$PAM_DIR/pam_test" -lpam
+	"$CXX" -std=c++20 "$TEST_DIR/pam_test.cc" -o "$PAM_DIR/pam_test" -lpam -lpthread
 	"$CXX" -std=c++20 -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' \
 		"$TEST_DIR/face_cancel_test.cc" "$PAM_SRC_DIR/face_authenticator.cc" -o "$PAM_DIR/face_cancel_test" "${PAM_LIBS[@]}" -lpthread
 	"$CXX" -std=c++20 -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" "$TEST_DIR/timeout_test.cc" -o "$PAM_DIR/timeout_test" "${PAM_LIBS[@]}"
@@ -125,6 +125,28 @@ run_pam
 expect "not authenticated" "$([ "$(result_of)" != 0 ] && echo yes || echo no)" yes
 expect "a face that does not match: no tries left" "$(result_of)" 11
 expect "the user was asked to look into the camera" "$(has "Please look directly into the camera")" yes
+
+echo "--- authenticated again with the same handle"
+# A program asks again with the same handle, for the next try. Nothing is kept from the time before: not the
+# success (the program would crash on it) and not the failure.
+# repeated <first model> <second model> sets OUT, and RESULTS to the two results and the exit status
+repeated() {
+	cp "$T/$1.dat" "$MODEL"
+	chmod 600 "$MODEL"
+	chmod 600 "$T/$2.dat"
+	local status=0
+	OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" PAM_TEST_REPEAT=2 PAM_TEST_SWAP="$T/$2.dat:$MODEL" timeout 30 "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1) || status=$?
+	RESULTS="$(grep '^RESULT' <<< "$OUT" | cut -d' ' -f2 | tr '\n' ' ')exit $status"
+	sleep 1
+}
+repeated genuine genuine
+expect "twice successful" "$RESULTS" "0 0 exit 0"
+repeated impostor genuine
+expect "a failed attempt, then the right face" "$RESULTS" "11 0 exit 0"
+repeated genuine impostor
+expect "a success, then a face that does not match" "$RESULTS" "0 11 exit 0"
+cp "$T/impostor.dat" "$MODEL"
+chmod 600 "$MODEL"
 
 echo "--- the authentication is ended during the scan"
 # A cancelled face says so, and not that it is not available (the lock screen would not ask it again)
@@ -378,6 +400,19 @@ wait_for_name org.boltgolt.howdy.authentication
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 global-timeout=2" > "$CONFDIR/howdy-test"
 scenario "global timeout" wait no
 expect "the global timeout, a cancelled fingerprint: a failed attempt" "$(result_of)" 7
+
+# Two authentications of one program at the same time (two threads, as the lock screen has them): the success
+# of the face in one is not the success of the other, which waits for a finger until its timeout
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 face-auth=false global-timeout=5" > "$CONFDIR/howdy-finger"
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 fingerprint=false" > "$CONFDIR/howdy-face"
+echo wait > "$FPRINTD_MODE_FILE"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+status=0
+OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" PAM_TEST_PARALLEL=howdy-face timeout 30 "$PAM_DIR/pam_test" "$CONFDIR" howdy-finger "$USER_NAME" 2>&1) || status=$?
+expect "at the same time: the face authenticates its own" "$(grep '^PARALLEL' <<< "$OUT" | cut -d' ' -f2)" 0
+expect "at the same time: the other one is not authenticated by it" "$(result_of)" 7
+expect "at the same time: the program goes on" "$status" 0
 echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 init-message" > "$CONFDIR/howdy-test"
 
 # A reader that is stuck (it does not answer Claim) does not hold the end of the authentication: the face

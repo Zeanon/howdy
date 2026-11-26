@@ -1,10 +1,18 @@
 // Run pam_authenticate() of a PAM configuration with the pam_howdy.so of the
 // test and print what the module tells the user and what it returns.
 // Usage: pam_test <confdir> <service> <user>
+//   PAM_TEST_REPEAT=<n>        authenticate n times with the same handle, one RESULT line each
+//   PAM_TEST_SWAP=<from>:<to>  copy <from> to <to> before the second time (another face model)
+//   PAM_TEST_PARALLEL=<service>  while the authentication runs, authenticate with this service on a handle of
+//                              its own in a second thread, its result is a PARALLEL line
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
+#include <string>
+#include <thread>
 
 #include <security/pam_appl.h>
 
@@ -42,6 +50,30 @@ int conversation(int count, const struct pam_message** messages, struct pam_resp
 	return PAM_SUCCESS;
 }
 
+// Starts a handle for the service, authenticates `times` times with it and prints the results
+bool authenticate(const char* confdir, const char* service, const char* user, int times, const char* label) {
+	const struct pam_conv conv = {conversation, nullptr};
+	pam_handle_t* handle = nullptr;
+	if (pam_start_confdir(service, user, &conv, confdir, &handle) != PAM_SUCCESS) {
+		std::printf("pam_start failed\n");
+		return false;
+	}
+	int result = PAM_SUCCESS;
+	for (int i = 0; i < times; i++) {
+		const char* swap = std::getenv("PAM_TEST_SWAP");
+		if (i == 1 && swap != nullptr) {
+			const std::string files = swap;
+			const auto colon = files.find(':');
+			std::filesystem::copy_file(files.substr(0, colon), files.substr(colon + 1), std::filesystem::copy_options::overwrite_existing);
+		}
+		result = pam_authenticate(handle, 0);
+		std::printf("%s %d %s\n", label, result, pam_strerror(handle, result));
+		std::fflush(stdout);
+	}
+	pam_end(handle, result);
+	return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -49,14 +81,19 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 	log_time("start");
-	const struct pam_conv conv = {conversation, nullptr};
-	pam_handle_t* handle = nullptr;
-	if (pam_start_confdir(argv[2], argv[3], &conv, argv[1], &handle) != PAM_SUCCESS) {
-		std::printf("pam_start failed\n");
-		return 2;
+	std::thread parallel;
+	const char* parallel_service = std::getenv("PAM_TEST_PARALLEL");
+	if (parallel_service != nullptr) {
+		parallel = std::thread([&] {
+			// After the first one has started
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			authenticate(argv[1], parallel_service, argv[3], 1, "PARALLEL");
+		});
 	}
-	const int result = pam_authenticate(handle, 0);
-	std::printf("RESULT %d %s\n", result, pam_strerror(handle, result));
-	pam_end(handle, result);
-	return 0;
+	const char* repeat = std::getenv("PAM_TEST_REPEAT");
+	const bool started = authenticate(argv[1], argv[2], argv[3], repeat != nullptr ? std::atoi(repeat) : 1, "RESULT");
+	if (parallel.joinable()) {
+		parallel.join();
+	}
+	return started ? 0 : 2;
 }
