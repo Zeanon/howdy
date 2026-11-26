@@ -33,7 +33,7 @@ DLIB_DATA_DIR="${DLIB_DATA_DIR:-/usr/local/share/howdy/dlib-models}"
 OPENVINO_DATA_DIR="${OPENVINO_DATA_DIR:-/usr/local/share/howdy/openvino-models}"
 CXX="${CXX:-g++}"
 
-IMG_DIR="$WORK_DIR/img"
+IMG_DIR="${HOWDY_TEST_IMAGE_DIR:-$WORK_DIR/img}"
 OBJ_DIR="$WORK_DIR/obj"
 T="$WORK_DIR/test"
 mkdir -p "$IMG_DIR" "$OBJ_DIR" "$T/etc" "$T/models" "$T/cache" "$T/data/assets" "$T/gtkdata/assets" "$WORK_DIR/include" "$WORK_DIR/pyhowdy/howdy"

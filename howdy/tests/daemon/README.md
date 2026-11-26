@@ -51,13 +51,20 @@ management daemon.
 ## Usage
 
 ```sh
+howdy/tests/daemon/run_all.sh
 howdy/tests/daemon/run_parity.sh
 howdy/tests/daemon/run_e2e.sh
 howdy/tests/daemon/run_cli.sh
 howdy/tests/daemon/run_gui.sh
 ```
 
-Both exit with a non-zero status if a check fails.
+`run_all.sh` runs every suite above, including the additional PAM, Python,
+trusted-file, model-crypto and snapshot checks. It continues after a suite
+fails, prints a final summary and keeps each suite's output in its own
+directory. It also shares the downloaded example images to avoid fetching them
+again for every suite. Set `WORK_DIR` to choose the parent directory for all
+results. Both individual suites and the runner exit with a non-zero status if
+a check fails.
 
 ## Environment
 
