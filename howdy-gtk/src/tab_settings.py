@@ -1,4 +1,5 @@
 import configparser
+import re
 import subprocess
 
 from .i18n import S
@@ -22,8 +23,12 @@ def load_settings(self):
 	self.builder.get_object("settingscertainty").set_value(
 		config.getfloat("video", "certainty", fallback=3.5)
 	)
+	# A number, possibly with a unit ("4s")
+	timeout = re.match(
+		r"\d+", config.get("face_authentication", "timeout", fallback="")
+	)
 	self.builder.get_object("settingstimeout").set_value(
-		config.getint("video", "timeout", fallback=4)
+		int(timeout.group()) if timeout else 4
 	)
 	self.builder.get_object("settingsdarkthreshold").set_value(
 		config.getfloat("video", "dark_threshold", fallback=60)
@@ -57,7 +62,10 @@ def on_settings_save(self, button):
 		"certainty": str(
 			round(self.builder.get_object("settingscertainty").get_value(), 1)
 		),
-		"timeout": str(int(self.builder.get_object("settingstimeout").get_value())),
+		# Other sections have a "timeout" too
+		"face_authentication.timeout": str(
+			int(self.builder.get_object("settingstimeout").get_value())
+		),
 		"dark_threshold": str(
 			int(self.builder.get_object("settingsdarkthreshold").get_value())
 		),

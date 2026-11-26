@@ -458,7 +458,7 @@ Use `howdy --help` or `man howdy` for the full list.
 | `list` | List all saved face models for a user |
 | `remove` | Remove a specific model for a user. The models behind it move up, so the IDs stay without gaps |
 | `rename` | Give a model another name: `howdy rename ID NAME` |
-| `set` | Change a config option |
+| `set` | Change a config option. An option that several sections have is named `section.option`, as `howdy set fingerprint.max_tries 3` |
 | `snapshot` | Take a snapshot of your camera input |
 | `test` | Test the camera and recognition methods. Needs root: `sudo howdy test` |
 | `version` | Print the current version number |

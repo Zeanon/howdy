@@ -285,28 +285,46 @@ int run_set(const Options& options, const std::vector<std::string>& original_arg
 	const std::string& name = options.arguments[0];
 	const std::string& value = options.arguments[1];
 
-	// Find the config line to update, the last one that starts with the name
+	// "section.name" says which one is meant, several sections have an option of the same name
+	const std::size_t dot = name.find('.');
+	const std::string section = dot == std::string::npos ? "" : name.substr(0, dot);
+	const std::string option = dot == std::string::npos ? name : name.substr(dot + 1);
+
+	// The lines of the option and the sections they are in
 	auto lines = load_config_lines();
-	std::string found_line;
-	for (const auto& line : lines) {
-		if (line.starts_with(name + " ")) {
-			found_line = line;
+	std::vector<std::size_t> found;
+	std::vector<std::string> sections;
+	std::string current;
+	for (std::size_t i = 0; i < lines.size(); ++i) {
+		const std::string& line = lines[i];
+		if (line.starts_with("[")) {
+			current = line.substr(1, line.find(']') - 1);
+		} else if (line.starts_with(option + " ") && (section.empty() || section == current)) {
+			found.push_back(i);
+			if (std::find(sections.begin(), sections.end(), current) == sections.end()) {
+				sections.push_back(current);
+			}
 		}
 	}
 
 	// If we don't have the line it is not in the config file
-	if (found_line.empty()) {
+	if (found.empty()) {
 		throw CliError(std::string("Could not find a \"") + name + "\" config option to set");
 	}
-
-	// Update every line that is identical to it
-	for (auto& line : lines) {
-		if (line == found_line) {
-			line = name;
-			line += " = ";
-			line += value;
-			line += "\n";
+	if (sections.size() > 1) {
+		std::string choices;
+		for (const auto& candidate : sections) {
+			choices += "\n\thowdy set ";
+			choices.append(candidate).append(".").append(option).append(" ").append(value);
 		}
+		throw CliError("\"" + option + "\" is in several sections, say which one:" + choices);
+	}
+
+	for (const std::size_t i : found) {
+		lines[i] = option;
+		lines[i] += " = ";
+		lines[i] += value;
+		lines[i] += "\n";
 	}
 	save_config(lines);
 

@@ -344,6 +344,17 @@ expect_contains "config has the new value" "$(grep '^certainty' "$T/etc/config.i
 expect "set keeps the other lines" "$(diff <(sed 's/^certainty = .*//;s/^disabled = .*//' "$CONFIG_TEMPLATE") <(sed 's/^certainty = .*//;s/^disabled = .*//' "$T/etc/config.ini") && echo same)" same
 run as_root "$HOWDY" set nosuchoption 1
 expect "set, unknown option" "$output" 'Could not find a "nosuchoption" config option to set'
+# The values of an option in each section, as "section value"
+values() { awk -v option="$1" '/^\[/ { s = $0 } $1 == option { print s " " $3 }' "$T/etc/config.ini" | tr '\n' ' '; }
+before=$(values max_tries)
+run as_root "$HOWDY" set max_tries 7
+expect_contains "set, an option of several sections is refused" "$output" "howdy set fingerprint.max_tries 7"
+expect "set, nothing is changed by it" "$(values max_tries)" "$before"
+run as_root "$HOWDY" set fingerprint.max_tries 7
+expect "set with the section" "$output" "Config option updated"
+expect "set with the section changes that one only" "$(values max_tries)" "${before/\[fingerprint\] 1/[fingerprint] 7}"
+run as_root "$HOWDY" set nosection.max_tries 7
+expect "set, unknown section" "$output" 'Could not find a "nosection.max_tries" config option to set'
 run as_root "$HOWDY" set certainty
 expect_contains "set without a value" "$output" "Please add a setting you would like to change and the value to set it to"
 
