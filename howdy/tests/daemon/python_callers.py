@@ -11,6 +11,7 @@ so neither a bus nor polkit is needed.
 """
 
 import asyncio
+import configparser
 import json
 import os
 import pwd
@@ -942,6 +943,59 @@ check("without privileges: no limit is 60s", asked_timeout(4, -1, True), 60)
 check("without privileges: shorter is fine", asked_timeout(4, 10, True), 10)
 check("without privileges: the config allows more", asked_timeout(120, -1, True), 120)
 check("without privileges: no limit in the config", asked_timeout(-1, 600, True), 600)
+
+print("--- the camera that is opened when the path does not work")
+from howdy.recorders import video_capture as capture_module  # noqa: E402
+
+
+def opened_cameras(path, node):
+	"""What cv2.VideoCapture is asked to open for a path that leads to the node"""
+	opened = []
+
+	class Camera:
+		def __init__(self, source, *args):
+			opened.append(source)
+
+		def isOpened(self):
+			return False
+
+		def set(self, *args):
+			return True
+
+		def get(self, *args):
+			return 0
+
+		def grab(self):
+			return True
+
+		def release(self):
+			pass
+
+	config = configparser.ConfigParser()
+	config.read_dict({"video": {"device_path": path}})
+	original = capture_module.cv2.VideoCapture, capture_module.os.path.realpath
+	capture_module.cv2.VideoCapture = Camera
+	capture_module.os.path.realpath = lambda _: node
+	try:
+		capture = object.__new__(capture_module.VideoCapture)
+		capture.config = config
+		capture._create_reader()
+	finally:
+		capture_module.cv2.VideoCapture, capture_module.os.path.realpath = original
+	return opened[1:]
+
+
+check("a video node: its index", opened_cameras("/dev/video2", "/dev/video2"), [2])
+check(
+	"a link to a video node: the index of the node",
+	opened_cameras("/dev/v4l/by-path/x-video-index0", "/dev/video2"),
+	[2],
+)
+check(
+	"another path with a number: no other camera",
+	opened_cameras("/tmp/video-index0", "/tmp/video-index0"),
+	[],
+)
 
 print("--- retention of the snapshots")
 from howdy import paths_factory, snapshot  # noqa: E402

@@ -31,10 +31,14 @@ class OpenCVReader final : public FrameReader {
 	explicit OpenCVReader(const std::string& device_path) {
 		capture_.open(device_path, cv::CAP_V4L);
 		if (!capture_.isOpened()) {
-			// Allow "/dev/video2" style paths to fall back to the device index
-			static const std::regex TRAILING_NUMBER(R"((\d+)$)");
+			// Allow "/dev/video2" style paths to fall back to the device index, also behind a link of
+			// /dev/v4l. The number at the end of another path ("...-video-index0") is not that index, it
+			// would open another camera.
+			static const std::regex VIDEO_NODE(R"(^/dev/video(\d+)$)");
+			std::error_code ec;
+			const std::string node = std::filesystem::weakly_canonical(device_path, ec).string();
 			std::smatch match;
-			if (std::regex_search(device_path, match, TRAILING_NUMBER)) {
+			if (!ec && std::regex_match(node, match, VIDEO_NODE)) {
 				capture_.open(std::stoi(match[1].str()));
 			}
 		}

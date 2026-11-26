@@ -184,7 +184,9 @@ class VideoCapture:
 			if not self.internal.isOpened():
 				import re
 
-				m = re.search(r"(\d+)$", device_path)
+				# Only a /dev/videoN node, also behind a link of /dev/v4l, says which index
+				# it is: the number at the end of another path would open another camera
+				m = re.fullmatch(r"/dev/video(\d+)", os.path.realpath(device_path))
 				if m:
 					self.internal = cv2.VideoCapture(int(m.group(1)))
 			# Set the capture frame rate
