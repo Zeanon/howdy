@@ -944,6 +944,19 @@ check("without privileges: shorter is fine", asked_timeout(4, 10, True), 10)
 check("without privileges: the config allows more", asked_timeout(120, -1, True), 120)
 check("without privileges: no limit in the config", asked_timeout(-1, 600, True), 600)
 
+print("--- a rubber stamp that can not run")
+from howdy import rubberstamps  # noqa: E402
+
+rules = configparser.ConfigParser()
+rules.read_dict({"rubberstamps": {"stamp_rules": "nod 1s failsafe"}})
+# Without a camera the stamp fails with an error
+broken = dict.fromkeys(("video_capture", "face_detector", "pose_predictor", "clahe"))
+check(
+	"it does not let the authentication pass",
+	rubberstamps.execute(rules, lambda **kwargs: None, broken),
+	False,
+)
+
 print("--- the camera that is opened when the path does not work")
 from howdy.recorders import video_capture as capture_module  # noqa: E402
 

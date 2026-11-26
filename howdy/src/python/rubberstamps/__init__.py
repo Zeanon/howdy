@@ -133,7 +133,8 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 			import traceback
 
 			traceback.print_exc()
-			continue
+			# A stamp that can't run must not let the authentication pass
+			return False
 
 		# Split the optional arguments at the end of the rule by spaces
 		raw_options = regex_result.group(4).split()
@@ -178,7 +179,8 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 			import traceback
 
 			traceback.print_exc()
-			continue
+			# A stamp that can't run must not let the authentication pass
+			result = False
 
 		if verbose:
 			print('Stamp "' + type + '" returned: ' + str(result))
