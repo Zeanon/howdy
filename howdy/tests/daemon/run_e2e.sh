@@ -202,6 +202,23 @@ else
 	echo "SKIPPING: no user namespace with another user"
 fi
 
+echo "--- a camera that delivers nothing"
+# ffmpeg is a stand-in that never ends, the daemon gives it up
+mkdir -p "$T/hang"
+printf '#!/bin/sh\nexec sleep 60\n' > "$T/hang/ffmpeg"
+chmod +x "$T/hang/ffmpeg"
+"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$CONFIG_TEMPLATE" "$T/etc/config.ini" "${BASE[@]}" "${NOLIVE[@]}"
+kill "$DPID"
+wait "$DPID" 2> /dev/null || true
+start_background env PATH="$T/hang:$PATH" "$T/daemon"
+DPID=$BACKGROUND_PID
+wait_for_name org.boltgolt.howdy.authentication
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+started=$SECONDS
+NOPOLL= E "a camera that delivers nothing: given up" NO_DEVICE
+expect "after some seconds" "$([ $((SECONDS - started)) -le 25 ] && echo yes || echo "$((SECONDS - started)) s")" yes
+
 echo "--- shutdown"
 kill "$DPID"
 rc=0

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstring>
 #include <filesystem>
 #include <regex>
@@ -75,7 +77,10 @@ struct ProcessResult {
 	std::string err;
 };
 
-// Run a program without a shell and collect stdout and stderr.
+// How long ffmpeg may take: a camera that delivers nothing would hold the daemon for good
+constexpr auto PROCESS_TIMEOUT = std::chrono::seconds(10);
+
+// Run a program without a shell and collect stdout and stderr, it is ended after PROCESS_TIMEOUT.
 ProcessResult run_process(const std::vector<std::string>& args) {
 	// Read end [0] and write end [1] of the pipes, -1 marks an end that is closed
 	std::array<int, 2> out_pipe{};
@@ -136,8 +141,16 @@ ProcessResult run_process(const std::vector<std::string>& args) {
 	std::array<char, 65536> buffer{};
 	int open_fds = 2;
 
+	const auto deadline = std::chrono::steady_clock::now() + PROCESS_TIMEOUT;
+	bool timed_out = false;
 	while (open_fds > 0) {
-		if (poll(fds.data(), fds.size(), -1) < 0) {
+		const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+		if (left.count() <= 0) {
+			timed_out = true;
+			kill(pid, SIGKILL);
+			break;
+		}
+		if (poll(fds.data(), fds.size(), static_cast<int>(left.count())) < 0) {
 			if (errno == EINTR) {
 				continue;
 			}
@@ -164,6 +177,9 @@ ProcessResult run_process(const std::vector<std::string>& args) {
 
 	int status = 0;
 	while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+	}
+	if (timed_out) {
+		throw NoDeviceException(args.front() + " did not finish in time, is the camera delivering a picture?");
 	}
 	result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 	return result;

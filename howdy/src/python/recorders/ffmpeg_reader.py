@@ -5,7 +5,7 @@ import re
 import sys
 import numpy
 
-from subprocess import Popen, PIPE
+from subprocess import Popen, PIPE, TimeoutExpired
 from cv2 import CAP_PROP_FRAME_WIDTH
 from cv2 import CAP_PROP_FRAME_HEIGHT
 
@@ -18,6 +18,22 @@ except ImportError:
 	print(S("Missing ffmpeg module, please run:"))
 	print(" pip3 install ffmpeg-python\n")
 	sys.exit(CompareResult.Abort)
+
+
+# How long ffmpeg may take: a camera that delivers nothing would hold the daemon for good
+PROCESS_TIMEOUT = 10
+
+
+def communicate(process):
+	"""The output of a program, which is ended if it does not finish in time"""
+	try:
+		return process.communicate(timeout=PROCESS_TIMEOUT)
+	except TimeoutExpired:
+		process.kill()
+		process.communicate()
+		raise RuntimeError(
+			"ffmpeg did not finish in time, is the camera delivering a picture?"
+		)
 
 
 class ffmpeg_reader:
@@ -62,7 +78,7 @@ class ffmpeg_reader:
 			self.device_path,
 		]
 		process = Popen(args, stdout=PIPE, stderr=PIPE)
-		out, err = process.communicate()
+		out, err = communicate(process)
 		return_code = process.poll()
 
 		# Worst case scenario, err will equal en empty byte string, b'', so probe will get set to [] here.
@@ -71,9 +87,21 @@ class ffmpeg_reader:
 
 		if return_code != 1 or len(probe) < 1:
 			# Could not determine the resolution from ffmpeg call. Reverting to ffmpeg.probe()
-			probe = ffmpeg.probe(self.device_path)
-			height = probe["streams"][0]["height"]
-			width = probe["streams"][0]["width"]
+			args = [
+				"ffprobe",
+				"-v",
+				"error",
+				"-select_streams",
+				"v:0",
+				"-show_entries",
+				"stream=width,height",
+				"-of",
+				"csv=p=0:s=x",
+				self.device_path,
+			]
+			out, _ = communicate(Popen(args, stdout=PIPE, stderr=PIPE))
+			size = re.search(r"(\d+)x(\d+)", out.decode("utf-8"))
+			width, height = size.groups() if size else ("", "")
 		else:
 			(width, height) = [x.strip() for x in probe[0].split("x")]
 
@@ -94,12 +122,14 @@ class ffmpeg_reader:
 		self.num_frames_read = 0
 
 		# Record a predetermined amount of frames from the camera
-		stream, ret = (
+		process = (
 			ffmpeg.input(self.device_path, format=self.device_format)
 			.output("pipe:", format="rawvideo", pix_fmt="rgb24", vframes=numframes)
-			.run(capture_stdout=True, capture_stderr=True)
-			# .run(capture_stdout=True, quiet=True)
+			.run_async(pipe_stdout=True, pipe_stderr=True)
 		)
+		stream, err = communicate(process)
+		if process.returncode != 0:
+			raise RuntimeError(f"ffmpeg failed: {err.decode('utf-8', 'replace')}")
 		self.video = numpy.frombuffer(stream, numpy.uint8).reshape(
 			[-1, self.height, self.width, 3]
 		)
