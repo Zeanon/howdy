@@ -160,6 +160,10 @@ expect "label too long" "$(mcall Add s "{\"time\":1,\"label\":\"$(printf 'x%.0s'
 expect "too many encodings" "$(mcall Add s "{\"time\":1,\"label\":\"x\",\"data\":[$(printf '[1],%.0s' $(seq 64))[1]]}")" "Call failed: Model has too many encodings"
 expect "encoding too long" "$(mcall Add s "{\"time\":1,\"label\":\"x\",\"data\":[[$(printf '1,%.0s' $(seq 512))1]]}")" "Call failed: Model has no valid data"
 expect "wrong arguments" "$(mcall Add i 5)" "Call failed: Invalid arguments for Add"
+# Only what a model has is stored, other fields would have no limit
+mcall Clear > /dev/null
+mcall Add s '{"time":1,"label":"x","data":[[1]],"extra":"unlimited"}' > /dev/null
+expect "other fields of a model are not stored" "$([ -s "$MODEL" ] && ! grep -q unlimited "$MODEL" && echo yes || echo no)" yes
 expect_contains "unknown method" "$(mcall Frobnicate)" "Call failed"
 mcall Clear > /dev/null
 for _ in $(seq 64); do mcall Add s "$MODEL_JSON" > /dev/null; done

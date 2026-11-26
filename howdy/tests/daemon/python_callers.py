@@ -877,6 +877,49 @@ async def managing():
 			[True],
 		)
 		check("the id", await models(), [(0, "new")])
+
+		# The same limits as the C++ daemon has
+		good = {"time": 1, "label": "x", "data": [[0.1]]}
+		for name, change, text in (
+			("no time", {"time": None}, "Model has no valid time"),
+			(
+				"a time that is no number",
+				{"time": float("nan")},
+				"Model has no valid time",
+			),
+			("no data", {"data": None}, "Model has no valid data"),
+			("text as encoding", {"data": [["a"]]}, "Model has no valid data"),
+			("an encoding too long", {"data": [[1] * 513]}, "Model has no valid data"),
+			(
+				"too many encodings",
+				{"data": [[1]] * 65},
+				"Model has too many encodings",
+			),
+		):
+			check(
+				f"add with {name}",
+				await call("Add", "s", [json.dumps({**good, **change})]),
+				(management_module.ADD_ERROR, text),
+			)
+		await call("Add", "s", [json.dumps({**good, "extra": "unlimited"})])
+		with open(paths_factory.user_model_path(own)) as handle:
+			stored = json.load(handle)
+		check(
+			"other fields of a model are not stored",
+			sorted(stored[-1]),
+			["data", "id", "label", "time"],
+		)
+		for _ in range(70):
+			last = await call("Add", "s", [json.dumps(good)])
+		check(
+			"too many models",
+			last,
+			(
+				management_module.ADD_ERROR,
+				"Too many face models, please remove one first",
+			),
+		)
+		check("no more are stored", len(await models()), 64)
 	finally:
 		management_module.check_authorization = original
 

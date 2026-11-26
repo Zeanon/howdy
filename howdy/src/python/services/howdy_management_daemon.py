@@ -3,6 +3,7 @@ import sys
 import pwd
 import unicodedata
 import json
+import math
 import syslog
 import asyncio
 import traceback
@@ -27,8 +28,11 @@ MANAGEMENT_PATH = "@management_path@"
 MANAGEMENT_INTERFACE = "@management_interface@"
 
 # The names of the errors of the management interface
-# The same limit as the C++ daemon has
+# The same limits as the C++ daemon has
 MAX_LABEL_BYTES = 256
+MAX_ENCODINGS_PER_MODEL = 64
+MAX_ENCODING_VALUES = 512
+MAX_MODELS_PER_USER = 64
 
 # A refused authorization has its own name, so that clients can tell it from
 # other failures
@@ -66,6 +70,39 @@ def validate_label(label):
 		raise ValueError("Model label is too long")
 	if any(unicodedata.category(char) == "Cc" for char in label):
 		raise ValueError("Model label has invalid characters")
+
+
+def is_number(value):
+	"""A finite number, as JSON has them: json.loads also takes NaN and Infinity"""
+	return (
+		isinstance(value, (int, float))
+		and not isinstance(value, bool)
+		and (isinstance(value, int) or math.isfinite(value))
+	)
+
+
+def validate_new_model(model):
+	"""The model comes from a client, make sure it is something the authentication can
+	work with and that is not too large. Returns what is stored of it: anything else
+	would have no limit."""
+	if not isinstance(model, dict):
+		raise TypeError("Model must be a dictionary")
+	if not is_number(model.get("time")):
+		raise TypeError("Model has no valid time")
+	validate_label(model.get("label"))
+	data = model.get("data")
+	if not isinstance(data, list):
+		raise TypeError("Model has no valid data")
+	if len(data) > MAX_ENCODINGS_PER_MODEL:
+		raise ValueError("Model has too many encodings")
+	for encoding in data:
+		if (
+			not isinstance(encoding, list)
+			or len(encoding) > MAX_ENCODING_VALUES
+			or not all(is_number(value) for value in encoding)
+		):
+			raise ValueError("Model has no valid data")
+	return {"time": model["time"], "label": model["label"], "data": data}
 
 
 def has_id(model, model_id):
@@ -208,12 +245,7 @@ class ManagementInterface:
 		try:
 			username = await self.get_caller(msg, 1)
 
-			model = json.loads(msg.body[-1])
-
-			if not isinstance(model, dict):
-				raise TypeError("Model must be a dictionary")
-
-			validate_label(model.get("label"))
+			model = validate_new_model(json.loads(msg.body[-1]))
 
 			# Get or create a lock for this user
 			lock = self.user_locks.setdefault(username, asyncio.Lock())
@@ -229,6 +261,12 @@ class ManagementInterface:
 					encodings = json.loads(read_model_file(enc_file, username))
 				except FileNotFoundError:
 					encodings = []
+
+				if (
+					isinstance(encodings, list)
+					and len(encodings) >= MAX_MODELS_PER_USER
+				):
+					raise ValueError("Too many face models, please remove one first")
 
 				model["id"] = encodings[-1]["id"] + 1 if encodings else 0
 

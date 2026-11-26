@@ -166,6 +166,8 @@ std::filesystem::path ModelStore::path_for(const std::string& username) const {
 
 void ModelStore::add(const std::string& username, nlohmann::json model) const {
 	validate_new_model(model);
+	// Only what a model has is stored: anything else would have no limit
+	model = nlohmann::json{{"time", model.at("time")}, {"label", model.at("label")}, {"data", model.at("data")}};
 	const auto path = path_for(username);
 
 	std::error_code ec;
