@@ -9,11 +9,13 @@
 //                              sudo does it, and an ECHO line says at the end whether the terminal echoes
 //   PAM_TEST_SERIAL=1          the conversation answers one call at a time: a message waits while a prompt is
 //                              open
+//   PAM_TEST_UBSAN_LOG=<path>  where UBSan writes its reports, if the program is built with it
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <filesystem>
 #include <mutex>
@@ -129,6 +131,15 @@ int main(int argc, char** argv) {
 		return 2;
 	}
 	log_time("start");
+	// UBSan has a path of its own for the reports, next to the one of AddressSanitizer
+	const char* ubsan_log = std::getenv("PAM_TEST_UBSAN_LOG");
+	void* ubsan = ubsan_log != nullptr ? dlopen("libubsan.so.1", RTLD_NOW | RTLD_NOLOAD) : nullptr;
+	if (ubsan != nullptr) {
+		auto* set_path = reinterpret_cast<void (*)(const char*)>(dlsym(ubsan, "__sanitizer_set_report_path"));
+		if (set_path != nullptr) {
+			set_path(ubsan_log);
+		}
+	}
 	std::thread parallel;
 	const char* parallel_service = std::getenv("PAM_TEST_PARALLEL");
 	if (parallel_service != nullptr) {

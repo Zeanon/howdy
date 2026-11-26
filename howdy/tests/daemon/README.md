@@ -69,7 +69,7 @@ Both exit with a non-zero status if a check fails.
 | `OPENVINO_DATA_DIR` | `/usr/local/share/howdy/openvino-models` |
 | `OPENVINO_DIR` | unset, then `pkg-config openvino` is tried. Set it to an OpenVINO runtime with `include/` and `libs/`, e.g. the `openvino` directory of the pip wheel. |
 | `CXX` | `g++` |
-| `SANITIZE` | unset, `1` builds with AddressSanitizer and UBSan |
+| `SANITIZE` | unset, `1` builds with AddressSanitizer and UBSan. `run_pam.sh` builds only the PAM module and its test programs this way (not the daemon, it would be too slow there) and fails on a report |
 
 Example with OpenVINO from the Howdy venv:
 

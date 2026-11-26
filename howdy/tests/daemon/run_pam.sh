@@ -5,11 +5,30 @@
 # only reads a configuration that belongs to root, so the test runs in a user
 # namespace, in which the user is root.
 # See common.sh for the environment variables.
+# SANITIZE=1: the module and the programs of this test are built with the sanitizers. The daemon is not, it
+# would be too slow for the times the tests expect (run_e2e.sh checks it with the sanitizers).
+export HOWDY_PAM_SANITIZE="${HOWDY_PAM_SANITIZE:-${SANITIZE:-0}}"
+SANITIZE=0
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 PAM_SRC_DIR="$(cd "$TEST_DIR/../../src/pam" && pwd)"
 PAM_DIR="$WORK_DIR/pam"
 mkdir -p "$PAM_DIR"
+
+# The reports of the sanitizers are written to files, which fail the tests at the end. Leaks are not looked for,
+# libpam and the libraries have their own. The programs load fake_logind.so before the runtime of
+# AddressSanitizer, which is fine.
+PAM_SANITIZE=()
+if [ "$HOWDY_PAM_SANITIZE" = 1 ]; then
+	PAM_SANITIZE=(-g -fsanitize=address,undefined -fno-omit-frame-pointer)
+	# A thread that is ended with pthread_cancel (the password prompt) unwinds through std::future, which binds a
+	# reference to the exception that is none: undefined in libstdc++, and not something the module can change
+	echo 'null:*include/c++/*/future' > "$PAM_DIR/ubsan.supp"
+	export ASAN_OPTIONS="detect_leaks=0:verify_asan_link_order=0:log_path=$T/sanitizer"
+	export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:suppressions=$PAM_DIR/ubsan.supp"
+	# pam_test sends the reports of UBSan there, which does not take the path from its options here
+	export PAM_TEST_UBSAN_LOG="$T/sanitizer.ubsan"
+fi
 
 # The module with the paths of the test, built here, the test runs in the namespace
 if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
@@ -23,12 +42,12 @@ if [ -z "${HOWDY_IN_NAMESPACE:-}" ]; then
 	sed -i "s|@pam_unix_path@|${PAM_UNIX:-/nonexistent/pam_unix.so}|" "$PAM_DIR/vars.hh"
 	read -r -a PAM_CFLAGS <<< "$(pkg-config --cflags INIReader libsystemd libevdev | system_includes)"
 	read -r -a PAM_LIBS <<< "$(pkg-config --libs INIReader libsystemd libevdev)"
-	"$CXX" -std=c++20 -fPIC -shared -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" \
+	"$CXX" -std=c++20 "${PAM_SANITIZE[@]}" -fPIC -shared -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" \
 		"$PAM_SRC_DIR"/{main,face_authenticator,fingerprint_authenticator,enter_device}.cc -o "$PAM_DIR/pam_howdy.so" "${PAM_LIBS[@]}" -lpam -lpthread
-	"$CXX" -std=c++20 "$TEST_DIR/pam_test.cc" -o "$PAM_DIR/pam_test" -lpam -lpthread
-	"$CXX" -std=c++20 -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' \
+	"$CXX" -std=c++20 "${PAM_SANITIZE[@]}" "$TEST_DIR/pam_test.cc" -o "$PAM_DIR/pam_test" -lpam -lpthread
+	"$CXX" -std=c++20 "${PAM_SANITIZE[@]}" -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" -DGETTEXT_PACKAGE='"howdy"' -DLOCALEDIR='"/nonexistent"' \
 		"$TEST_DIR/face_cancel_test.cc" "$PAM_SRC_DIR/face_authenticator.cc" -o "$PAM_DIR/face_cancel_test" "${PAM_LIBS[@]}" -lpthread
-	"$CXX" -std=c++20 -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" "$TEST_DIR/timeout_test.cc" -o "$PAM_DIR/timeout_test" "${PAM_LIBS[@]}"
+	"$CXX" -std=c++20 "${PAM_SANITIZE[@]}" -I"$PAM_DIR" -I"$PAM_SRC_DIR" "${PAM_CFLAGS[@]}" "$TEST_DIR/timeout_test.cc" -o "$PAM_DIR/timeout_test" "${PAM_LIBS[@]}"
 	"$CXX" -shared -fPIC -x c "$TEST_DIR/fake_logind.c" -o "$PAM_DIR/fake_logind.so"
 	link_daemon "$T/daemon"
 
@@ -41,6 +60,11 @@ unset SSH_CONNECTION SSH_CLIENT SSH_TTY SSHD_OPTS
 
 source "$(dirname "${BASH_SOURCE[0]}")/bus.sh"
 start_bus
+# The reports are printed when the tests end, also when one of them ends them early
+print_reports() {
+	find "$T" -maxdepth 1 -name 'sanitizer.*' -exec cat {} +
+}
+trap 'print_reports; stop_background' EXIT
 
 for tool in ffmpeg nm; do
 	command -v "$tool" > /dev/null || { echo "Missing $tool"; exit 1; }
@@ -70,7 +94,8 @@ echo "auth required $PAM_DIR/pam_howdy.so max-tries=1" > "$CONFDIR/howdy-test"
 run_pam() {
 	local start=${EPOCHREALTIME/[.,]/}
 	# fake_logind.so makes the login session a local one, or a remote one with HOWDY_TEST_REMOTE=1
-	OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1)
+	# (a program that crashes fails the checks of its output, it does not end the tests)
+	OUT=$(LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" 2>&1) || true
 	SECONDS_TAKEN=$(( (${EPOCHREALTIME/[.,]/} - start) / 1000000 ))
 }
 result_of() { grep '^RESULT' <<< "$OUT" | cut -d' ' -f2; }
@@ -733,5 +758,11 @@ for _ in $(seq "$runs"); do
 done
 expect "the password prompt is there in every run, before any blank line" "$prompt_first" "$runs"
 expect "there are no blank lines, nothing follows them" "$(has "MSG 4")" no
+
+if [ "$HOWDY_PAM_SANITIZE" = 1 ]; then
+	echo "--- the sanitizers"
+	reports=$(find "$T" -maxdepth 1 -name 'sanitizer.*')
+	expect "no report of the sanitizers" "$([ -z "$reports" ] && echo none || echo "$reports" | wc -l)" none
+fi
 
 exit $failed
