@@ -269,20 +269,10 @@ std::unique_ptr<VideoCapture> open_camera(const Config& config) {
 
 // Create the OpenVINO backend and its detectors. Like the authentication this does
 // not fall back to dlib, if the models are missing they have to be installed.
-void setup_openvino([[maybe_unused]] const Config& config, [[maybe_unused]] const Options& options, [[maybe_unused]] TestContext& context) {
+void setup_openvino([[maybe_unused]] const Config& config, [[maybe_unused]] TestContext& context) {
 #ifdef HOWDY_WITH_OPENVINO
 	const std::string device = to_upper(config.get("video", "openvino_device", "GPU"));
 	try {
-		// This runs as the user, who can not write to the system wide cache
-		const auto home = lookup_home(options.user);
-		if (home.has_value()) {
-			const std::filesystem::path cache = std::filesystem::path(*home) / ".cache" / "howdy" / "openvino";
-			std::error_code ec;
-			std::filesystem::create_directories(cache, ec);
-			if (!ec) {
-				set_openvino_cache_dir(cache.string());
-			}
-		}
 		context.backend = create_openvino_backend(device, true);
 		context.spoof_detector = std::make_unique<SpoofDetector>(device);
 		context.spoof_detector_flir = std::make_unique<SpoofDetectorFlir>(device);
@@ -304,7 +294,7 @@ void setup_backend(const Config& config, const Options& options, TestContext& co
 	context.use_openvino = config.get_bool("face_authentication", "use_openvino", false);
 
 	if (context.use_openvino) {
-		setup_openvino(config, options, context);
+		setup_openvino(config, context);
 		context.video_certainty = 1 - context.video_certainty;
 	} else {
 		try {

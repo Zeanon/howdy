@@ -1,9 +1,6 @@
 import os
 import sys
 
-os.environ["CL_CACHE_DIR"] = "/tmp/cl_cache"
-os.environ["INTEL_OCL_CACHE_DIR"] = "/tmp/intel_ocl"
-
 os.environ["OPENVINO_TELEMETRY_ENABLE"] = "0"
 
 
@@ -56,18 +53,33 @@ CACHE_DIR = paths_factory.openvino_cache_dir_path()
 _core = None
 
 
+def _cache_dir():
+	"""The cache of the compiled models. Root keeps to the system wide one: what is below a
+	home is under the control of its user, who could put a link or files there for root to
+	follow or load. Everybody else can not write there and gets one in the own home."""
+	if os.geteuid() == 0:
+		return str(CACHE_DIR)
+	home = pwd.getpwuid(os.geteuid()).pw_dir
+	return os.path.join(home, ".cache", "howdy", "openvino")
+
+
 def _get_core(user=None):
 	global _core
 	if _core is None:
 		try:
+			cache_dir = _cache_dir()
+			# The OpenCL kernel caches go there too, not into /tmp, where everybody can
+			# create the directory first
+			for variable, name in (
+				("CL_CACHE_DIR", "cl_cache"),
+				("INTEL_OCL_CACHE_DIR", "intel_ocl"),
+			):
+				os.makedirs(os.path.join(cache_dir, name), mode=0o700, exist_ok=True)
+				os.environ.setdefault(variable, os.path.join(cache_dir, name))
+
 			from openvino import Core
 
 			_core = Core()
-			cache_dir = CACHE_DIR
-			if user is not None:
-				cache_dir = os.path.join(
-					pwd.getpwnam(user).pw_dir, ".cache", "howdy", "openvino"
-				)
 			os.makedirs(cache_dir, mode=0o700, exist_ok=True)
 			_core.set_property({"CACHE_DIR": cache_dir})
 		except Exception as exc:

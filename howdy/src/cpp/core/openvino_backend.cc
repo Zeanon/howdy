@@ -34,17 +34,19 @@ ov::Core& core() {
 	static ov::Core* instance = nullptr;
 	static std::once_flag once;
 	std::call_once(once, [] {
-		// Keep the OpenCL kernel caches out of the (read only) system
-		setenv("CL_CACHE_DIR", "/tmp/cl_cache", 0);
-		setenv("INTEL_OCL_CACHE_DIR", "/tmp/intel_ocl", 0);
-
-		instance = new ov::Core(); // NOLINT(cppcoreguidelines-owning-memory): lives for the whole process
-
 		const std::filesystem::path cache_dir(cache_dir_override().empty() ? std::string(paths::OPENVINO_CACHE_DIR) : cache_dir_override());
 		std::error_code ec;
 		if (std::filesystem::create_directories(cache_dir, ec)) {
 			std::filesystem::permissions(cache_dir, std::filesystem::perms::owner_all, ec);
 		}
+		// The OpenCL kernel caches go there too: what is in them is loaded, so not into /tmp, where
+		// everybody can create the directory first
+		for (const auto& [variable, name] : {std::pair{"CL_CACHE_DIR", "cl_cache"}, std::pair{"INTEL_OCL_CACHE_DIR", "intel_ocl"}}) {
+			std::filesystem::create_directories(cache_dir / name, ec);
+			setenv(variable, (cache_dir / name).c_str(), 0);
+		}
+
+		instance = new ov::Core(); // NOLINT(cppcoreguidelines-owning-memory): lives for the whole process
 		instance->set_property(ov::cache_dir(cache_dir.string()));
 	});
 	return *instance;

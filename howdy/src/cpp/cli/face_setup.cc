@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <stdexcept>
 
+#include <unistd.h>
+
 #include "paths.hh"
 #include "util.hh"
 
@@ -20,7 +22,10 @@ std::unique_ptr<FaceBackend> create_face_backend(const Config& config, const std
 #ifdef HOWDY_WITH_OPENVINO
 		const std::string device = to_upper(config.get("video", "openvino_device", "GPU"));
 		try {
-			const auto home = lookup_home(user);
+			// A user can not write to the system wide cache and gets one in the home. Root keeps to the
+			// system wide one: what is below a home is under the control of its user, who could put a link
+			// or files there for root to follow or load
+			const auto home = geteuid() != 0 ? lookup_home(user) : std::nullopt;
 			if (home.has_value()) {
 				const std::filesystem::path cache = std::filesystem::path(*home) / ".cache" / "howdy" / "openvino";
 				std::error_code ec;
