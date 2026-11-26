@@ -15,6 +15,7 @@ inline constexpr const char* USER_MODELS_DIR = "@user_models_dir@";
 inline constexpr const char* MODELS_KEY_FILE = "@models_key_file@";
 inline constexpr const char* LOG_PATH = "@log_path@";
 inline constexpr const char* DATA_DIR = "@data_dir@";
+inline constexpr const char* PYTHON_PATH = "@python_path@";
 // The glade files and the logos of the window
 inline constexpr const char* GTK_DATA_DIR = "@gtk_data_dir@";
 

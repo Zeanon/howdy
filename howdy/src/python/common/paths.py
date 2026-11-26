@@ -20,3 +20,6 @@ log_path = PurePath("@log_path@")
 
 # Define the absolute path to the Howdy data directory
 data_dir = PurePath("@data_dir@")
+
+# Python interpreter configured for this build
+python_path = PurePath("@python_path@")

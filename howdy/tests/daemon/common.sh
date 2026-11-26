@@ -53,6 +53,7 @@ configure() {
 		-e "s|@openvino_data_dir@|$OPENVINO_DATA_DIR|g" \
 		-e "s|@log_path@|$T/log|g" \
 		-e "s|@data_dir@|$T/data|g" \
+		-e "s|@python_path@|$HOWDY_PYTHON|g" \
 		-e "s|@gtk_data_dir@|$T/gtkdata|g" \
 		-e "s|@authentication_bus@|org.boltgolt.howdy.authentication|g" \
 		-e "s|@authentication_path@|/org/boltgolt/howdy/Authentication|g" \

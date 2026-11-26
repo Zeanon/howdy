@@ -34,6 +34,11 @@ read_path() {
 MODELS_DIR="$(read_path user_models_dir USER_MODELS_DIR)"
 # Empty without -Dmodels_key_file: the models are not encrypted
 MODELS_KEY_FILE="$(read_path models_key_file MODELS_KEY_FILE)"
+PYTHON_PATH="$(read_path python_path PYTHON_PATH)"
+PYTHON_SITE_PACKAGES=""
+if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ]; then
+    PYTHON_SITE_PACKAGES="$("$PYTHON_PATH" -I -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+fi
 
 # Seals the key (64 hex digits on stdin, never as an argument) to the TPM
 seal_models_key() {
@@ -140,8 +145,9 @@ sudo bash -c '
     mkdir -p "$2"
     chmod 0700 "$2"
 
-    rm -rf /usr/local/lib/x86_64-linux-gnu/Howdy/.venv/lib/python3.14/site-packages/howdy
-    rm -rf /usr/local/lib/x86_64-linux-gnu/Howdy/.venv/lib/python3.14/site-packages/howdy-gtk
+    if [ -n "$3" ]; then
+        rm -rf -- "$3/howdy" "$3/howdy-gtk"
+    fi
 
     # howdy-gtk is a link to howdy now, meson does not replace a regular file
     # (an older howdy-gtk program or script) with a link
@@ -161,7 +167,7 @@ sudo bash -c '
     fi
 
     systemctl --global enable howdy-auth-popup.service
-' bash "$BUILD_DIR" "$MODELS_DIR"
+' bash "$BUILD_DIR" "$MODELS_DIR" "$PYTHON_SITE_PACKAGES"
 
 # Models of the time before the encryption are encrypted now. A failure (for example a
 # file that is not valid) is reported, but does not stop the installation
