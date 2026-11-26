@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -110,6 +111,9 @@ class AuthenticationService {
 	// A caller without privileges can only start a new authentication after this time, so it
 	// can not keep the camera busy for everybody else
 	std::map<uid_t, Clock::time_point> cooldown_until_;
+	// Users whose model-bearing start request was rejected while another
+	// authentication was active. They are rejected before re-reading the model.
+	std::set<uid_t> busy_callers_;
 	std::optional<std::string> active_request_;
 	std::shared_ptr<Request> pending_;
 	bool stopping_ = false;

@@ -797,6 +797,7 @@ class AuthenticationInterface(ServiceInterface):
 		self.requests = {}
 		self.active_request = None
 		self.cooldown_until = {}
+		self.busy_callers = set()
 
 	async def caller_uid(self):
 		"""The uid of the caller, identified by the bus and not by what it claims"""
@@ -823,6 +824,26 @@ class AuthenticationInterface(ServiceInterface):
 				"Only the own user can be authenticated",
 			)
 
+		# Skip repeated model reads for callers already rejected during an active
+		# authentication, and for callers in cooldown.
+		with self.lock:
+			if (
+				not trusted
+				and self.active_request is not None
+				and caller_uid in self.busy_callers
+			):
+				raise DBusError(
+					"org.howdy.Authentication.Busy",
+					"An authentication is already running",
+				)
+			if not trusted and time.monotonic() < self.cooldown_until.get(
+				caller_uid, 0
+			):
+				raise DBusError(
+					"org.howdy.Authentication.Busy",
+					"Too many authentications, try again in a moment",
+				)
+
 		# A user without a face model is answered at once, without the camera and
 		# whatever else is running. The client must not tell it from a scan that is
 		# about to start, it would ask the user to look into the camera.
@@ -830,6 +851,8 @@ class AuthenticationInterface(ServiceInterface):
 
 		with self.lock:
 			if has_model and self.active_request is not None:
+				if not trusted:
+					self.busy_callers.add(caller_uid)
 				raise DBusError(
 					"org.howdy.Authentication.Busy",
 					"An authentication is already running",
@@ -867,6 +890,7 @@ class AuthenticationInterface(ServiceInterface):
 				"cancel": cancel_event,
 				"timeout": timeout,
 			}
+			self.busy_callers.clear()
 			self.active_request = request_id
 
 		def run_authentication():
@@ -904,6 +928,7 @@ class AuthenticationInterface(ServiceInterface):
 
 				if self.active_request == request_id:
 					self.active_request = None
+					self.busy_callers.clear()
 
 			self._clear_later(request_id)
 

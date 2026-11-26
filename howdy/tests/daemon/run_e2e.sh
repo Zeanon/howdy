@@ -153,6 +153,41 @@ if [ "$HAS_OPENVINO" = 1 ]; then
 	E "openvino genuine face" SUCCESS
 fi
 
+# A caller without privileges that was told that an authentication is running is told so again without the
+# daemon reading the model once more (the PAM module asks every 250 ms while it waits), until that one is over.
+# The daemon runs as another user for this, in a user namespace, so that the tests are a caller without
+# privileges.
+echo "--- a caller without privileges while an authentication runs"
+if unshare --user --map-user=12345 true 2> /dev/null; then
+	"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$CONFIG_TEMPLATE" "$T/etc/config.ini" "${BASE[@]}" "${NOLIVE[@]}" \
+		face_authentication.timeout=8 face_authentication.start_cooldown=0
+	kill "$DPID"
+	wait "$DPID" 2> /dev/null || true
+	start_background unshare --user --map-user=12345 "$T/daemon"
+	DPID=$BACKGROUND_PID
+	wait_for_name org.boltgolt.howdy.authentication
+	cp "$T/impostor.dat" "$MODEL"
+	chmod 600 "$MODEL"
+	expect "the tests are a caller without privileges" "$(call StartAuthentication sas nobody 0)" "Call failed: Only the own user can be authenticated"
+	id=$(call StartAuthentication sas "$USER_NAME" 0 | cut -d'"' -f2)
+	expect "a second start while one runs" "$(call StartAuthentication sas "$USER_NAME" 0)" "Call failed: An authentication is already running"
+	# Without the model the answer would be that there is none, if the daemon looked for it again
+	rm -f "$MODEL"
+	expect "asked again: busy, the model is not read again" "$(call StartAuthentication sas "$USER_NAME" 0)" "Call failed: An authentication is already running"
+	expect "the first one still runs" "$(call GetResult s "$id")" 's "RUNNING"'
+	expect "cancel the first one" "$(call CancelAuthentication s "$id")" "b true"
+	for _ in $(seq 100); do
+		result=$(call GetResult s "$id") || true
+		[ "$result" = 's "CANCELLING"' ] || break
+		sleep 0.1
+	done
+	expect "the first one is over" "$result" 's "CANCELLED"'
+	id=$(call StartAuthentication sas "$USER_NAME" 0 | cut -d'"' -f2)
+	expect "then the caller is looked at again: no model" "$(call GetResult s "$id")" 's "NO_ENROLLED_FACE"'
+else
+	echo "SKIPPING: no user namespace with another user"
+fi
+
 echo "--- shutdown"
 kill "$DPID"
 rc=0

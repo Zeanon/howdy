@@ -234,6 +234,7 @@ void AuthenticationService::worker_loop() {
 		}
 		if (active_request_ == request_id) {
 			active_request_.reset();
+			busy_callers_.clear();
 		}
 	}
 }
@@ -304,6 +305,21 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		return sd_bus_error_set(ret_error, "org.howdy.Authentication.NotAuthorized", "Only the own user can be authenticated");
 	}
 
+	// Reject callers already known to be blocked by an active authentication,
+	// and callers in cooldown, before reading and parsing the model again.
+	{
+		const std::lock_guard<std::mutex> lock(self->mutex_);
+		if (!trusted && self->active_request_.has_value() && self->busy_callers_.contains(caller_uid)) {
+			return sd_bus_error_set(ret_error, "org.howdy.Authentication.Busy", "An authentication is already running");
+		}
+		if (!trusted) {
+			const auto cooldown = self->cooldown_until_.find(caller_uid);
+			if (cooldown != self->cooldown_until_.end() && Clock::now() < cooldown->second) {
+				return sd_bus_error_set(ret_error, "org.howdy.Authentication.Busy", "Too many authentications, try again in a moment");
+			}
+		}
+	}
+
 	// A user without a face model is answered at once, without the camera and whatever else is running. The
 	// client must not tell it from a scan that is about to start, it would ask the user to look into the camera.
 	const bool has_model = self->authenticator_.has_face_model(username);
@@ -311,7 +327,13 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 	std::string request_id;
 	{
 		const std::lock_guard<std::mutex> lock(self->mutex_);
-		if ((has_model && self->active_request_.has_value()) || self->stopping_) {
+		if (self->stopping_) {
+			return sd_bus_error_set(ret_error, "org.howdy.Authentication.Busy", "An authentication is already running");
+		}
+		if (has_model && self->active_request_.has_value()) {
+			if (!trusted) {
+				self->busy_callers_.insert(caller_uid);
+			}
 			return sd_bus_error_set(ret_error, "org.howdy.Authentication.Busy", "An authentication is already running");
 		}
 		if (!trusted) {
@@ -344,6 +366,7 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		request->control.extend_keepalive(INITIAL_KEEPALIVE);
 
 		self->requests_[request_id] = request;
+		self->busy_callers_.clear();
 		self->active_request_ = request_id;
 		self->pending_ = std::move(request);
 	}

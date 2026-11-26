@@ -192,6 +192,7 @@ def new_interface(uids):
 	interface.lock = threading.Lock()
 	interface.requests = {}
 	interface.cooldown_until = {}
+	interface.busy_callers = set()
 	return interface
 
 
@@ -334,6 +335,72 @@ async def authentication():
 		await as_caller(":nobody", "StartAuthentication", "nobody", []),
 		"org.howdy.Authentication.Busy",
 	)
+
+	# A caller without privileges that was told that an authentication is running is told so again without
+	# its model being read once more, until that one is over
+	INTERFACE.bus = Bus({**UIDS, ":nobody": nobody})
+	reads = []
+	model = [True]
+
+	def has_face_model(username):
+		reads.append(username)
+		return model[0]
+
+	INTERFACE.authenticator = types.SimpleNamespace(
+		has_face_model=has_face_model,
+		start_cooldown=60,
+		authenticate=lambda *args: auth_module.HowdyStatus.Success,
+	)
+	check(
+		"in its cooldown: refused",
+		await as_caller(":nobody", "StartAuthentication", "nobody", []),
+		"org.howdy.Authentication.Busy",
+	)
+	check("in its cooldown: the model is not read", len(reads), 0)
+	INTERFACE.cooldown_until.clear()
+	INTERFACE.authenticator.start_cooldown = 0
+	INTERFACE.active_request = "running"
+	check(
+		"while a scan runs: refused",
+		await as_caller(":nobody", "StartAuthentication", "nobody", []),
+		"org.howdy.Authentication.Busy",
+	)
+	check("while a scan runs: the model was read", len(reads), 1)
+	# Without the model the answer would be that there is none, if the daemon looked for it again
+	model[0] = False
+	check(
+		"asked again: refused",
+		await as_caller(":nobody", "StartAuthentication", "nobody", []),
+		"org.howdy.Authentication.Busy",
+	)
+	check("asked again: the model is not read again", len(reads), 1)
+	model[0] = True
+	for _ in range(2):
+		await as_caller(":daemon", "StartAuthentication", "root", [])
+	check("a caller with privileges is looked at every time", len(reads), 3)
+	check("and is not remembered", INTERFACE.busy_callers, {nobody})
+
+	# The next authentication that starts forgets who was refused, and so does its end
+	workers = []
+	INTERFACE.executor = types.SimpleNamespace(submit=workers.append)
+	INTERFACE._clear_later = lambda request_id: None
+	INTERFACE.active_request = None
+	started = await as_caller(":daemon", "StartAuthentication", "root", [])
+	check("the next scan starts", INTERFACE.active_request, started)
+	check("a new scan forgets who was refused", INTERFACE.busy_callers, set())
+	await as_caller(":nobody", "StartAuthentication", "nobody", [])
+	check("refused during it: remembered", INTERFACE.busy_callers, {nobody})
+	workers[0]()
+	check("the scan is over", INTERFACE.active_request, None)
+	check("its end forgets who was refused", INTERFACE.busy_callers, set())
+	model[0] = False
+	again = await as_caller(":nobody", "StartAuthentication", "nobody", [])
+	check(
+		"then the caller is looked at again: no model",
+		await as_caller(":nobody", "GetResult", again),
+		str(auth_module.HowdyStatus.NoEnrolledFaces),
+	)
+	del INTERFACE._clear_later
 	INTERFACE.bus = Bus(UIDS)
 
 	# Only the own user can be authenticated, everybody else is refused before anything starts
