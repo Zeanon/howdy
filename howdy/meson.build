@@ -1,5 +1,5 @@
 if meson.is_subproject()
-project('howdy', 'cpp', license: 'MIT', version: '3.0.1', meson_version: '>= 1.1.0')
+project('howdy', 'cpp', license: 'MIT', version: '3.0.1', meson_version: '>= 1.1.0', default_options: ['cpp_std=c++20'])
 endif
 
 

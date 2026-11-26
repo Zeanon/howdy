@@ -5,7 +5,7 @@ project(
     version: 'beta',
     meson_version: '>= 1.1.0',
     # The daemons and the programs are position independent, so that ASLR works for them
-    default_options: ['b_pie=true'],
+    default_options: ['b_pie=true', 'cpp_std=c++20'],
 )
 
 # <hardening>
