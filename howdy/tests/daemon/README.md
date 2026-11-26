@@ -38,6 +38,9 @@ management daemon.
 - The dlib and OpenVINO model files
 - `curl` (the example images are downloaded from the dlib repository)
 - For `run_e2e.sh` additionally `dbus-daemon`, `dbus-monitor`, `busctl` and `ffmpeg`
+- For `run_pam.sh` additionally `dbus-daemon`, `busctl`, `ffmpeg`, `unshare`, `nm`,
+  `script`, `setsid`, `pgrep`, `mkfifo` and `dbus-next` in the reference Python
+  (stand-in for fprintd)
 - For `run_gui.sh` additionally `dbus-daemon`, `busctl`, `ffmpeg`, `xvfb-run`, `xdotool`,
   `xprop` and `dbus-next` in the reference Python (stand-in for the daemon)
 - For `run_cli.sh` additionally `dbus-daemon`, `busctl`, `ffmpeg`, `unshare`,

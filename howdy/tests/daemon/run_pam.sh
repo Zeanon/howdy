@@ -291,26 +291,135 @@ start_background "$T/daemon"
 DAEMON_PID=$BACKGROUND_PID
 cp "$T/impostor.dat" "$MODEL"
 
-echo "--- a signal that ends the authentication goes on to the program"
-# The module catches SIGINT, SIGTERM and SIGQUIT while it authenticates, so that a Ctrl+C ends the
-# authentication, and gives the same signal back to the program when it is done. A program that does
-# not handle it is ended by it, like without the module (and not by another signal).
+echo "--- the signals are only taken at a terminal"
+# The module catches SIGINT, SIGTERM and SIGQUIT at a terminal, with and without a password prompt, so that a
+# Ctrl+C ends the authentication, and gives the same signal back to the program when it is done. A program that
+# does not handle it is ended by it, like without the module (and not by another signal). That is also so when the
+# input of the program comes from somewhere else. Without a terminal the signals are left to the program.
+for tool in script setsid pgrep mkfifo; do
+	command -v "$tool" > /dev/null || { echo "Missing $tool"; exit 1; }
+done
 stop_daemon
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay" > "$CONFDIR/howdy-terminal"
+# (a background job of a shell ignores SIGINT and SIGQUIT, the program must not)
+signal_command() {
+	echo "ulimit -c 0; exec env --default-signal=INT,QUIT LD_PRELOAD='$PAM_DIR/fake_logind.so' '$PAM_DIR/pam_test' '$CONFDIR' $1 '$USER_NAME' > '$T/pam_signal.out' 2>&1"
+}
+# blocked <pid>: whether the first thread of the process blocks SIGINT
+blocked() { echo $(( (16#$(awk '/^SigBlk/ {print $2}' "/proc/$1/status") & 2) != 0 )); }
+# The input of script, which stays open without anything to read
+mkfifo "$T/no_input"
+exec 9<> "$T/no_input"
 for signal in INT TERM QUIT; do
-	# (a background job of a shell ignores SIGINT and SIGQUIT, the program must not)
-	( ulimit -c 0; exec env --default-signal=INT,QUIT LD_PRELOAD="$PAM_DIR/fake_logind.so" "$PAM_DIR/pam_test" "$CONFDIR" howdy-test "$USER_NAME" > "$T/pam_signal.out" 2>&1 ) &
-	signal_pid=$!
+	# script runs the program at a terminal of its own, and returns what it returns
+	script -qec "$(signal_command howdy-terminal)" /dev/null <&9 > /dev/null &
+	script_pid=$!
 	# The module waits for the daemon, which is not there
 	sleep 1
+	signal_pid=$(pgrep -n -f "pam_test $CONFDIR howdy-terminal")
+	expect "at a terminal: the signals are taken" "$(blocked "$signal_pid")" 1
 	kill "-$signal" "$signal_pid"
 	status=0
 	# (the shell reports a program that is ended by SIGQUIT)
-	{ wait "$signal_pid" || status=$?; } 2> /dev/null
+	{ wait "$script_pid" || status=$?; } 2> /dev/null
 	expected="$((128 + $(kill -l "$signal")))"
 	expect "SIG$signal ends the program with SIG$signal" "$status" "$expected"
 done
+# (service howdy-terminal without a terminal, then howdy-test, without a password, at a terminal)
+# (setsid: without the terminal the tests may be run from)
+setsid bash -c "$(signal_command howdy-terminal)" < /dev/null &
+signal_pid=$!
+sleep 1
+expect "without a terminal: the signals are left to the program" "$(blocked "$signal_pid")" 0
+kill -INT "$signal_pid"
+status=0
+wait "$signal_pid" || status=$?
+expect "without a terminal: SIGINT ends the program" "$status" 130
+script -qec "$(signal_command howdy-test)" /dev/null <&9 > /dev/null &
+script_pid=$!
+sleep 1
+signal_pid=$(pgrep -n -f "pam_test $CONFDIR howdy-test")
+expect "at a terminal without a password: the signals are taken" "$(blocked "$signal_pid")" 1
+kill -INT "$signal_pid"
+status=0
+wait "$script_pid" || status=$?
+expect "at a terminal without a password: SIGINT ends the program" "$status" 130
+# The input is not the terminal, the program runs at it all the same
+script -qec "$(signal_command howdy-terminal) < /dev/null" /dev/null <&9 > /dev/null &
+script_pid=$!
+sleep 1
+signal_pid=$(pgrep -n -f "pam_test $CONFDIR howdy-terminal")
+expect "at a terminal with the input from elsewhere: the signals are taken" "$(blocked "$signal_pid")" 1
+kill -INT "$signal_pid"
+status=0
+wait "$script_pid" || status=$?
+expect "at a terminal with the input from elsewhere: SIGINT ends the program" "$status" 130
 start_background "$T/daemon"
 DAEMON_PID=$BACKGROUND_PID
+wait_for_name org.boltgolt.howdy.authentication
+
+echo "--- the terminal echoes again when the face wins over the password prompt"
+# The prompt turns the echo off and its thread is ended (workaround=native), the module puts the flags back.
+# The password is asked for at the terminal, also when the input of the program comes from somewhere else.
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay workaround=native" > "$CONFDIR/howdy-prompt"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+for input in "the terminal:" "from elsewhere:< /dev/null"; do
+	status=0
+	timeout 30 script -qec "PAM_TEST_TTY_PROMPT=1 sh -c \"$(signal_command howdy-prompt) ${input#*:}\"" /dev/null <&9 > /dev/null || status=$?
+	expect "input ${input%:*}: authenticated by the face" "$(grep '^RESULT' "$T/pam_signal.out" | cut -d' ' -f2)" 0
+	expect "input ${input%:*}: the terminal echoes" "$(grep '^ECHO' "$T/pam_signal.out" | cut -d' ' -f2)" on
+done
+# The same when the global timeout ends the prompt
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay global-timeout=3" > "$CONFDIR/howdy-prompt"
+cp "$T/impostor.dat" "$MODEL"
+chmod 600 "$MODEL"
+timeout 30 script -qec "PAM_TEST_TTY_PROMPT=1 sh -c \"$(signal_command howdy-prompt)\"" /dev/null <&9 > /dev/null || true
+expect "after the global timeout: the terminal echoes" "$(grep '^ECHO' "$T/pam_signal.out" | cut -d' ' -f2)" on
+
+# A job in the background does not touch the terminal, which belongs to the program in the foreground: it would
+# be stopped (SIGTTOU) for it
+echo "auth required $PAM_DIR/pam_howdy.so max-tries=1 password password:nodelay workaround=native" > "$CONFDIR/howdy-prompt"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+# Runs the command $1 as a background job, writes to $2 whether it has finished or was stopped
+cat > "$T/background.sh" << 'SCRIPT'
+set -m
+bash -c "$1" < /dev/null &
+job=$!
+for _ in $(seq 150); do
+	state=$(awk '/^State/ {print $2}' "/proc/$job/status" 2> /dev/null)
+	case "$state" in
+		"" | Z) echo finished > "$2" && break ;;
+		T) echo stopped > "$2" && break ;;
+	esac
+	sleep 0.1
+done
+kill -KILL -- "-$job" 2> /dev/null
+SCRIPT
+rm -f "$T/background.state" "$T/pam_signal.out"
+timeout 30 script -qec "bash '$T/background.sh' \"$(signal_command howdy-prompt)\" '$T/background.state'" /dev/null <&9 > /dev/null || true
+expect "in the background: the program is not stopped" "$(cat "$T/background.state" 2> /dev/null)" finished
+expect "in the background: authenticated by the face" "$(grep '^RESULT' "$T/pam_signal.out" | cut -d' ' -f2)" 0
+
+# Started in the background and brought to the foreground while it authenticates: nothing was saved at the
+# start, the echo that the prompt turns off is turned on again all the same. The prompt stops the job in the
+# background, then it is brought to the foreground.
+cat > "$T/foreground.sh" << 'SCRIPT'
+set -m
+PAM_TEST_TTY_PROMPT=1 bash -c "$1" < /dev/null &
+job=$!
+for _ in $(seq 100); do
+	[ "$(awk '/^State/ {print $2}' "/proc/$job/status" 2> /dev/null)" = T ] && break
+	sleep 0.05
+done
+fg %1 > /dev/null
+SCRIPT
+rm -f "$T/pam_signal.out"
+timeout 30 script -qec "bash '$T/foreground.sh' \"$(signal_command howdy-prompt)\"" /dev/null <&9 > /dev/null || true
+expect "brought to the foreground: authenticated by the face" "$(grep '^RESULT' "$T/pam_signal.out" | cut -d' ' -f2)" 0
+expect "brought to the foreground: the terminal echoes" "$(grep '^ECHO' "$T/pam_signal.out" | cut -d' ' -f2)" on
+exec 9>&-
 
 echo "--- the methods that can be used are announced"
 # fprintd on the private bus, its mode is read at every call

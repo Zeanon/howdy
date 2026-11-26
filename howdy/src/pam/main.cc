@@ -126,6 +126,65 @@ inline std::optional<std::string> read_trusted_config(const char* path) {
 	return content;
 }
 
+// The controlling terminal of the program, if it runs at one, also when its input comes from somewhere else, as in
+// `curl ... | sudo sh`: a Ctrl+C there reaches it, and a password is asked for there
+class Terminal {
+  public:
+	Terminal() = default;
+	~Terminal() {
+		if (fd_ >= 0) {
+			close(fd_);
+		}
+	}
+
+	Terminal(const Terminal&) = delete;
+	Terminal& operator=(const Terminal&) = delete;
+	Terminal(Terminal&&) = delete;
+	Terminal& operator=(Terminal&&) = delete;
+
+	// Whether there is one
+	bool attach() {
+		fd_ = open("/dev/tty", O_RDONLY | O_NOCTTY | O_CLOEXEC);
+		return fd_ >= 0;
+	}
+
+	// A password is going to be asked for: remembers the flags, for restore_flags()
+	void save_flags() {
+		prompt_ = true;
+		saved_ = in_foreground() && tcgetattr(fd_, &flags_) == 0;
+	}
+
+	// Puts the flags back that were saved: a password prompt that is ended leaves the echo off. A program that
+	// was started in the background has saved nothing (the flags were those of another program), and if it is in
+	// the foreground now, only the echo is turned on again.
+	void restore_flags() const {
+		if (!prompt_ || !in_foreground()) {
+			return;
+		}
+		if (saved_) {
+			tcsetattr(fd_, TCSAFLUSH, &flags_);
+			return;
+		}
+		termios current{};
+		if (tcgetattr(fd_, &current) == 0 && (current.c_lflag & ECHO) == 0) {
+			current.c_lflag |= ECHO;
+			tcsetattr(fd_, TCSAFLUSH, &current);
+		}
+	}
+
+  private:
+	// Whether the program is the one in the foreground of the terminal. The flags belong to that one, and a
+	// program in the background that sets them is stopped (SIGTTOU).
+	[[nodiscard]] bool in_foreground() const {
+		return fd_ >= 0 && tcgetpgrp(fd_) == getpgrp();
+	}
+
+	int fd_ = -1;
+	bool prompt_ = false;
+	bool saved_ = false;
+	termios flags_{};
+};
+
 /**
  * One authentication: everything the module knows while it runs. A program may authenticate more than once with
  * the same handle (the next try after a wrong one), and more than one thread of it may authenticate at the same
@@ -342,8 +401,14 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			return PAM_SERVICE_ERR;
 		}
 
+		// The terminal and the signals are of the whole program: they are only touched when it runs at a terminal
+		// (sudo, su), not when it asks in its own window, as the lock screen does
+		at_terminal = terminal.attach();
+
 		// Save the original terminal flags to they can be reset after password
-		tcgetattr(STDIN_FILENO, &original_terminal_flags);
+		if (password) {
+			terminal.save_flags();
+		}
 
 		pam_handle = pamh;
 		// Get the username from PAM, needed to match correct face model
@@ -423,9 +488,11 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 
 		sigset_t set;
 		sigemptyset(&set);
-		sigaddset(&set, SIGINT);
-		sigaddset(&set, SIGTERM);
-		sigaddset(&set, SIGQUIT);
+		if (at_terminal) {
+			sigaddset(&set, SIGINT);
+			sigaddset(&set, SIGTERM);
+			sigaddset(&set, SIGQUIT);
+		}
 
 		// Only for the time of the authentication: the thread is not ours, the signals would stay blocked
 		// for the rest of its life, and the threads of the tasks (which have to inherit the mask) end here
@@ -459,7 +526,9 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			convar.notify_one();
 			return;
 		});
-		signal_task.activate();
+		if (at_terminal) {
+			signal_task.activate();
+		}
 
 		// The only settings of a face authentication that are passed to the daemon, everything else comes
 		// from the config file
@@ -800,6 +869,10 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		 */
 
 		pass_task.stop(timeouted);
+		// The prompt was ended by force
+		if (timeouted) {
+			terminal.restore_flags();
+		}
 		howdy_task.stop(timeouted);
 		// cancel() was called above, the thread of the fingerprint ends by itself and puts the reader back
 		fingerprint_task.stop(false);
@@ -812,7 +885,9 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 	// The start of the authentication, the wait for the answers of the methods counts from here
 	std::chrono::steady_clock::time_point auth_started;
 
-	termios original_terminal_flags{};
+	Terminal terminal;
+	// The program runs at a terminal: the signals of a Ctrl+C are taken
+	bool at_terminal{};
 
 	std::mutex mutx;
 	std::condition_variable convar;
@@ -1200,9 +1275,7 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 		}
 
 		// reset the terminal flags, so input does not stay hidden for example
-		if (password) {
-			tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_terminal_flags);
-		}
+		terminal.restore_flags();
 		if (orig_authtok != nullptr) {
 			pam_handle->authtok = orig_authtok;
 		}
