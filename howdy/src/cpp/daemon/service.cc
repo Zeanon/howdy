@@ -363,6 +363,7 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		request->owner_uid = caller_uid;
 		request->username = username;
 		request->args = std::move(args);
+		request->control.limit_timeout = !trusted;
 		request->control.extend_keepalive(INITIAL_KEEPALIVE);
 
 		self->requests_[request_id] = request;

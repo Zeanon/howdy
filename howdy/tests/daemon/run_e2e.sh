@@ -184,6 +184,20 @@ if unshare --user --map-user=12345 true 2> /dev/null; then
 	expect "the first one is over" "$result" 's "CANCELLED"'
 	id=$(call StartAuthentication sas "$USER_NAME" 0 | cut -d'"' -f2)
 	expect "then the caller is looked at again: no model" "$(call GetResult s "$id")" 's "NO_ENROLLED_FACE"'
+	# It can not keep the camera for as long as it wants: no timeout it asks for is longer than the one of the
+	# config or 60 seconds (the face does not match here, so the scan ends with the timeout)
+	cp "$T/impostor.dat" "$MODEL"
+	chmod 600 "$MODEL"
+	id=$(call StartAuthentication sas "$USER_NAME" 1 timeout=-1 | cut -d'"' -f2)
+	started=$SECONDS
+	result=""
+	while [ $((SECONDS - started)) -lt 75 ]; do
+		result=$(call GetResult s "$id") || true
+		[ "$result" = 's "RUNNING"' ] || break
+		sleep 0.3
+	done
+	expect "no timeout of a caller without privileges ends all the same" "$result" 's "TIMEOUT"'
+	expect "after a minute" "$([ $((SECONDS - started)) -ge 55 ] && [ $((SECONDS - started)) -le 70 ] && echo yes || echo "$((SECONDS - started)) s")" yes
 else
 	echo "SKIPPING: no user namespace with another user"
 fi

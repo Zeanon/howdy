@@ -926,6 +926,23 @@ async def managing():
 
 asyncio.run(managing())
 
+print("--- the timeout a caller can ask for")
+
+
+def asked_timeout(configured, value, limit):
+	daemon = types.SimpleNamespace(auth_popup=False, timeout=configured)
+	parse = auth_module.HowdyAuthenticator._parse_args
+	return parse(daemon, [f"timeout={value}"], limit).timeout
+
+
+check("a privileged caller: as asked", asked_timeout(4, 600, False), 600)
+check("a privileged caller: no limit", asked_timeout(4, -1, False), sys.maxsize)
+check("without privileges: at most 60s", asked_timeout(4, 600, True), 60)
+check("without privileges: no limit is 60s", asked_timeout(4, -1, True), 60)
+check("without privileges: shorter is fine", asked_timeout(4, 10, True), 10)
+check("without privileges: the config allows more", asked_timeout(120, -1, True), 120)
+check("without privileges: no limit in the config", asked_timeout(-1, 600, True), 600)
+
 print("--- retention of the snapshots")
 from howdy import paths_factory, snapshot  # noqa: E402
 

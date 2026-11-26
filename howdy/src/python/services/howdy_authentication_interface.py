@@ -34,6 +34,10 @@ from .recorders.video_capture import VideoCapture, NoDeviceException
 
 AUTHENTICATION_INTERFACE = "@authentication_interface@"
 
+# The longest timeout a caller without privileges can ask for, if the config does not
+# allow more
+UNPRIVILEGED_MAX_TIMEOUT = 60
+
 
 @dataclass
 class Args:
@@ -250,7 +254,7 @@ class HowdyAuthenticator:
 			.strip('"')
 		)
 
-	def _parse_args(self, args):
+	def _parse_args(self, args, limit_timeout=False):
 		"""The only settings of a request are show-auth-popup and timeout,
 		everything else comes from the config file"""
 		result = Args(auth_popup=self.auth_popup, timeout=self.timeout)
@@ -265,6 +269,17 @@ class HowdyAuthenticator:
 				syslog.syslog(
 					syslog.LOG_WARNING, f"Ignoring the unknown argument '{arg}'"
 				)
+		# A caller without privileges can not keep the camera for longer than the config
+		# says (or a minute): others get Busy meanwhile
+		if limit_timeout and self.timeout >= 1:
+			longest = max(self.timeout, UNPRIVILEGED_MAX_TIMEOUT)
+			if result.timeout < 1 or result.timeout > longest:
+				syslog.syslog(
+					syslog.LOG_WARNING,
+					f"The requested timeout is too long for this caller, using {longest}s",
+				)
+				result.timeout = longest
+
 		# If timeout is below 1, we set it to sys.maxsize which is basically infinite
 		if result.timeout < 1:
 			result.timeout = sys.maxsize
@@ -363,7 +378,7 @@ class HowdyAuthenticator:
 			try:
 				self._cleaned_up = False
 
-				args = self._parse_args(args)
+				args = self._parse_args(args, timeout.limit)
 				if self.micromotion_detector is not None:
 					self.micromotion_detector.init(
 						self.micromotion_detection_buffer_size
@@ -766,8 +781,10 @@ class HowdyAuthenticator:
 
 
 class Timeout:
-	def __init__(self, timeout):
+	def __init__(self, timeout, limit=False):
 		self.time = timeout
+		# The caller has no privileges, the timeout it asks for is limited
+		self.limit = limit
 
 
 # The sender of the method call that is handled. dbus-next does not tell the
@@ -865,7 +882,7 @@ class AuthenticationInterface(ServiceInterface):
 					"Too many authentications, try again in a moment",
 				)
 
-			timeout = Timeout(time.monotonic() + 2)
+			timeout = Timeout(time.monotonic() + 2, limit=not trusted)
 			request_id = str(uuid.uuid4())
 			cancel_event = threading.Event()
 

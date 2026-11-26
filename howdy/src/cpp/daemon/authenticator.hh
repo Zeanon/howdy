@@ -60,6 +60,8 @@ class PopupSink {
 // Per request state shared between the D-Bus handlers and the worker
 struct RequestControl {
 	std::atomic<bool> cancel{false};
+	// The caller has no privileges: the timeout it asks for is limited. Set before the worker gets the request
+	bool limit_timeout = false;
 	// The client has to poll GetResult regularly, otherwise the
 	// authentication stops once this deadline is reached.
 	std::atomic<Clock::rep> keepalive_deadline{0};
@@ -99,7 +101,7 @@ class Authenticator {
 
 	void read_config();
 	void initialize_models();
-	[[nodiscard]] Args parse_args(const std::vector<std::string>& args) const;
+	[[nodiscard]] Args parse_args(const std::vector<std::string>& args, bool limit_timeout) const;
 	Status run(const std::string& username, const Args& args, const RequestControl& control);
 	void cleanup();
 

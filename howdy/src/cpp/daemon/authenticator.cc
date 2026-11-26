@@ -46,6 +46,9 @@ const char* to_string(Status status) noexcept {
 
 namespace {
 
+// The longest timeout a caller without privileges can ask for, if the config does not allow more
+constexpr double UNPRIVILEGED_MAX_TIMEOUT = 60;
+
 bool starts_with(const std::string& value, const char* prefix, std::string& rest) {
 	const std::string_view view(prefix);
 	if (!value.starts_with(view)) {
@@ -198,7 +201,7 @@ void Authenticator::initialize_models() {
 	}
 }
 
-Authenticator::Args Authenticator::parse_args(const std::vector<std::string>& args) const {
+Authenticator::Args Authenticator::parse_args(const std::vector<std::string>& args, bool limit_timeout) const {
 	Args result{auth_popup_, timeout_};
 
 	std::string value;
@@ -212,6 +215,16 @@ Authenticator::Args Authenticator::parse_args(const std::vector<std::string>& ar
 		} else {
 			// The thresholds and the other settings come from the config file only
 			log(LOG_WARNING, "Ignoring the unknown argument '" + arg + "'");
+		}
+	}
+
+	// A caller without privileges can not keep the camera for longer than the config says (or a minute,
+	// for a PAM configuration that asks for more than that): others get Busy meanwhile
+	if (limit_timeout && timeout_ >= 1) {
+		const double longest = std::max(timeout_, UNPRIVILEGED_MAX_TIMEOUT);
+		if (result.timeout < 1 || result.timeout > longest) {
+			log(LOG_WARNING, "The requested timeout is too long for this caller, using " + format_double(longest) + "s");
+			result.timeout = longest;
 		}
 	}
 
@@ -238,7 +251,7 @@ Status Authenticator::authenticate(const std::string& username, const std::vecto
 
 	Status status = Status::Error;
 	try {
-		const Args parsed = parse_args(args);
+		const Args parsed = parse_args(args, control.limit_timeout);
 
 		if (micromotion_detector_) {
 			micromotion_detector_->init(micromotion_detection_buffer_size_);
