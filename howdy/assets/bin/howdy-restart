@@ -1,12 +1,26 @@
 #!/bin/bash
 
-# early return on enything besides wakeup
-if [[ "$1" != "post" ]]; then
-    exit 0
-fi
+# One call for each service: with a unit that does not exist systemctl does nothing with the others of
+# the same call. fprintd is not installed everywhere, it is left alone then.
+has_fprintd() {
+    systemctl cat fprintd.service > /dev/null 2>&1
+}
 
-# Restart the howdy auth daemon without waiting for it. The restart takes a few
-# seconds (the daemon loads its models first) and blocking here would hold the
-# wakeup, and with it the frozen user sessions, until it is done. The PAM module
-# waits for the daemon to come back instead.
-systemctl --no-block restart @howdy_authentication_service_name@
+case "$1" in
+    pre)
+        # Both at the same time, and waited for: the computer goes to sleep when they are stopped
+        has_fprintd && systemctl stop fprintd.service &
+        systemctl stop @howdy_authentication_service_name@ &
+        wait
+        ;;
+    post)
+        # Restart the daemons without waiting for them. Howdy takes a few seconds
+        # (it loads its models first) and blocking here would hold the wakeup, and
+        # with it the frozen user sessions, until it is done. The PAM module waits
+        # for the daemon to come back instead.
+        has_fprintd && systemctl --no-block restart fprintd.service
+        systemctl --no-block restart @howdy_authentication_service_name@
+        ;;
+esac
+
+exit 0

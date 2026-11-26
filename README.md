@@ -306,7 +306,7 @@ Options are passed to `meson setup` (or `meson configure build`), for example `m
 | `python_path` | `<install_dir>/.venv/bin/python3` | Python used by meson and the Python components |
 | `install_config` | `true` | Install the default `config.ini` (an existing one is never overwritten) |
 | `install_pam_config` | `true` | Install the PAM config for `pam-auth-update` (Debian/Ubuntu) |
-| `with_wakeup_hook` | `true` | Restart Howdy automatically after the system woke up. The hook only queues the restart (`systemctl --no-block`) and does not hold up the wakeup. The PAM module waits for the daemon while it is restarted (up to 20 seconds in all) and asks again, so the lock screen does not see a failed attempt |
+| `with_wakeup_hook` | `true` | Installs a systemd sleep hook. Before the system goes to sleep it stops Howdy and, where it is installed, fprintd, and waits for both. After the wakeup it starts them again, also when fingerprint authentication is off in Howdy. It only queues the restart (`systemctl --no-block`) and does not hold up the wakeup. The PAM module waits for the daemon while it is restarted (up to 20 seconds in all) and asks again, so the lock screen does not see a failed attempt |
 | `openvino` | `auto` | OpenVINO support in the authentication daemon |
 | `auth_daemon` | `cpp` | `cpp` or `python` implementation of the authentication daemon |
 | `management_daemon` | `cpp` | `cpp` or `python` implementation of the management daemon |
