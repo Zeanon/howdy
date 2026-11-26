@@ -422,17 +422,20 @@ void FaceAuthenticator::process_events(const std::function<void()>& on_scanning)
 			sd_bus_error_free(&error);
 			return;
 		}
+		// The string belongs to the D-Bus message and is no longer valid after
+		// unref, so keep an owned copy while processing the status below.
+		const std::string status_text(status);
 
 		sd_bus_message_unref(reply);
 		sd_bus_error_free(&error);
 
-		if (!str_equal(status, "RUNNING") && !str_equal(status, "CANCELLING")) {
-			result_ = map_status(status);
+		if (status_text != "RUNNING" && status_text != "CANCELLING") {
+			result_ = map_status(status_text.c_str());
 			return;
 		}
 
 		// A user without a face model is answered at once, only now it is known that the camera is used
-		if (!scanning_notified_ && str_equal(status, "RUNNING")) {
+		if (!scanning_notified_ && status_text == "RUNNING") {
 			scanning_notified_ = true;
 			if (on_scanning) {
 				on_scanning();
