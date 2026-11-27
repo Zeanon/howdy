@@ -203,7 +203,7 @@ async def _run(dialog=None):
 			label = label.replace(",", "")
 
 		# Prepare the metadata for insertion
-		insert_model = {"time": int(time.monotonic()), "label": label, "data": []}
+		insert_model = {"time": int(time.time()), "label": label, "data": []}
 
 		# Set up video_capture
 		try:
@@ -244,7 +244,7 @@ async def _run(dialog=None):
 		say(S(f"Captured {len(samples)} face samples"))
 
 		try:
-			asyncio.run(send_model(bus, insert_model))
+			await send_model(bus, insert_model)
 		except Exception as exc:
 			exit(f"Failed to save face model: {exc}")
 

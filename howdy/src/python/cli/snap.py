@@ -37,7 +37,11 @@ frames = []
 
 while True:
 	# Grab a single frame of video
-	frame, gsframe = video_capture.read_frame()
+	try:
+		frame, gsframe = video_capture.read_frame()
+	except NoDeviceException as exc:
+		print(exc.message)
+		sys.exit(CompareResult.InvalidDevice)
 
 	# Add the frame to the list
 	frames.append(frame)
@@ -55,7 +59,7 @@ file = snapshot.generate(
 		S("Dark threshold config: ")
 		+ str(config.getfloat("video", "dark_threshold", fallback=60.0)),
 		S("Certainty config: ")
-		+ str(config.getfloat("video", "certainty", fallback=3.5)),
+		+ str(config.getfloat("face_authentication", "certainty", fallback=75.0)),
 	],
 )
 

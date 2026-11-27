@@ -1125,8 +1125,122 @@ del sys.modules["openvino"], sys.modules["dlib"]
 if original_dlib is not None:
 	sys.modules["dlib"] = original_dlib
 
-print("--- the camera that is opened when the path does not work")
+print("--- the certainty on a snapshot")
+from howdy import paths_factory, snapshot  # noqa: E402
 from howdy.recorders import video_capture as capture_module  # noqa: E402
+
+snapshot_config = os.path.join(WORK_DIR, "snapshot.ini")
+with open(snapshot_config, "w") as handle:
+	handle.write("[face_authentication]\ncertainty = 88\n[video]\n")
+written = []
+originals = (
+	capture_module.VideoCapture,
+	snapshot.generate,
+	paths_factory.config_file_path,
+)
+capture_module.VideoCapture = lambda _: types.SimpleNamespace(
+	read_frame=lambda: (None, None)
+)
+snapshot.generate = lambda frames, lines: written.extend(lines) or "file"
+paths_factory.config_file_path = lambda: snapshot_config
+from howdy.cli import snap  # noqa: E402,F401
+
+capture_module.VideoCapture, snapshot.generate, paths_factory.config_file_path = (
+	originals
+)
+check("it is the one of the config", written[-1].endswith("88.0"), True)
+
+print("--- howdy add and clear reach the management daemon")
+import builtins  # noqa: E402
+
+from howdy import openvino_face  # noqa: E402
+from howdy.cli import add, clear  # noqa: E402
+
+add_config = os.path.join(WORK_DIR, "add.ini")
+with open(add_config, "w") as handle:
+	handle.write("[face_authentication]\nuse_openvino = true\n[video]\n")
+sent = []
+cleared = []
+
+
+class ManagementBus:
+	"""A management daemon that has no model yet and keeps what is added"""
+
+	def __init__(self, **kwargs):
+		pass
+
+	async def connect(self):
+		return self
+
+	async def call(self, message):
+		if message.member == "Add":
+			sent.append(json.loads(message.body[-1]))
+		if message.member == "Clear":
+			cleared.append(message.body)
+		body = ["[]"] if message.member == "List" else [True]
+		return types.SimpleNamespace(message_type=None, body=body)
+
+	def disconnect(self):
+		pass
+
+
+async def authorized(**kwargs):
+	pass
+
+
+# Only the saving is tested: no camera, no models
+patched = (
+	(add, "MessageBus", ManagementBus),
+	(add, "check_authorization", authorized),
+	(add, "VideoCapture", lambda _: types.SimpleNamespace(release=lambda: None)),
+	(add.enroll_capture, "capture_guided_samples", lambda **kwargs: [[0.5, 0.25]]),
+	(add.paths_factory, "config_file_path", lambda: add_config),
+	(openvino_face, "FaceDetector", lambda **kwargs: None),
+	(openvino_face, "FaceEncoder", lambda **kwargs: None),
+	(clear, "MessageBus", ManagementBus),
+	(clear, "check_authorization", authorized),
+)
+originals = [(owner, name, getattr(owner, name)) for owner, name, _ in patched]
+for owner, name, value in patched:
+	setattr(owner, name, value)
+builtins.howdy_args = types.SimpleNamespace(
+	user="someone", gui=False, plain=True, y=True, arguments=["laptop"]
+)
+
+
+def exit_code(command):
+	try:
+		command()
+	except SystemExit as exc:
+		return exc.code
+	return 0
+
+
+before = int(time.time())
+add_code = exit_code(add.run)
+clear_code = exit_code(clear.run)
+for owner, name, value in originals:
+	setattr(owner, name, value)
+check("howdy add ends well", add_code, 0)
+check(
+	"the model arrives",
+	[(model["label"], model["data"]) for model in sent],
+	[("laptop", [[0.5, 0.25]])],
+)
+check(
+	"with the date of today",
+	[before <= model["time"] <= int(time.time()) for model in sent],
+	[True],
+)
+check(
+	"the management daemon takes it",
+	[management_module.validate_new_model(model) for model in sent],
+	sent,
+)
+check("howdy clear ends well", clear_code, 0)
+check("the models of the user are cleared", cleared, [["someone"]])
+
+print("--- the camera that is opened when the path does not work")
 
 
 def opened_cameras(path, node):

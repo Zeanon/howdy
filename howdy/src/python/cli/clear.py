@@ -72,7 +72,7 @@ async def _run():
 				sys.exit(1)
 
 		try:
-			asyncio.run(clear_models(bus))
+			await clear_models(bus)
 		except Exception as exc:
 			print(S(f"Failed to clear models: {exc}"))
 			sys.exit(1)
