@@ -5,14 +5,52 @@ set -e
 
 BUILD_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/build"
 
-if [[ " $* " == *" --reconfigure "* ]]; then
-    echo "######################################"
-    echo "# Removing and rebuilding build dir #"
-    echo "######################################"
+# Writes the options that were chosen for a build directory (meson records them in the
+# file) as -D arguments, each ended by a NUL
+saved_options() {
+    python3 -I -c '
+import configparser, sys
+parser = configparser.ConfigParser(delimiters=("=",), interpolation=None)
+parser.optionxform = str
+parser.read(sys.argv[1])
+for key, value in parser.items("options") if parser.has_section("options") else []:
+    sys.stdout.write(f"-D{key}={value}\0")
+' "$1"
+}
 
+# The build directory is set up when there is none yet, and anew with --reconfigure
+if [[ " $* " == *" --reconfigure "* ]] || [ ! -f "$BUILD_DIR/meson-private/coredata.dat" ]; then
+    echo "################################"
+    echo "# Setting up the build dir     #"
+    echo "################################"
 
-    sudo rm -rf -- "$BUILD_DIR"
-    meson setup "$BUILD_DIR" "$(dirname -- "$BUILD_DIR")" --python.install-env venv
+    # The options of the old one are kept, without models_key_file for example the
+    # services could not read the encrypted models any more
+    CMD_LINE="$BUILD_DIR/meson-private/cmd_line.txt"
+    WORK="$(mktemp -d)"
+    trap 'rm -rf -- "$WORK"' EXIT
+    : > "$WORK/cmd_line.txt"
+    if [ -f "$CMD_LINE" ]; then
+        cp -- "$CMD_LINE" "$WORK/cmd_line.txt"
+    fi
+    saved_options "$WORK/cmd_line.txt" > "$WORK/options"
+    mapfile -d '' OPTIONS < "$WORK/options"
+    if [[ " ${OPTIONS[*]} " != *" -Dpython.install_env="* ]]; then
+        OPTIONS+=("-Dpython.install_env=venv")
+    fi
+    printf 'Option: %s\n' "${OPTIONS[@]}"
+
+    if [[ " $* " == *" --reconfigure "* ]]; then
+        sudo rm -rf -- "$BUILD_DIR"
+    fi
+    if ! meson setup "$BUILD_DIR" "$(dirname -- "$BUILD_DIR")" "${OPTIONS[@]}"; then
+        # Kept for the next run, which would take the defaults without them
+        mkdir -p "$(dirname -- "$CMD_LINE")"
+        cp -- "$WORK/cmd_line.txt" "$CMD_LINE"
+        echo "The build directory could not be set up. Its options are kept in" >&2
+        echo "$CMD_LINE, correct them there if one of them is the reason." >&2
+        exit 1
+    fi
 fi
 
 meson compile -C "$BUILD_DIR"

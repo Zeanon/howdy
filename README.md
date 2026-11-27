@@ -233,7 +233,7 @@ It calls `sudo` where needed. In detail it:
 - enables and (re)starts `howdy-authentication.service`
 - enables the `howdy-auth-popup.service` user service
 
-Add `--reconfigure` to remove and recreate the build directory first.
+Without a build directory it sets one up first. Add `--reconfigure` to remove and recreate it, the options that were chosen for it (`-D...`) are kept.
 
 At the end the script tells you to run the model installers if the face models are not installed yet, see below. Without the installer script you can also install manually with `sudo meson install -C build`.
 
