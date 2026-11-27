@@ -214,6 +214,8 @@ E "a later rule that is not valid denies" NO_MATCH
 expect "before the first stamp runs" "$([ $((SECONDS - started)) -le 10 ] && echo yes || echo "$((SECONDS - started)) s")" yes
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 20s faildeadly min_distance"
 E "an argument without = denies" NO_MATCH
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 20s faildeadly min_directons=4"
+E "an option the stamp does not have denies" NO_MATCH
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 20s faildeadly min_distance=5x"
 E "a value that is no number denies" NO_MATCH
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 1.2.3s faildeadly"

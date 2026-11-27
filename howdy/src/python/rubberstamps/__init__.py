@@ -157,9 +157,10 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 				return False
 
 			# Error out if a key has been set that was not declared by the module before
-			if key not in instance.options:
+			# (the timeout and the failure mode are not arguments, they come before them)
+			if key not in instance.options or key in ("timeout", "failsafe"):
 				print("Unknown config option for rubberstamp " + type + ": " + key)
-				continue
+				return False
 
 			# Convert the argument string to an int or float if the declared option has that type
 			try:

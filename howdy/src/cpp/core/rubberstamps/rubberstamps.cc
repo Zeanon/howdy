@@ -49,7 +49,7 @@ double to_double(const std::string& text) {
 }
 
 // Set the optional arguments of a rule, like  min_distance=8 min_directions=3. false if one of them
-// is not written like that or its value is not one of the option.
+// is not written like that, the stamp has no such option or the value is not one of the option.
 bool apply_arguments(Stamp& stamp, const StampRule& rule) {
 	std::stringstream stream(rule.arguments);
 	std::string argument;
@@ -66,7 +66,7 @@ bool apply_arguments(Stamp& stamp, const StampRule& rule) {
 		const auto option = stamp.options.find(key);
 		if (option == stamp.options.end()) {
 			log(LOG_ERR, "Unknown config option for rubberstamp " + rule.type + ": " + key);
-			continue;
+			return false;
 		}
 
 		// The declared type decides how the value is read

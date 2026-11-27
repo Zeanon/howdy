@@ -420,7 +420,7 @@ The format is `type timeout (failsafe | faildeadly) [option=value ...]`. With `f
 | `nod` | Nod to confirm, shake your head to abort | `min_distance` (6), `min_directions` (2) |
 | `hotkey` | Press a key to confirm or abort | `abort_key` (`esc`), `confirm_key` (`enter`) |
 
-Both daemons implement the stamps. A stamp that can't run (no camera, no keyboard) denies the authentication. So does a line that is not valid or names no stamp, an argument without `=` (also a comment behind a rule) and a value that is no number where one is needed; no stamp runs then. A cancelled authentication stops the running stamp right away. The texts are shown in the authentication popup, so enable `show_auth_popup` to see them.
+Both daemons implement the stamps. A stamp that can't run (no camera, no keyboard) denies the authentication. So does a line that is not valid or names no stamp, an argument without `=` (also a comment behind a rule), an option the stamp does not have and a value that is no number where one is needed; no stamp runs then. A cancelled authentication stops the running stamp right away. The texts are shown in the authentication popup, so enable `show_auth_popup` to see them.
 
 The C++ `hotkey` stamp reads the keyboards in `/dev/input` through evdev, the daemon needs access to them. Uncomment the `SupplementaryGroups` and `DeviceAllow` lines for input devices in the service override from the setup step. Keys are named like the Linux key codes (`a`, `f5`, `space`, `esc`, ...), with `ctrl`, `shift`, `alt` and `windows` as modifiers, e.g. `ctrl+alt+x`.
 

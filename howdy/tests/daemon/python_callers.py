@@ -979,6 +979,8 @@ for name, stamp_rules, expected in (
 	("two valid rules pass", "nod 1s failsafe\nnod 1s failsafe min_distance=9", [6, 9]),
 	("a later stamp that is not installed", "nod 1s failsafe\nnodd 1s failsafe", []),
 	("an argument without =", "nod 1s failsafe min_distance", []),
+	("an option the stamp does not have", "nod 1s failsafe min_directons=4", []),
+	("the timeout as an argument", "nod 1s failsafe timeout=5", []),
 	("a comment behind a rule", "nod 1s failsafe # nod", []),
 	("a value that is no number", "nod 1s failsafe min_distance=far", []),
 	("a timeout that is no number", "nod s failsafe", []),
