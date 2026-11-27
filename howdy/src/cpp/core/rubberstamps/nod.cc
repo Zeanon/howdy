@@ -10,6 +10,11 @@
 
 namespace howdy {
 
+namespace {
+// How many frames in a row show no face before another way to turn them is tried
+constexpr int EMPTY_FRAMES_BEFORE_TURN = 5;
+} // namespace
+
 NodStamp::NodStamp() {
 	options["min_distance"] = 6L;
 	options["min_directions"] = 2L;
@@ -21,7 +26,13 @@ bool NodStamp::run(const StampContext& context, const StampRule& rule) {
 
 	const double min_distance = static_cast<double>(get_int("min_distance"));
 	const auto min_directions = static_cast<std::size_t>(get_int("min_directions"));
-	const int rotate = fixed_rotation(context.rotate);
+	// With the alternating modes the one that shows a face is kept, the movement of the nose can only be
+	// followed in frames that are turned the same way
+	const auto rotations = upright_rotations(context.rotate);
+	std::size_t rotation = 0;
+	// Frames in a row without a face. One alone says nothing about the way the frames are turned: an
+	// IR emitter may light only every second one
+	int empty_frames = 0;
 
 	// Relative distance between the 2 eyes in the last frame, used to calculate
 	// the distance the nose traveled in relation to the size of the face
@@ -45,8 +56,8 @@ bool NodStamp::run(const StampContext& context, const StampRule& rule) {
 			return false;
 		}
 
-		rotate_frame(frame, rotate, 0);
-		rotate_frame(gsframe, rotate, 0);
+		rotate_frame(frame, rotations[rotation], 0);
+		rotate_frame(gsframe, rotations[rotation], 0);
 		if (context.scaling_factor != 1) {
 			cv::resize(frame, frame, cv::Size(), context.scaling_factor, context.scaling_factor, cv::INTER_AREA);
 			cv::resize(gsframe, gsframe, cv::Size(), context.scaling_factor, context.scaling_factor, cv::INTER_AREA);
@@ -57,6 +68,15 @@ bool NodStamp::run(const StampContext& context, const StampRule& rule) {
 
 		// Only continue if exactly 1 face is visible in the frame
 		const auto faces = context.backend.detect(gsframe);
+		if (!faces.empty()) {
+			empty_frames = 0;
+		} else if (rotations.size() > 1 && ++empty_frames == EMPTY_FRAMES_BEFORE_TURN) {
+			// Try the next way, positions of the one before do not count there
+			rotation = (rotation + 1) % rotations.size();
+			empty_frames = 0;
+			last_nosepoint[0] = last_nosepoint[1] = -1;
+			last_reldist = -1;
+		}
 		if (faces.size() != 1) {
 			continue;
 		}

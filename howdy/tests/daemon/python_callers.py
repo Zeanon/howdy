@@ -1033,12 +1033,73 @@ stamp.video_capture = types.SimpleNamespace(read_frame=lambda: (None, None))
 stamp.clahe = types.SimpleNamespace(apply=lambda frame: frame)
 stamp.face_detector = lambda frame, upsample: ["face"]
 stamp.pose_predictor = still_face()
+stamp.config = configparser.ConfigParser()
+stamp.opencv = {}
 started = time.monotonic()
 check(
 	"it is not taken for a nod",
 	(stamp.run(), time.monotonic() - started >= 0.3),
 	(False, True),
 )
+
+
+# A camera that is mounted sideways, with the CNN detector of dlib, which wraps its
+# rectangles: the face is only upright in a turned frame
+def nodding_face():
+	step = itertools.count()
+
+	def predict(frame, face):
+		assert face == "upright", face
+		nose = 100 + 20 * (next(step) % 2)
+		xs = (200, 180, 120, 140, 160)
+		return types.SimpleNamespace(
+			part=lambda i: types.SimpleNamespace(x=xs[i], y=nose)
+		)
+
+	return predict
+
+
+for mode in (3, 2):
+	stamp.options.update(timeout=2, failsafe=True)
+	stamp.config.read_dict({"video": {"rotate": str(mode)}})
+	stamp.video_capture = types.SimpleNamespace(
+		read_frame=lambda: (None, np.zeros((2, 4), np.uint8))
+	)
+	stamp.face_detector = lambda frame, upsample: (
+		[types.SimpleNamespace(rect="upright")] if frame.shape == (4, 2) else []
+	)
+	stamp.pose_predictor = nodding_face()
+	stamp.sleep = lambda seconds: None
+	check(f"a nod is seen with rotate = {mode}", stamp.run(), True)
+
+
+def blinking_camera():
+	"""An IR emitter that lights every second frame. A mark shows how a frame was
+	turned."""
+	step = itertools.count()
+
+	def read_frame():
+		frame = np.zeros((2, 4), np.uint8)
+		if next(step) % 2 == 0:
+			frame[0, 0] = 255
+		return None, frame
+
+	return types.SimpleNamespace(read_frame=read_frame)
+
+
+for mode, name, upright in (
+	(1, "an upright camera", lambda f: f.shape == (2, 4) and f[0, 0] == 255),
+	(1, "a sideways camera", lambda f: f.shape == (4, 2) and f[0, 1] == 255),
+	(2, "a sideways camera", lambda f: f.shape == (4, 2) and f[0, 1] == 255),
+):
+	stamp.options.update(timeout=2, failsafe=True)
+	stamp.config.read_dict({"video": {"rotate": str(mode)}})
+	stamp.video_capture = blinking_camera()
+	stamp.face_detector = lambda frame, upsample, upright=upright: (
+		[types.SimpleNamespace(rect="upright")] if upright(frame) else []
+	)
+	stamp.pose_predictor = nodding_face()
+	check(f"blinking IR, rotate = {mode}, {name}: a nod is seen", stamp.run(), True)
 
 print("--- howdy set replaces a value on several lines")
 CONFIG = os.path.join(WORK_DIR, "etc", "config.ini")

@@ -803,6 +803,7 @@ class HowdyAuthenticator:
 								"face_detector": self.face_detector,
 								"pose_predictor": self.pose_predictor,
 								"clahe": clahe,
+								"scaling_factor": scaling_factor,
 							},
 							cancel_event,
 							keep_alive=self._keep_popup_alive,

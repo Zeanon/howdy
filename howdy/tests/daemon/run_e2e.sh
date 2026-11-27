@@ -257,6 +257,28 @@ done
 cp "$T/genuine.dat" "$MODEL"
 chmod 600 "$MODEL"
 
+echo "--- the nod stamp with a camera that is turned either way"
+# One face that nods, filmed sideways: only a frame that is turned shows it upright
+"$HOWDY_PYTHON" -I "$TEST_DIR/crop_face.py" "$T/hog.json" "$IMG_DIR/2008_001009.jpg" "$T/single.jpg"
+ffmpeg -loglevel error -y -loop 1 -i "$T/single.jpg" -t 3 -r 15 -pix_fmt yuv420p \
+	-vf "pad=360:440:0:40:gray,crop=360:400:0:'20+20*sin(2*PI*n/10)',transpose=1" "$T/nod.mp4"
+for rotate in 3 2; do
+	start_daemon "${NOLIVE[@]}" "video.device_path=$T/nod.mp4" "video.rotate=$rotate" rubberstamps.enabled=true \
+		"rubberstamps.stamp_rules=nod 15s failsafe"
+	E "a nod is seen with rotate = $rotate" SUCCESS
+done
+# An IR emitter that lights only every second frame: the dark ones do not say that the frames are turned wrongly
+DARK="drawbox=c=black:t=fill:enable='eq(mod(n,2),1)'"
+ffmpeg -loglevel error -y -loop 1 -i "$T/single.jpg" -t 3 -r 15 -pix_fmt yuv420p \
+	-vf "pad=360:440:0:40:gray,crop=360:400:0:'20+20*sin(2*PI*n/10)',$DARK" "$T/nod-upright-ir.mp4"
+ffmpeg -loglevel error -y -i "$T/nod.mp4" -vf "$DARK" -pix_fmt yuv420p "$T/nod-sideways-ir.mp4"
+for setup in "1 nod-upright-ir" "2 nod-sideways-ir"; do
+	read -r rotate video <<< "$setup"
+	start_daemon "${NOLIVE[@]}" "video.device_path=$T/$video.mp4" "video.rotate=$rotate" rubberstamps.enabled=true \
+		"rubberstamps.stamp_rules=nod 15s failsafe"
+	E "a nod is seen with rotate = $rotate and a blinking IR emitter" SUCCESS
+done
+
 echo "--- the popup stays while a rubber stamp waits"
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 4s failsafe"
 dbus-monitor --address "$ADDR" "type='signal',interface='org.boltgolt.howdy.AuthPopup'" > "$T/monitor.log" 2>&1 &

@@ -12,6 +12,18 @@ def fixed_rotation(rotate):
 	return rotate if rotate in (3, 4) else 0
 
 
+def upright_rotations(rotate):
+	"""
+	The ways a frame may have to be turned for an upright face, as fixed modes (0
+	is not turned): one for the fixed modes, all of them for the alternating ones.
+	"""
+	if rotate == 1:
+		return [0, 3, 4]
+	if rotate == 2:
+		return [3, 4]
+	return [fixed_rotation(rotate)]
+
+
 def rotate_frame(frame, rotate, frame_number):
 	"""
 	Returns the frame turned the way the rotate option asks for. Modes 1 and 2
