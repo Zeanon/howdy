@@ -989,6 +989,117 @@ for name, stamp_rules, expected in (
 	check(name, (passed, ran), (bool(expected), expected))
 nod.run = original_run
 
+print("--- ffmpeg that does not deliver")
+import subprocess  # noqa: E402
+
+
+class FfmpegStream:
+	"""What the reader uses of the package ffmpeg-python, which is not needed for this"""
+
+	def input(self, *args, **kwargs):
+		return self
+
+	def output(self, *args, **kwargs):
+		return self
+
+	def run_async(self, **kwargs):
+		pipe = subprocess.PIPE
+		return subprocess.Popen(["ffmpeg"], stdout=pipe, stderr=pipe)
+
+
+# Neither is pyv4l2, both programs are stand-ins
+sys.modules["ffmpeg"] = FfmpegStream()
+sys.modules["pyv4l2"] = types.ModuleType("pyv4l2")
+sys.modules["pyv4l2.frame"] = types.SimpleNamespace(Frame=None)
+from howdy.recorders import ffmpeg_reader, pyv4l2_reader  # noqa: E402
+from howdy.recorders.video_capture import NoDeviceException  # noqa: E402
+
+
+def no_device(call):
+	"""What the call says when it gives the camera up, else what it did"""
+	try:
+		return call()
+	except NoDeviceException:
+		return "no device"
+	except Exception as exc:
+		return type(exc).__name__
+
+
+def stand_in(script):
+	directory = os.path.join(WORK_DIR, "stand-in")
+	os.makedirs(directory, exist_ok=True)
+	for name in ("ffmpeg", "ffprobe"):
+		path = os.path.join(directory, name)
+		with open(path, "w") as handle:
+			handle.write("#!/bin/sh\n" + script + "\n")
+		os.chmod(path, 0o755)
+	os.environ["PATH"] = directory + ":" + original_path
+
+
+def reader(size=0):
+	result = ffmpeg_reader.ffmpeg_reader("/dev/null", "v4l2")
+	result.width = result.height = size
+	return result
+
+
+def by_ioctl(device="/dev/null"):
+	"""The ioctl fails on a device that is no camera"""
+	return pyv4l2_reader.pyv4l2_reader(device, "v4l2")
+
+
+original_path = os.environ["PATH"]
+ffmpeg_reader.PROCESS_TIMEOUT = 1
+stand_in("exec sleep 30")
+check("no resolution in time", no_device(reader().probe), "no device")
+check("no frames in time", no_device(lambda: reader(2).record(1)), "no device")
+check("pyv4l2: no resolution in time", no_device(by_ioctl), "no device")
+stand_in("exit 1")
+check("no resolution", no_device(reader().probe), "no device")
+check("ffmpeg fails", no_device(lambda: reader(2).record(1)), "no device")
+check("pyv4l2: no resolution", no_device(by_ioctl), "no device")
+check(
+	"pyv4l2: no device at all",
+	no_device(lambda: by_ioctl("/nonexistent")),
+	"no device",
+)
+stand_in("exit 0")
+check("no frame at all", no_device(lambda: reader(2).record(1)), "no device")
+stand_in("echo 640x480")
+check("pyv4l2: the resolution of ffprobe", by_ioctl().width, 640)
+
+
+def pyv4l2_frame(size):
+	"""A frame of a 640x480 camera that delivers this many bytes"""
+	pyv4l2_reader.Frame = lambda _: types.SimpleNamespace(get_frame=lambda: bytes(size))
+	camera = by_ioctl()
+	# What the config asks for does not change what the device delivers
+	camera.width = 320
+	ok, frame = camera.read()
+	return ok, frame.shape
+
+
+check(
+	"pyv4l2: a frame of the size of the camera",
+	pyv4l2_frame(640 * 480),
+	(1, (480, 640, 3)),
+)
+check(
+	"pyv4l2: a frame of another size",
+	no_device(lambda: pyv4l2_frame(100)),
+	"no device",
+)
+os.environ["PATH"] = original_path
+
+# Three frames of 2x2 pixels, ten are asked for
+stand_in("head -c 36 /dev/zero")
+short = reader(2)
+check(
+	"ffmpeg: the frames that came",
+	[no_device(lambda: short.read()[0]) for _ in range(4)],
+	[1, 1, 1, "no device"],
+)
+os.environ["PATH"] = original_path
+
 print("--- the camera that is opened when the path does not work")
 from howdy.recorders import video_capture as capture_module  # noqa: E402
 

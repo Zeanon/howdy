@@ -11,6 +11,7 @@ from cv2 import CAP_PROP_FRAME_HEIGHT
 
 from ..i18n import S
 from ..exit_codes import CompareResult
+from .video_capture import NoDeviceException
 
 try:
 	import ffmpeg
@@ -31,9 +32,29 @@ def communicate(process):
 	except TimeoutExpired:
 		process.kill()
 		process.communicate()
-		raise RuntimeError(
+		raise NoDeviceException(
 			"ffmpeg did not finish in time, is the camera delivering a picture?"
 		)
+
+
+def ffprobe_size(device_path):
+	"""(width, height) of the device as ffprobe reports them, as texts, empty if it
+	does not"""
+	args = [
+		"ffprobe",
+		"-v",
+		"error",
+		"-select_streams",
+		"v:0",
+		"-show_entries",
+		"stream=width,height",
+		"-of",
+		"csv=p=0:s=x",
+		device_path,
+	]
+	out, _ = communicate(Popen(args, stdout=PIPE, stderr=PIPE))
+	size = re.search(r"(\d+)x(\d+)", out.decode("utf-8"))
+	return size.groups() if size else ("", "")
 
 
 class ffmpeg_reader:
@@ -87,21 +108,7 @@ class ffmpeg_reader:
 
 		if return_code != 1 or len(probe) < 1:
 			# Could not determine the resolution from ffmpeg call. Reverting to ffmpeg.probe()
-			args = [
-				"ffprobe",
-				"-v",
-				"error",
-				"-select_streams",
-				"v:0",
-				"-show_entries",
-				"stream=width,height",
-				"-of",
-				"csv=p=0:s=x",
-				self.device_path,
-			]
-			out, _ = communicate(Popen(args, stdout=PIPE, stderr=PIPE))
-			size = re.search(r"(\d+)x(\d+)", out.decode("utf-8"))
-			width, height = size.groups() if size else ("", "")
+			width, height = ffprobe_size(self.device_path)
 		else:
 			(width, height) = [x.strip() for x in probe[0].split("x")]
 
@@ -110,6 +117,11 @@ class ffmpeg_reader:
 			self.set(CAP_PROP_FRAME_HEIGHT, int(height))
 		if width.isdigit() and self.get(CAP_PROP_FRAME_WIDTH) == 0:
 			self.set(CAP_PROP_FRAME_WIDTH, int(width))
+
+		if self.get(CAP_PROP_FRAME_WIDTH) <= 0 or self.get(CAP_PROP_FRAME_HEIGHT) <= 0:
+			raise NoDeviceException(
+				S("Could not determine the resolution of the camera through ffmpeg")
+			)
 
 	def record(self, numframes):
 		"""Record a video, saving it to self.video array for processing later"""
@@ -129,7 +141,13 @@ class ffmpeg_reader:
 		)
 		stream, err = communicate(process)
 		if process.returncode != 0:
-			raise RuntimeError(f"ffmpeg failed: {err.decode('utf-8', 'replace')}")
+			raise NoDeviceException(f"ffmpeg failed: {err.decode('utf-8', 'replace')}")
+		if len(stream) < self.width * self.height * 3:
+			raise NoDeviceException(
+				S(
+					"Failed to read camera specified in the 'device_path' config option, aborting"
+				)
+			)
 		self.video = numpy.frombuffer(stream, numpy.uint8).reshape(
 			[-1, self.height, self.width, 3]
 		)
@@ -158,6 +176,14 @@ class ffmpeg_reader:
 		# Add one to num_frames_read. If we were at 0, that's fine as frame 0 is almost 100% going to be black
 		# as the IR lights aren't fully active yet anyways. Saves us one iteration in the while loop in add/compare.py.
 		self.num_frames_read += 1
+
+		# ffmpeg may deliver fewer frames than it was asked for
+		if self.num_frames_read >= len(self.video):
+			raise NoDeviceException(
+				S(
+					"Failed to read camera specified in the 'device_path' config option, aborting"
+				)
+			)
 
 		# Return a single frame of video
 		return 1, self.video[self.num_frames_read]

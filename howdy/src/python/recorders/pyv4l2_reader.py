@@ -47,21 +47,31 @@ class pyv4l2_reader:
 	def probe(self):
 		"""Probe the video device to get height and width info"""
 
-		vd = open(self.device_name)
-		fmt = v4l2.v4l2_format()
-		fmt.type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
-		ret = fcntl.ioctl(vd, v4l2.VIDIOC_G_FMT, fmt)
-		vd.close()
-		if ret == 0:
-			height = fmt.fmt.pix.height
-			width = fmt.fmt.pix.width
-		else:
-			# Could not determine the resolution from ioctl call. Reverting to slower ffmpeg.probe() method
-			import ffmpeg
+		height = width = 0
+		try:
+			with open(self.device_name) as vd:
+				fmt = v4l2.v4l2_format()
+				fmt.type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
+				# Raises OSError if it fails
+				fcntl.ioctl(vd, v4l2.VIDIOC_G_FMT, fmt)
+				height = fmt.fmt.pix.height
+				width = fmt.fmt.pix.width
+		except OSError:
+			pass
 
-			probe = ffmpeg.probe(self.device_name)
-			height = int(probe["streams"][0]["height"])
-			width = int(probe["streams"][0]["width"])
+		if not width or not height:
+			# Could not determine the resolution from ioctl call. Reverting to slower ffprobe method
+			from .ffmpeg_reader import ffprobe_size
+			from .video_capture import NoDeviceException
+
+			width, height = ffprobe_size(self.device_name)
+			if not width or not height:
+				raise NoDeviceException(
+					S("Could not determine the resolution of the camera through ffmpeg")
+				)
+
+		# The size of the frames the device delivers, whatever set() asks for later
+		self.frame_shape = (int(height), int(width))
 
 		if self.get(CAP_PROP_FRAME_HEIGHT) == 0:
 			self.set(CAP_PROP_FRAME_HEIGHT, int(height))
@@ -89,14 +99,18 @@ class pyv4l2_reader:
 		# Convert the raw frame_date to a numpy array
 		img = numpy.frombuffer(frame_data, numpy.uint8)
 
-		# Convert the numpy array to a proper grayscale image array
-		img_bgr = cvtColor(img, COLOR_GRAY2BGR)
+		# One byte per pixel, a grayscale image
+		if img.size != self.frame_shape[0] * self.frame_shape[1]:
+			from .video_capture import NoDeviceException
 
-		# Convert the grayscale image array into a proper RGB style numpy array
-		img2 = numpy.frombuffer(img_bgr, numpy.uint8).reshape([352, 352, 3])
+			raise NoDeviceException(
+				S(
+					"Failed to read camera specified in the 'device_path' config option, aborting"
+				)
+			)
 
-		# Return a single frame of video
-		return 0, img2
+		# Return a single frame of video, as BGR like the other readers do
+		return 1, cvtColor(img.reshape(self.frame_shape), COLOR_GRAY2BGR)
 
 	def release(self):
 		"""Empty our array. If we had a hold on the camera, we would give it back here."""
