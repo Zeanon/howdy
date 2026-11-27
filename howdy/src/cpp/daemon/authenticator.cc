@@ -117,7 +117,13 @@ void Authenticator::read_config() {
 	use_openvino_ = config_.get_bool(fa, "use_openvino", false);
 	timeout_ = static_cast<double>(str_to_seconds(config_.get(fa, "timeout", "4s")));
 	start_cooldown_ = std::chrono::seconds(std::max(0LL, str_to_seconds(config_.get(fa, "start_cooldown", "2s"))));
-	certainty_ = round_to(probability_to_certainty(config_.get_float(fa, "certainty", 75)), 5);
+	const double certainty = config_.get_float(fa, "certainty", 75);
+	// The setup of an older version has written values of another scale (2.2 to 4.2)
+	if (certainty < 50) {
+		log(LOG_WARNING, "The certainty of " + format_double(certainty) +
+							 " in [face_authentication] is very low, faces of other people may be accepted. It is a percentage, the default is 75");
+	}
+	certainty_ = round_to(probability_to_certainty(certainty), 5);
 	// Invert certainty if we use openvino as for openvino 1 equals full match,
 	// while for dlib 0 equals full match
 	if (use_openvino_) {

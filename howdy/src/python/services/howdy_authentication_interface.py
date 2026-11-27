@@ -155,12 +155,17 @@ class HowdyAuthenticator:
 				self.config.get("face_authentication", "start_cooldown", fallback="2s")
 			),
 		)
-		self.certainty = round(
-			probability_to_certainty(
-				self.config.getfloat("face_authentication", "certainty", fallback=75)
-			),
-			5,
+		certainty = self.config.getfloat(
+			"face_authentication", "certainty", fallback=75
 		)
+		# The setup of an older version has written values of another scale (2.2 to 4.2)
+		if certainty < 50:
+			syslog.syslog(
+				syslog.LOG_WARNING,
+				f"The certainty of {certainty} in [face_authentication] is very low, faces "
+				"of other people may be accepted. It is a percentage, the default is 75",
+			)
+		self.certainty = round(probability_to_certainty(certainty), 5)
 		# Invert certainty if we use openvino as for openvino 1 equals full match, while for dlib 0 equals full match
 		if self.use_openvino:
 			self.certainty = 1 - self.certainty
