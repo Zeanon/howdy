@@ -6,7 +6,10 @@
 #include <memory>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "rubberstamps/hotkey.hh"
 #include "rubberstamps/nod.hh"
@@ -27,15 +30,34 @@ std::unique_ptr<Stamp> make_stamp(const std::string& type) {
 	return nullptr;
 }
 
-// Set the optional arguments of a rule, like  min_distance=8 min_directions=3
-void apply_arguments(Stamp& stamp, const StampRule& rule) {
+// A number that is the whole text, "5x" is none. Throws if it is not one.
+template <typename Number> Number whole_number(const std::string& text, Number (*parse)(const std::string&, std::size_t*)) {
+	std::size_t used = 0;
+	const Number number = parse(text, &used);
+	if (used != text.size()) {
+		throw std::invalid_argument(text);
+	}
+	return number;
+}
+
+long to_long(const std::string& text) {
+	return whole_number<long>(text, [](const std::string& value, std::size_t* used) { return std::stol(value, used); });
+}
+
+double to_double(const std::string& text) {
+	return whole_number<double>(text, [](const std::string& value, std::size_t* used) { return std::stod(value, used); });
+}
+
+// Set the optional arguments of a rule, like  min_distance=8 min_directions=3. false if one of them
+// is not written like that or its value is not one of the option.
+bool apply_arguments(Stamp& stamp, const StampRule& rule) {
 	std::stringstream stream(rule.arguments);
 	std::string argument;
 	while (stream >> argument) {
 		const auto separator = argument.find('=');
 		if (separator == std::string::npos) {
 			log(LOG_ERR, "Invalid argument for rubberstamp " + rule.type + ": " + argument);
-			continue;
+			return false;
 		}
 		const std::string key = argument.substr(0, separator);
 		const std::string value = argument.substr(separator + 1);
@@ -50,16 +72,18 @@ void apply_arguments(Stamp& stamp, const StampRule& rule) {
 		// The declared type decides how the value is read
 		try {
 			if (std::holds_alternative<long>(option->second)) {
-				option->second = std::stol(value);
+				option->second = to_long(value);
 			} else if (std::holds_alternative<double>(option->second)) {
-				option->second = std::stod(value);
+				option->second = to_double(value);
 			} else {
 				option->second = value;
 			}
 		} catch (const std::exception&) {
 			log(LOG_ERR, std::format("Invalid value for the option {} of rubberstamp {}: {}", key, rule.type, value));
+			return false;
 		}
 	}
+	return true;
 }
 
 } // namespace
@@ -79,7 +103,7 @@ std::optional<StampRule> parse_stamp_rule(const std::string& line) {
 	StampRule rule;
 	rule.type = match[1].str();
 	try {
-		rule.timeout = std::stod(timeout_text);
+		rule.timeout = to_double(timeout_text);
 	} catch (const std::exception&) {
 		return std::nullopt;
 	}
@@ -93,44 +117,53 @@ StampResult run_rubberstamps(const StampContext& context) {
 
 	std::stringstream rules(context.config.get("rubberstamps", "stamp_rules"));
 	std::string line;
+	// All rules are read before the first stamp runs: nobody is asked to nod for an authentication
+	// that a later line denies anyway
+	std::vector<std::pair<std::unique_ptr<Stamp>, StampRule>> stamps;
 	while (std::getline(rules, line)) {
 		line = trim(line);
 		if (line.size() <= 1) {
 			continue;
 		}
 
+		// A stamp that can't run must not let the authentication pass, also not one with a typo
 		const auto rule = parse_stamp_rule(line);
 		if (!rule.has_value()) {
 			log(LOG_ERR, "Error parsing rubberstamp rule: " + line);
-			continue;
+			return StampResult::Denied;
 		}
 
 		auto stamp = make_stamp(rule->type);
 		if (!stamp) {
 			log(LOG_ERR, "Stamp not installed: " + rule->type);
-			continue;
+			return StampResult::Denied;
 		}
-		apply_arguments(*stamp, *rule);
+		if (!apply_arguments(*stamp, *rule)) {
+			return StampResult::Denied;
+		}
+		stamps.emplace_back(std::move(stamp), *rule);
+	}
 
+	for (const auto& [stamp, rule] : stamps) {
 		// Don't start a stamp if the authentication was cancelled already
 		check_cancelled(context);
 
 		if (verbose) {
-			log(LOG_INFO, "Executing rubberstamp " + rule->type);
+			log(LOG_INFO, "Executing rubberstamp " + rule.type);
 		}
 
 		bool result = false;
 		try {
-			result = stamp->run(context, *rule);
+			result = stamp->run(context, rule);
 		} catch (const StampCancelled&) {
 			return StampResult::Cancelled;
 		} catch (const std::exception& exc) {
 			// A stamp that can't run must not let the authentication pass
-			log(LOG_ERR, "Internal error in rubberstamp " + rule->type + ": " + exc.what());
+			log(LOG_ERR, "Internal error in rubberstamp " + rule.type + ": " + exc.what());
 		}
 
 		if (verbose) {
-			log(LOG_INFO, "Stamp " + rule->type + " returned: " + (result ? "true" : "false"));
+			log(LOG_INFO, "Stamp " + rule.type + " returned: " + (result ? "true" : "false"));
 		}
 
 		// Abort the authentication if the stamp returned false

@@ -202,6 +202,23 @@ else
 	echo "SKIPPING: no user namespace with another user"
 fi
 
+echo "--- a rubber stamp rule with a typo"
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nodd 5s faildeadly"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+E "a stamp that is not installed denies" NO_MATCH
+# All rules are read first: the nod (20 seconds) is not asked for
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true $'rubberstamps.stamp_rules=nod 20s failsafe\nnodd 5s faildeadly'
+started=$SECONDS
+E "a later rule that is not valid denies" NO_MATCH
+expect "before the first stamp runs" "$([ $((SECONDS - started)) -le 10 ] && echo yes || echo "$((SECONDS - started)) s")" yes
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 20s faildeadly min_distance"
+E "an argument without = denies" NO_MATCH
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 20s faildeadly min_distance=5x"
+E "a value that is no number denies" NO_MATCH
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 1.2.3s faildeadly"
+E "a timeout that is no number denies" NO_MATCH
+
 echo "--- a camera that delivers nothing"
 # ffmpeg is a stand-in that never ends, the daemon gives it up
 mkdir -p "$T/hang"

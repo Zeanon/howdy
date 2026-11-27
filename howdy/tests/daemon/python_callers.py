@@ -958,6 +958,36 @@ check(
 	rubberstamps.execute(rules, lambda **kwargs: None, broken),
 	False,
 )
+for name, rule in (
+	("a rule that can not be read", "nod faildeadly"),
+	("a stamp that is not installed", "nodd 5s faildeadly"),
+):
+	rules.read_dict({"rubberstamps": {"stamp_rules": rule}})
+	check(
+		f"{name} denies",
+		rubberstamps.execute(rules, lambda **kwargs: None, broken),
+		False,
+	)
+
+# All rules are read first, no stamp runs when a later line denies anyway
+from howdy.rubberstamps.nod import nod  # noqa: E402
+
+ran = []
+original_run = nod.run
+nod.run = lambda self: ran.append(self.options["min_distance"]) or True
+for name, stamp_rules, expected in (
+	("two valid rules pass", "nod 1s failsafe\nnod 1s failsafe min_distance=9", [6, 9]),
+	("a later stamp that is not installed", "nod 1s failsafe\nnodd 1s failsafe", []),
+	("an argument without =", "nod 1s failsafe min_distance", []),
+	("a comment behind a rule", "nod 1s failsafe # nod", []),
+	("a value that is no number", "nod 1s failsafe min_distance=far", []),
+	("a timeout that is no number", "nod s failsafe", []),
+):
+	rules.read_dict({"rubberstamps": {"stamp_rules": stamp_rules}})
+	ran.clear()
+	passed = rubberstamps.execute(rules, lambda **kwargs: None, broken)
+	check(name, (passed, ran), (bool(expected), expected))
+nod.run = original_run
 
 print("--- the camera that is opened when the path does not work")
 from howdy.recorders import video_capture as capture_module  # noqa: E402

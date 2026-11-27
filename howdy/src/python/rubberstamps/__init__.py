@@ -70,7 +70,10 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 	raw_rules = config.get("rubberstamps", "stamp_rules")
 	rules = raw_rules.split("\n")
 
-	# Go through the rules one by one
+	# All rules are read before the first stamp runs: nobody is asked to nod for an
+	# authentication that a later line denies anyway
+	stamps = []
+
 	for rule in rules:
 		rule = rule.strip()
 
@@ -82,17 +85,18 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 			r"^(\w+)\s+([\w\.]+)\s+([a-z]+)(.*)?$", rule, re.IGNORECASE
 		)
 
-		# Error out if the regex did not match (invalid line)
+		# Error out if the regex did not match (invalid line). A stamp that can't run must
+		# not let the authentication pass, also not one with a typo
 		if not regex_result:
 			print(S(f"Error parsing rubberstamp rule: {rule}"))
-			continue
+			return False
 
 		type = regex_result.group(1)
 
 		# Error out if the stamp name in the rule is not a file
 		if type not in installed_stamps:
 			print(S(f"Stamp not installed: {type}"))
-			continue
+			return False
 
 		# Load the stamp as a module of this package, so its relative imports work
 		module = import_module("." + type, __package__)
@@ -102,7 +106,7 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 			constructor = getattr(module, type)
 		except AttributeError:
 			print(S(f"Stamp error: Class {type} not found"))
-			continue
+			return False
 
 		# Init the class and set common values
 		instance = constructor()
@@ -119,8 +123,13 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 		instance.clahe = opencv["clahe"]
 
 		# Parse and set the 2 required options for all rubberstamps
+		try:
+			timeout = float(re.sub("[a-zA-Z]", "", regex_result.group(2)))
+		except ValueError:
+			print(S(f"Error parsing rubberstamp rule: {rule}"))
+			return False
 		instance.options = {
-			"timeout": float(re.sub("[a-zA-Z]", "", regex_result.group(2))),
+			"timeout": timeout,
 			"failsafe": regex_result.group(3) != "faildeadly",
 		}
 
@@ -142,7 +151,10 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 		# For each of those aoptional arguments
 		for option in raw_options:
 			# Get the key to the left, and the value to the right of the equal sign
-			key, value = option.split("=")
+			key, separator, value = option.partition("=")
+			if not separator:
+				print("Invalid argument for rubberstamp " + type + ": " + option)
+				return False
 
 			# Error out if a key has been set that was not declared by the module before
 			if key not in instance.options:
@@ -150,17 +162,27 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 				continue
 
 			# Convert the argument string to an int or float if the declared option has that type
-			if isinstance(instance.options[key], int):
-				value = int(value)
-			elif isinstance(instance.options[key], float):
-				value = float(value)
+			try:
+				if isinstance(instance.options[key], int):
+					value = int(value)
+				elif isinstance(instance.options[key], float):
+					value = float(value)
+			except ValueError:
+				print("Invalid argument for rubberstamp " + type + ": " + option)
+				return False
 
 			instance.options[key] = value
 
 		if verbose:
 			print('Stamp "' + type + '" options parsed:')
 			print(instance.options)
-			print("Executing stamp")
+
+		stamps.append((type, instance))
+
+	# Run the stamps one by one
+	for type, instance in stamps:
+		if verbose:
+			print('Executing stamp "' + type + '"')
 
 		# Make the stamp fail by default
 		result = False
