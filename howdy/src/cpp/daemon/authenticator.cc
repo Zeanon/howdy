@@ -408,6 +408,10 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 		++frames;
 
 		send_to_ui(nullptr, true);
+		if (ui_uid_.has_value()) {
+			// Also when the text stays the same, with black frames for example
+			popup_.keep_alive(*ui_uid_);
+		}
 
 		// Stop if we've exceeded the time limit
 		if (std::chrono::duration<double>(Clock::now() - start_time).count() > args.timeout) {
@@ -587,6 +591,11 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 						[&](const std::string& subtext) {
 							if (ui_uid_.has_value()) {
 								popup_.update_subtext(*ui_uid_, subtext);
+							}
+						},
+						[&] {
+							if (ui_uid_.has_value()) {
+								popup_.keep_alive(*ui_uid_);
 							}
 						},
 					};

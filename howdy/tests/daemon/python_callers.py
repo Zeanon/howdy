@@ -991,6 +991,38 @@ for name, stamp_rules, expected in (
 	check(name, (passed, ran), (bool(expected), expected))
 nod.run = original_run
 
+print("--- a rubber stamp looks after the popup")
+from howdy import howdy_popup_interface as popup_module  # noqa: E402
+
+alive = []
+stamp = rubberstamps.RubberStamp()
+stamp.keep_alive = lambda: alive.append(True)
+stamp.sleep(0.35)
+check("it keeps the popup alive while it sleeps", len(alive) >= 4, True)
+
+
+popup = popup_module.UIInterface()
+sent = []
+popup.UpdateMessage = lambda uid, message: sent.append(message)
+popup.keep_alive(1)
+check("no sign of life without a popup", sent, [])
+# Without a bus the signal goes nowhere, what the popup shows is remembered
+popup.Show(1, "hello")
+popup.keep_alive(1)
+check("none right after a signal", sent, [])
+time.sleep(popup_module.POPUP_KEEPALIVE + 0.05)
+popup.keep_alive(1)
+popup.keep_alive(1)
+check("after a pause the text once more", sent, ["hello"])
+popup.update_message(1, "nod")
+time.sleep(popup_module.POPUP_KEEPALIVE + 0.05)
+popup.keep_alive(1)
+check("with the text it shows now", sent, ["hello", "nod", "nod"])
+popup.Close(1)
+time.sleep(popup_module.POPUP_KEEPALIVE + 0.05)
+popup.keep_alive(1)
+check("none after the popup was closed", len(sent), 3)
+
 print("--- ffmpeg that does not deliver")
 import subprocess  # noqa: E402
 

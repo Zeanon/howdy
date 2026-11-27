@@ -163,7 +163,9 @@ class PopupWindow final {
 	}
 
 	void show_message(const std::string& message) {
+		closed_ = false;
 		message_ = message;
+		subtext_.clear();
 		deadline_ = Clock::now() + std::chrono::seconds(2);
 
 		gtk_widget_queue_draw(drawing_area_);
@@ -175,21 +177,18 @@ class PopupWindow final {
 
 	void set_message(const std::string& message) {
 		message_ = message;
-		deadline_ = Clock::now() + std::chrono::seconds(1);
-
-		gtk_widget_queue_draw(drawing_area_);
-		start_timeout();
+		refresh();
 	}
 
 	void set_subtext(const std::string& subtext) {
 		subtext_ = subtext;
-		deadline_ = Clock::now() + std::chrono::seconds(1);
-
-		gtk_widget_queue_draw(drawing_area_);
-		start_timeout();
+		refresh();
 	}
 
+	// Closed by the daemon, updates that come later do not show it any more
 	void hide() {
+		closed_ = true;
+
 		if (window_)
 			gtk_widget_hide(window_);
 
@@ -213,6 +212,20 @@ class PopupWindow final {
 	Clock::time_point deadline_;
 
 	guint timeout_id_ = 0;
+
+	bool closed_ = false;
+
+	// An update: draw it, and show the window again if it has hidden itself in a pause
+	void refresh() {
+		if (closed_)
+			return;
+
+		deadline_ = Clock::now() + std::chrono::seconds(1);
+
+		gtk_widget_queue_draw(drawing_area_);
+		gtk_widget_show_all(window_);
+		start_timeout();
+	}
 
 	void position_window() {
 		GdkDisplay* display = gdk_display_get_default();

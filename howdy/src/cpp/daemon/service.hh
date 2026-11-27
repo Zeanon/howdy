@@ -37,6 +37,7 @@ class PopupSignals final : public PopupSink {
 	void show(std::uint32_t uid, const std::string& message) override;
 	void update_message(std::uint32_t uid, const std::string& message) override;
 	void update_subtext(std::uint32_t uid, const std::string& subtext) override;
+	void keep_alive(std::uint32_t uid) override;
 	void close(std::uint32_t uid) override;
 
   private:
@@ -62,6 +63,8 @@ class PopupSignals final : public PopupSink {
 	struct Shown {
 		std::optional<std::string> message;
 		std::optional<std::string> subtext;
+		// When the last signal went out
+		Clock::time_point sent;
 	};
 	std::map<std::uint32_t, Shown> last_state_;
 };

@@ -1,7 +1,13 @@
+import time
+
 from dbus_next.service import ServiceInterface, signal
 
 
 POPUP_INTERFACE = "@popup_interface@"
+
+# How long the popup may go without a signal before its text is sent again, it hides
+# itself after a second
+POPUP_KEEPALIVE = 0.4
 
 
 class UIInterface(ServiceInterface):
@@ -17,6 +23,7 @@ class UIInterface(ServiceInterface):
 			if state["message"] == message:
 				return
 			state["message"] = message
+			state["sent"] = time.monotonic()
 		self.UpdateMessage(target_uid, message)
 
 	def update_subtext(self, target_uid, subtext):
@@ -26,7 +33,18 @@ class UIInterface(ServiceInterface):
 			if state["subtext"] == subtext:
 				return
 			state["subtext"] = subtext
+			state["sent"] = time.monotonic()
 		self.UpdateSubtext(target_uid, subtext)
+
+	def keep_alive(self, target_uid):
+		"""The popup hides itself after a while without a signal: call this while the
+		authentication runs, also when there is no new text. It is rate limited."""
+		state = self.last_state.get(target_uid)
+		if state is None or time.monotonic() - state["sent"] < POPUP_KEEPALIVE:
+			return
+		state["sent"] = time.monotonic()
+		# The text it already shows: the popup only has to hear from the daemon
+		self.UpdateMessage(target_uid, state["message"])
 
 	@signal()
 	def Show(
@@ -35,7 +53,11 @@ class UIInterface(ServiceInterface):
 		message: "s",  # type: ignore
 	) -> "us":  # type: ignore
 		# The popup starts with the text of Show and no subtext
-		self.last_state[target_uid] = {"message": message, "subtext": None}
+		self.last_state[target_uid] = {
+			"message": message,
+			"subtext": None,
+			"sent": time.monotonic(),
+		}
 		return [target_uid, message]
 
 	@signal()

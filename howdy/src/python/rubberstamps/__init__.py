@@ -16,19 +16,30 @@ class RubberStamp:
 
 	# threading.Event that is set when the authentication gets cancelled
 	cancel_event = None
+	# Called all the time a stamp runs, so that the popup stays
+	keep_alive = None
 
 	def check_cancelled(self):
-		"""Stop the stamp if the authentication was cancelled, call this regularly"""
+		"""Stop the stamp if the authentication was cancelled, and keep the popup alive.
+		Call this regularly."""
 		if self.cancel_event is not None and self.cancel_event.is_set():
 			raise StampCancelled()
+		if self.keep_alive is not None:
+			self.keep_alive()
 
 	def sleep(self, seconds):
 		"""Like time.sleep(), but wakes up early and stops the stamp on cancel"""
-		if self.cancel_event is not None:
-			self.cancel_event.wait(seconds)
-		else:
-			time.sleep(seconds)
-		self.check_cancelled()
+		end = time.monotonic() + seconds
+		while True:
+			self.check_cancelled()
+			# In small steps, the popup is looked after
+			left = min(end - time.monotonic(), 0.1)
+			if left <= 0:
+				return
+			if self.cancel_event is not None:
+				self.cancel_event.wait(left)
+			else:
+				time.sleep(left)
 
 	def send_to_ui(self, message=None, subtext=None):
 		"""Update the main text and/or the subtext of the auth popup"""
@@ -38,14 +49,14 @@ class RubberStamp:
 		self._send_to_ui(message=message, subtext=subtext)
 
 
-def execute(config, send_to_ui, opencv, cancel_event=None):
+def execute(config, send_to_ui, opencv, cancel_event=None, keep_alive=None):
 	"""Run all the stamps from the config, returns False if one of them denied the
 	authentication.
 
 	send_to_ui(message=None, subtext=None) updates the auth popup. opencv holds the
 	video_capture, face_detector, pose_predictor and clahe of the authenticator.
 	cancel_event is an optional threading.Event. If it gets set, the running stamp
-	stops and StampCancelled is raised."""
+	stops and StampCancelled is raised. keep_alive() is called while a stamp runs."""
 	verbose = config.getboolean("debug", "verbose_stamps", fallback=False)
 	dir_path = os.path.dirname(os.path.realpath(__file__))
 	installed_stamps = []
@@ -114,6 +125,7 @@ def execute(config, send_to_ui, opencv, cancel_event=None):
 		instance.config = config
 		instance._send_to_ui = send_to_ui
 		instance.cancel_event = cancel_event
+		instance.keep_alive = keep_alive
 		instance.opencv = opencv
 
 		# Set some opensv shorthands

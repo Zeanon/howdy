@@ -449,6 +449,13 @@ class HowdyAuthenticator:
 						self.auth_ui.Close(self.ui_uid)
 						self.ui_uid = None
 
+	def _keep_popup_alive(self):
+		if self.ui_uid is not None:
+			try:
+				self.auth_ui.keep_alive(self.ui_uid)
+			except Exception:
+				pass
+
 	def _prune_snapshots(self):
 		try:
 			snapshot.prune(self.snapshot_max_age, self.snapshot_max_count)
@@ -573,6 +580,8 @@ class HowdyAuthenticator:
 			frames += 1
 
 			send_to_ui(frame_counter=True)
+			# Also when the text stays the same, with black frames for example
+			self._keep_popup_alive()
 
 			# Stop if we've exceeded the time limit
 			if time.monotonic() - start_time > args.timeout:
@@ -773,6 +782,7 @@ class HowdyAuthenticator:
 									"clahe": clahe,
 								},
 								cancel_event,
+								keep_alive=self._keep_popup_alive,
 							)
 						except rubberstamps.StampCancelled:
 							return HowdyStatus.Cancelled

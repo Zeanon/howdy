@@ -101,8 +101,8 @@ sleep 0.5
 E "genuine with popup" SUCCESS show-auth-popup
 sleep 0.5
 kill "$MPID"
-members=$(grep -oE "member=(Show|UpdateMessage|UpdateSubtext|Close)" "$T/monitor.log" | uniq | cut -d= -f2 | tr '\n' ' ' || true)
-# Show carries the text "Face authentication...", the popup is only updated if a text changes
+# UpdateMessage is left out: the text of Show is sent again as a sign of life
+members=$(grep -oE "member=(Show|UpdateSubtext|Close)" "$T/monitor.log" | uniq | cut -d= -f2 | tr '\n' ' ' || true)
 expect "popup signal order" "$members" "Show UpdateSubtext Close"
 
 echo "--- untrusted model file"
@@ -220,6 +220,23 @@ start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=
 E "a value that is no number denies" NO_MATCH
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 1.2.3s faildeadly"
 E "a timeout that is no number denies" NO_MATCH
+
+echo "--- the popup stays while a rubber stamp waits"
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 4s failsafe"
+dbus-monitor --address "$ADDR" "type='signal',interface='org.boltgolt.howdy.AuthPopup'" > "$T/monitor.log" 2>&1 &
+MPID=$!
+sleep 0.5
+E "a nod that does not come, with popup" NO_MATCH show-auth-popup
+sleep 0.5
+kill "$MPID"
+# The longest time without a signal while the stamp ran, the popup hides itself after one second
+gap=$(awk '/member=(Show|UpdateMessage|UpdateSubtext|Close)/ {
+	match($0, /time=[0-9.]+/)
+	now = substr($0, RSTART + 5, RLENGTH - 5)
+	if (stamp) { if (last != "" && now - last > longest) longest = now - last; last = now }
+} /string "[^"]*[Nn]od/ { stamp = 1 }
+END { if (!stamp) print "no stamp"; else print (longest < 0.9 ? "short" : longest) }' "$T/monitor.log")
+expect "no long pause between the signals" "$gap" short
 
 echo "--- a camera that delivers nothing"
 # ffmpeg is a stand-in that never ends, the daemon gives it up

@@ -27,6 +27,9 @@ constexpr auto CLEANUP_AFTER = std::chrono::seconds(30);
 constexpr std::uint64_t CLEANUP_INTERVAL_USEC = 5ULL * 1000000ULL;
 constexpr auto INITIAL_KEEPALIVE = std::chrono::seconds(2);
 constexpr auto KEEPALIVE_EXTENSION = std::chrono::seconds(1);
+// How long the popup may go without a signal before its text is sent again, it hides
+// itself after a second
+constexpr auto POPUP_KEEPALIVE = std::chrono::milliseconds(400);
 
 void check(int r, const char* what) {
 	if (r < 0) {
@@ -97,6 +100,21 @@ void PopupSignals::close(std::uint32_t uid) {
 	post({"Close", uid, std::nullopt});
 }
 
+void PopupSignals::keep_alive(std::uint32_t uid) {
+	{
+		const std::lock_guard<std::mutex> lock(mutex_);
+		const auto it = last_state_.find(uid);
+		if (it == last_state_.end() || !it->second.message.has_value() || Clock::now() - it->second.sent < POPUP_KEEPALIVE) {
+			return;
+		}
+		it->second.sent = Clock::now();
+		// The text it already shows: the popup only has to hear from the daemon
+		queue_.push_back({"UpdateMessage", uid, it->second.message});
+	}
+	const std::uint64_t one = 1;
+	[[maybe_unused]] const auto written = ::write(eventfd_, &one, sizeof(one));
+}
+
 void PopupSignals::post(Signal signal) {
 	{
 		const std::lock_guard<std::mutex> lock(mutex_);
@@ -104,15 +122,17 @@ void PopupSignals::post(Signal signal) {
 		// The popup of a user starts with the text of Show and no subtext
 		const std::string_view member = signal.member;
 		if (member == "Show") {
-			last_state_[signal.uid] = Shown{signal.text, std::nullopt};
+			last_state_[signal.uid] = Shown{signal.text, std::nullopt, Clock::now()};
 		} else if (member == "Close") {
 			last_state_.erase(signal.uid);
 		} else if (member == "UpdateMessage" || member == "UpdateSubtext") {
-			auto& text = member == "UpdateMessage" ? last_state_[signal.uid].message : last_state_[signal.uid].subtext;
+			auto& shown = last_state_[signal.uid];
+			auto& text = member == "UpdateMessage" ? shown.message : shown.subtext;
 			if (text == signal.text) {
 				return;
 			}
 			text = signal.text;
+			shown.sent = Clock::now();
 		}
 
 		queue_.push_back(std::move(signal));

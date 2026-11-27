@@ -15,7 +15,8 @@ using Options = std::map<std::string, Option>;
 // Sleep, but stop early and throw StampCancelled if the authentication is cancelled
 void cancelable_sleep(const StampContext& context, std::chrono::milliseconds duration);
 
-// Throw StampCancelled if the authentication was cancelled
+// Throw StampCancelled if the authentication was cancelled, and keep the popup alive.
+// Call this regularly.
 void check_cancelled(const StampContext& context);
 
 // The base of all rubber stamps. To add one, derive from it, declare the options

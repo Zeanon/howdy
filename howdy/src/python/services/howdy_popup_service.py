@@ -94,29 +94,41 @@ class StickyWindow(gtk.Window):
 			geometry.y,
 		)
 
-		glib.timeout_add(100, self.check_timeout)
+		self.timer = glib.timeout_add(100, self.check_timeout)
 		self.show_all()
 
 	def check_timeout(self):
-		if time.monotonic() > self.deadline:
-			self.destroy()
-			return False
+		# Hidden in a pause, the next update shows it again. Close destroys it.
+		if time.monotonic() > self.deadline and self.get_visible():
+			self.hide()
 		return True
 
 	def on_destroy(self, *_):
 		global window
+		if self.timer is not None:
+			glib.source_remove(self.timer)
+			self.timer = None
 		if window is self:
 			window = None
 
-	def set_message(self, message):
-		self.deadline = time.monotonic() + 1
+	def show_message(self, message):
+		"""A new authentication while the window is still there"""
+		self.subtext = ""
 		self.message = str(message)
-		self.queue_draw()
+		self.refresh(2)
+
+	def set_message(self, message):
+		self.message = str(message)
+		self.refresh(1)
 
 	def set_subtext(self, subtext):
-		self.deadline = time.monotonic() + 1
 		self.subtext = str(subtext)
+		self.refresh(1)
+
+	def refresh(self, seconds):
+		self.deadline = time.monotonic() + seconds
 		self.queue_draw()
+		self.show_all()
 
 	def draw(self, widget, ctx):
 		"""Draw the UI."""
@@ -262,6 +274,8 @@ def run():
 					syslog.syslog(syslog.LOG_ERR, traceback.format_exc())
 					glib.idle_add(terminate_service)
 				return True
+			window.show_message(msg.body[1])
+			return True
 		elif msg.member == "UpdateMessage" and msg.signature == "us":
 			if window is not None:
 				window.set_message(msg.body[1])

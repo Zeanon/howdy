@@ -13,19 +13,18 @@ void cancelable_sleep(const StampContext& context, std::chrono::milliseconds dur
 	constexpr milliseconds SLICE{10};
 	const auto end = Clock::now() + duration;
 	while (Clock::now() < end) {
-		if (context.cancel.load()) {
-			throw StampCancelled();
-		}
+		check_cancelled(context);
 		std::this_thread::sleep_for(std::min<milliseconds>(SLICE, std::chrono::duration_cast<milliseconds>(end - Clock::now())));
 	}
-	if (context.cancel.load()) {
-		throw StampCancelled();
-	}
+	check_cancelled(context);
 }
 
 void check_cancelled(const StampContext& context) {
 	if (context.cancel.load()) {
 		throw StampCancelled();
+	}
+	if (context.keep_alive) {
+		context.keep_alive();
 	}
 }
 

@@ -49,6 +49,8 @@ struct StampContext {
 	// Update the main text and the subtext of the auth popup
 	std::function<void(const std::string&)> set_message;
 	std::function<void(const std::string&)> set_subtext;
+	// Called all the time a stamp runs, so that the popup stays
+	std::function<void()> keep_alive;
 };
 
 // A line of stamp_rules:  stamptype  timeout  (failsafe | faildeadly)  [key=value ...]

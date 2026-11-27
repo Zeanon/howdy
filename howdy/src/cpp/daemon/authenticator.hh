@@ -54,6 +54,9 @@ class PopupSink {
 	virtual void show(std::uint32_t uid, const std::string& message) = 0;
 	virtual void update_message(std::uint32_t uid, const std::string& message) = 0;
 	virtual void update_subtext(std::uint32_t uid, const std::string& subtext) = 0;
+	// The popup hides itself after a while without a signal: call this while the
+	// authentication runs, also when there is no new text. Cheap, it is rate limited.
+	virtual void keep_alive(std::uint32_t uid) = 0;
 	virtual void close(std::uint32_t uid) = 0;
 };
 
