@@ -1,18 +1,59 @@
 #!/bin/sh
 set -e
 
+# Where Howdy is installed to, set by dpkg for an installation into another directory
+ROOT="${DPKG_ROOT:-}"
+
+# Moves the face models of a directory of an older package to the one of this package. A file is
+# only deleted when the same content is in the new place. With "keep" nothing is copied: the files
+# are left over from an even older package and may have been removed since.
+take_models() {
+	old_directory="$ROOT$1"
+	new_directory="$ROOT/var/lib/howdy/models"
+	[ -d "$old_directory" ] || return 0
+	# A link from one to the other: these are the files of this package already
+	if [ "$old_directory" -ef "$new_directory" ]; then
+		return 0
+	fi
+	# Older packages have made them readable for everybody
+	chmod 0700 "$old_directory"
+	for old in "$old_directory"/*.dat; do
+		[ -f "$old" ] && [ ! -L "$old" ] || continue
+		chmod 0600 "$old"
+		new="$new_directory/${old##*/}"
+		# The same file through a link: the only one there is, it stays
+		if [ "$old" -ef "$new" ]; then
+			continue
+		fi
+		if [ ! -e "$new" ] && [ "$2" = move ]; then
+			# Under its name only when it is complete: a copy that broke off, on a full disk for
+			# example, must not be taken for the model the next time
+			install -m 0600 "$old" "$new.part"
+			cmp -s "$old" "$new.part"
+			mv -f "$new.part" "$new"
+			echo "Moving the face model $old to $new"
+		fi
+		if [ -f "$new" ] && cmp -s "$old" "$new"; then
+			rm -f "$old"
+		else
+			echo "Not used and left in place, delete it if you do not need it: $old"
+		fi
+	done
+	rmdir "$old_directory" 2> /dev/null || true
+}
+
 if [ "$1" = configure ]; then
-	# Packages before 3.0.3 kept the face models in /etc. Only once, on the upgrade from one
-	# of them: a model that was removed later must not come back
+	# Packages before 3.0.3 kept the face models in /etc, the ones before 3.0.2 in /lib. Only
+	# once, on the upgrade from one of them: a model that was removed later must not come back
 	if [ -n "$2" ] && dpkg --compare-versions "$2" lt "3.0.3~"; then
-		install -d -m 0700 /var/lib/howdy/models
-		for old in /etc/howdy/models/*.dat; do
-			[ -f "$old" ] || continue
-			new="/var/lib/howdy/models/${old##*/}"
-			[ -e "$new" ] && continue
-			install -m 0600 "$old" "$new"
-			echo "Copied the face model $old to $new"
-		done
+		install -d -m 0700 "$ROOT/var/lib/howdy/models"
+		take_models /etc/howdy/models move
+		# 3.0.2 has copied what was in /lib to /etc
+		if dpkg --compare-versions "$2" lt "3.0.2~"; then
+			take_models /lib/security/howdy/models move
+		else
+			take_models /lib/security/howdy/models keep
+		fi
 	fi
 
 	pam-auth-update --package

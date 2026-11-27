@@ -93,7 +93,7 @@ sudo /usr/share/howdy/dlib-models/install.sh
 sudo systemctl restart howdy-authentication.service
 ```
 
-The package holds the C++ implementation without OpenVINO and without the [encryption of the face models](#encrypting-the-face-models), for these build from source. The configuration is `/etc/howdy/config.ini`. Face models of older packages are copied to `/var/lib/howdy/models`, `apt purge howdy` deletes them.
+The package holds the C++ implementation without OpenVINO and without the [encryption of the face models](#encrypting-the-face-models), for these build from source. The configuration is `/etc/howdy/config.ini`. Face models of older packages are moved to `/var/lib/howdy/models`, a file that can not be moved there (there is another model of the same user) is reported and stays, only readable for root. `apt purge howdy` deletes all of them.
 
 #### Arch Linux
 
