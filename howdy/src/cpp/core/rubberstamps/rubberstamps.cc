@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <format>
+#include <map>
 #include <memory>
 #include <regex>
 #include <sstream>
@@ -46,6 +47,27 @@ long to_long(const std::string& text) {
 
 double to_double(const std::string& text) {
 	return whole_number<double>(text, [](const std::string& value, std::size_t* used) { return std::stod(value, used); });
+}
+
+// The seconds of a timeout, a number with s, m or h behind it (5s, 1min) or without a unit.
+// std::nullopt for anything else: a unit that is not known must not be read as seconds.
+std::optional<double> parse_timeout(const std::string& text) {
+	static const std::map<std::string, double> UNITS{{"", 1},		  {"s", 1},	   {"sec", 1},	   {"secs", 1},	   {"second", 1},
+													 {"seconds", 1},  {"m", 60},   {"min", 60},	   {"mins", 60},   {"minute", 60},
+													 {"minutes", 60}, {"h", 3600}, {"hour", 3600}, {"hours", 3600}};
+
+	const auto letter = std::find_if(text.begin(), text.end(), [](unsigned char c) { return std::isalpha(c) != 0; });
+	std::string unit(letter, text.end());
+	std::transform(unit.begin(), unit.end(), unit.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	const auto factor = UNITS.find(unit);
+	if (factor == UNITS.end()) {
+		return std::nullopt;
+	}
+	try {
+		return to_double(std::string(text.begin(), letter)) * factor->second;
+	} catch (const std::exception&) {
+		return std::nullopt;
+	}
 }
 
 // Set the optional arguments of a rule, like  min_distance=8 min_directions=3. false if one of them
@@ -96,17 +118,14 @@ std::optional<StampRule> parse_stamp_rule(const std::string& line) {
 		return std::nullopt;
 	}
 
-	// The timeout may have a unit that is ignored, like 5s
-	std::string timeout_text = match[2].str();
-	std::erase_if(timeout_text, [](unsigned char c) { return std::isalpha(c) != 0; });
+	const auto timeout = parse_timeout(match[2].str());
+	if (!timeout.has_value()) {
+		return std::nullopt;
+	}
 
 	StampRule rule;
 	rule.type = match[1].str();
-	try {
-		rule.timeout = to_double(timeout_text);
-	} catch (const std::exception&) {
-		return std::nullopt;
-	}
+	rule.timeout = *timeout;
 	rule.failsafe = match[3].str() != "faildeadly";
 	rule.arguments = match[4].str();
 	return rule;

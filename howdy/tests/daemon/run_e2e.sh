@@ -236,6 +236,14 @@ E "a value that is no number denies" NO_MATCH
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 1.2.3s faildeadly"
 E "a timeout that is no number denies" NO_MATCH
 
+# A unit that is not known is not read as seconds, minutes are minutes
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 1x faildeadly"
+E "a timeout with an unknown unit denies" NO_MATCH
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 0.05m faildeadly"
+started=$SECONDS
+E "a timeout in minutes" SUCCESS
+expect "lasts that long" "$([ $((SECONDS - started)) -ge 3 ] && echo yes || echo "$((SECONDS - started)) s")" yes
+
 echo "--- several people in the picture"
 # Each of them can log in, the checks that compare the frames look at one person only
 ffmpeg -loglevel error -y -loop 1 -i "$IMG_DIR/2008_002079.jpg" -t 3 -r 15 -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "$T/crowd.mp4"

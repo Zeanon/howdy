@@ -415,7 +415,7 @@ stamp_rules =
 	hotkey 10 faildeadly abort_key=esc confirm_key=ctrl+y
 ```
 
-The format is `type timeout (failsafe | faildeadly) [option=value ...]`. With `failsafe` a stamp that runs into its timeout denies the authentication, with `faildeadly` it lets it pass.
+The format is `type timeout (failsafe | faildeadly) [option=value ...]`. The timeout is in seconds, or has `s`, `m` or `h` behind it (`5s`, `1m`). With `failsafe` a stamp that runs into its timeout denies the authentication, with `faildeadly` it lets it pass.
 
 | Stamp | Description | Options |
 |-------|-------------|---------|

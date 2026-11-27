@@ -991,12 +991,19 @@ for name, stamp_rules, expected in (
 	("a comment behind a rule", "nod 1s failsafe # nod", []),
 	("a value that is no number", "nod 1s failsafe min_distance=far", []),
 	("a timeout that is no number", "nod s failsafe", []),
+	("a timeout with a unit that is not known", "nod 1x faildeadly", []),
 ):
 	rules.read_dict({"rubberstamps": {"stamp_rules": stamp_rules}})
 	ran.clear()
 	passed = rubberstamps.execute(rules, lambda **kwargs: None, broken)
 	check(name, (passed, ran), (bool(expected), expected))
 nod.run = original_run
+
+check(
+	"the units of a timeout",
+	[rubberstamps.parse_timeout(t) for t in ("5", "5s", "2m", "1min", "1h", "1x", "m")],
+	[5.0, 5.0, 120.0, 60.0, 3600.0, None, None],
+)
 
 print("--- the nod stamp with the eyes in the order of OpenVINO")
 

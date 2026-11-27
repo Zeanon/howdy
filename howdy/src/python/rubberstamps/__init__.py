@@ -53,6 +53,26 @@ class RubberStamp:
 		self._send_to_ui(message=message, subtext=subtext)
 
 
+TIMEOUT_UNITS = {
+	**dict.fromkeys(("", "s", "sec", "secs", "second", "seconds"), 1),
+	**dict.fromkeys(("m", "min", "mins", "minute", "minutes"), 60),
+	**dict.fromkeys(("h", "hour", "hours"), 3600),
+}
+
+
+def parse_timeout(text):
+	"""The seconds of a timeout, a number with s, m or h behind it (5s, 1min) or
+	without a unit. None for anything else: a unit that is not known must not be read
+	as seconds."""
+	match = re.fullmatch(r"([0-9.]+)([a-z]*)", text, re.IGNORECASE)
+	if not match or match.group(2).lower() not in TIMEOUT_UNITS:
+		return None
+	try:
+		return float(match.group(1)) * TIMEOUT_UNITS[match.group(2).lower()]
+	except ValueError:
+		return None
+
+
 def execute(
 	config, send_to_ui, opencv, cancel_event=None, keep_alive=None, abandoned=None
 ):
@@ -143,9 +163,8 @@ def execute(
 		instance.clahe = opencv["clahe"]
 
 		# Parse and set the 2 required options for all rubberstamps
-		try:
-			timeout = float(re.sub("[a-zA-Z]", "", regex_result.group(2)))
-		except ValueError:
+		timeout = parse_timeout(regex_result.group(2))
+		if timeout is None:
 			print(S(f"Error parsing rubberstamp rule: {rule}"))
 			return False
 		instance.options = {
