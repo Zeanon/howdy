@@ -1310,6 +1310,16 @@ for name, content, want in (
 		(1, "[core]\ndisabled=false\n"),
 	),
 	("no such option: an error", "[core]\n", (1, "[core]\n")),
+	(
+		"a comment says the same: it stays",
+		"[core]\n# disabled = false\ndisabled = false\n",
+		(0, "[core]\n# disabled = false\ndisabled = true\n"),
+	),
+	(
+		"only a comment says it that way: an error",
+		"[core]\n# disabled = false\ndisabled=false\n",
+		(1, "[core]\n# disabled = false\ndisabled=false\n"),
+	),
 ):
 	check(name, disable(content), want)
 

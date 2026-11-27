@@ -249,14 +249,14 @@ int run_disable(const Options& options, const std::vector<std::string>& original
 		throw CliError(std::string(S("The disable option has already been set to ")) + out_value);
 	}
 
-	// Only replace the line containing the disable config
+	// Only replace the line of the disable config, not a comment that says the same
 	const std::string search = "disabled = " + current;
 	const std::string replacement = "disabled = " + out_value;
 	auto lines = load_config_lines();
 	bool replaced = false;
 	for (auto& line : lines) {
-		for (std::size_t pos = line.find(search); pos != std::string::npos; pos = line.find(search, pos + replacement.size())) {
-			line.replace(pos, search.size(), replacement);
+		if (line.starts_with(search)) {
+			line.replace(0, search.size(), replacement);
 			replaced = true;
 		}
 	}

@@ -335,6 +335,15 @@ expect "disable twice" "$output" "The disable option has already been set to tru
 run as_root "$HOWDY" disable 0
 expect "enable" "$output" "Howdy has been enabled"
 expect_contains "config is enabled" "$(grep '^disabled' "$T/etc/config.ini")" "disabled = false"
+printf '[core]\n# disabled = false\ndisabled=false\n' > "$T/etc/config.ini"
+run as_root "$HOWDY" disable 1
+expect "disable, only a comment says it that way: exit code" "$code" 1
+expect "disable, the comment is not changed" "$(grep -c '^# disabled = false$' "$T/etc/config.ini")" 1
+printf '[core]\n# disabled = false\ndisabled = false\n' > "$T/etc/config.ini"
+run as_root "$HOWDY" disable 1
+expect "disable changes the option, not the comment" "$(tr '\n' '|' < "$T/etc/config.ini")" "[core]|# disabled = false|disabled = true|"
+cp "$CONFIG_TEMPLATE" "$T/etc/config.ini"
+chmod 640 "$T/etc/config.ini"
 run as_root "$HOWDY" disable maybe
 expect "disable, invalid argument" "$output" "Please only use 0 (enable) or 1 (disable) as an argument"
 expect "config permissions are kept" "$(stat -c %a "$T/etc/config.ini")" 640

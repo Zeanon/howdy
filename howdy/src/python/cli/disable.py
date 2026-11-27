@@ -52,17 +52,20 @@ if out_value == current:
 	print(S("The disable option has already been set to ") + out_value)
 	sys.exit(1)
 
-# Only the line of the disable config is replaced, written like that
+# Only the line of the disable config is replaced, written like that, not a comment
+# that says the same
 search = "disabled = " + current
 with open(config_path) as config_file:
-	if search not in config_file.read():
+	if not any(line.startswith(search) for line in config_file):
 		# Nothing would change, Howdy must not be said to be disabled then
 		print(f'Could not find "{search}" in {config_path}')
 		sys.exit(1)
 
 # Loop though the config file and only replace the line containing the disable config
 for line in fileinput.input([config_path], inplace=1):
-	print(line.replace(search, "disabled = " + out_value), end="")
+	if line.startswith(search):
+		line = "disabled = " + out_value + line[len(search) :]
+	print(line, end="")
 
 # Print what we just did
 if out_value == "true":
