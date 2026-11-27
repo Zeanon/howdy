@@ -11,7 +11,9 @@ so neither a bus nor polkit is needed.
 """
 
 import asyncio
+import builtins
 import configparser
+import importlib
 import itertools
 import json
 import os
@@ -1030,6 +1032,30 @@ check(
 	(stamp.run(), time.monotonic() - started >= 0.3),
 	(False, True),
 )
+
+print("--- howdy set replaces a value on several lines")
+CONFIG = os.path.join(WORK_DIR, "etc", "config.ini")
+os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+with open(CONFIG, "w") as handle:
+	handle.write(
+		"[rubberstamps]\nstamp_rules =\n\tnod 5s failsafe\n\n# a comment\n"
+		"\tnod 6s failsafe\n\n[debug]\nend_report = false\n"
+	)
+original_geteuid, os.geteuid = os.geteuid, lambda: 0
+builtins.howdy_args = types.SimpleNamespace(
+	arguments=["stamp_rules", "hotkey 10s faildeadly"]
+)
+try:
+	importlib.import_module("howdy.cli.set")
+finally:
+	os.geteuid = original_geteuid
+with open(CONFIG) as handle:
+	check(
+		"the old rules are gone",
+		handle.read(),
+		"[rubberstamps]\nstamp_rules = hotkey 10s faildeadly\n\n# a comment\n\n[debug]\n"
+		"end_report = false\n",
+	)
 
 print("--- several people in the picture (Python daemon)")
 

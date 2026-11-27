@@ -374,6 +374,16 @@ expect "set, unknown section" "$output" 'Could not find a "nosection.max_tries" 
 run as_root "$HOWDY" set certainty
 expect_contains "set without a value" "$output" "Please add a setting you would like to change and the value to set it to"
 
+# A value on several lines is replaced as a whole, also behind an empty line and a comment
+cp "$CONFIG_TEMPLATE" "$T/etc/config.ini"
+chmod 640 "$T/etc/config.ini"
+printf '[rubberstamps]\nstamp_rules =\n\tnod 5s failsafe\n\n# a comment\n\tnod 6s failsafe\n\n[debug]\nend_report = false\n' > "$T/etc/config.ini"
+run as_root "$HOWDY" set stamp_rules "hotkey 10s faildeadly"
+expect "set replaces all lines of a value" "$(tr '\n' '|' < "$T/etc/config.ini")" \
+	"[rubberstamps]|stamp_rules = hotkey 10s faildeadly||# a comment||[debug]|end_report = false|"
+cp "$CONFIG_TEMPLATE" "$T/etc/config.ini"
+chmod 640 "$T/etc/config.ini"
+
 # The editor and systemctl are stand-ins, the real service must not be restarted
 mkdir -p "$T/bin"
 printf '#!/bin/sh\necho "$@" >> "%s/systemctl.log"\n' "$T" > "$T/bin/systemctl"

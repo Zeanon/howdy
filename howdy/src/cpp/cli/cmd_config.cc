@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <ranges>
 
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -116,6 +117,21 @@ void save_config(const std::vector<std::string>& lines) {
 		write_file_atomic(path, content, info.st_mode & 07777, info.st_uid, info.st_gid);
 	} catch (const std::exception& exc) {
 		throw CliError(exc.what());
+	}
+}
+
+// The indented lines behind an option belong to its value (stamp_rules has one rule on each), they
+// go with the old value. Empty lines and comments between them stay.
+void remove_continuation(std::vector<std::string>& lines, std::size_t option_line) {
+	for (std::size_t i = option_line + 1; i < lines.size();) {
+		const std::string text = trim(lines[i]);
+		if (text.empty() || text.front() == '#' || text.front() == ';') {
+			++i;
+		} else if (std::isspace(static_cast<unsigned char>(lines[i].front())) != 0) {
+			lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(i));
+		} else {
+			break;
+		}
 	}
 }
 
@@ -320,11 +336,13 @@ int run_set(const Options& options, const std::vector<std::string>& original_arg
 		throw CliError("\"" + option + "\" is in several sections, say which one:" + choices);
 	}
 
-	for (const std::size_t i : found) {
+	// From the last one on, so that removing lines does not move the ones that are still to do
+	for (const std::size_t i : std::views::reverse(found)) {
 		lines[i] = option;
 		lines[i] += " = ";
 		lines[i] += value;
 		lines[i] += "\n";
+		remove_continuation(lines, i);
 	}
 	save_config(lines);
 

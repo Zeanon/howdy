@@ -59,9 +59,31 @@ if len(sections) > 1:
 		print(f"\thowdy set {name}.{option} {set_value}")
 	sys.exit(1)
 
+
+def continuation_lines(numbers):
+	"""The indented lines behind an option belong to its value (stamp_rules has one
+	rule on each), they go with the old value. Empty lines and comments between them
+	stay."""
+	inside = False
+	with open(config_path) as config_file:
+		for number, line in enumerate(config_file):
+			text = line.strip()
+			if number in numbers:
+				inside = True
+			elif not inside or not text or text.startswith(("#", ";")):
+				continue
+			elif line[0].isspace():
+				yield number
+			else:
+				inside = False
+
+
 # Go through the file again and update the lines
 numbers = {number for number, _ in found}
+removed = set(continuation_lines(numbers))
 for number, line in enumerate(fileinput.input([config_path], inplace=1)):
+	if number in removed:
+		continue
 	print(option + " = " + set_value + "\n" if number in numbers else line, end="")
 
 print(S("Config option updated"))
