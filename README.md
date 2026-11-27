@@ -201,7 +201,7 @@ The environment has to exist **before** `meson setup`, because the interpreter i
    meson setup build --python.install-env venv
    ```
 
-   With a venv at the default location this is already what `./install.sh --reconfigure` does.
+   With a venv at the default location this is already what `./install.sh` does when there is no build directory yet (and `--reconfigure`, which keeps the options of the old one).
 
 Reinstalling Howdy replaces the `howdy` package in the venv. `install.sh` removes the old copies first, so no stale files stay behind. If your Python version changes (e.g. after a distribution upgrade), recreate the venv and reinstall.
 
@@ -233,7 +233,7 @@ It calls `sudo` where needed. In detail it:
 - enables and (re)starts `howdy-authentication.service`
 - enables the `howdy-auth-popup.service` user service
 
-Without a build directory it sets one up first. Add `--reconfigure` to remove and recreate it, the options that were chosen for it (`-D...`) are kept.
+Other arguments are refused, build options are set with `meson configure build -D...`. Without a build directory it sets one up first. Add `--reconfigure` to remove and recreate it, the options that were chosen for it (`-D...`) are kept.
 
 At the end the script tells you to run the model installers if the face models are not installed yet, see below. Without the installer script you can also install manually with `sudo meson install -C build`.
 

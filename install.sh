@@ -5,6 +5,19 @@ set -e
 
 BUILD_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/build"
 
+# A typo must not be passed over: the installation would run without what was asked for
+for argument in "$@"; do
+    case "$argument" in
+        --reconfigure | --encrypt-models | --restore-models-key) ;;
+        *)
+            echo "Unknown argument: $argument" >&2
+            echo "Usage: $0 [--reconfigure] [--encrypt-models] [--restore-models-key]" >&2
+            echo "Build options are set with: meson configure build -Dname=value" >&2
+            exit 1
+            ;;
+    esac
+done
+
 # Writes the options that were chosen for a build directory (meson records them in the
 # file) as -D arguments, each ended by a NUL
 saved_options() {
