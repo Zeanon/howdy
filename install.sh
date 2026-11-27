@@ -219,6 +219,22 @@ sudo bash -c '
     systemctl --global enable howdy-auth-popup.service
 ' bash "$BUILD_DIR" "$MODELS_DIR" "$PYTHON_SITE_PACKAGES"
 
+# The files of PAM that name the text, not those that only mention it in a comment, and
+# no backups, PAM does not read them. Fails if there is none.
+pam_files_naming() {
+    local file found=1
+    for file in /etc/pam.d/*; do
+        case "$file" in
+            *.bak | *.pam-old | *.dpkg-*) continue ;;
+        esac
+        if sed 's/#.*//' -- "$file" 2> /dev/null | grep -qF -- "$1"; then
+            echo "$file"
+            found=0
+        fi
+    done
+    return "$found"
+}
+
 # A pam_howdy.so that an older installation has put into another directory is not
 # removed: a PAM file that names its full path would go on loading it. It is reported,
 # with the files that name it.
@@ -240,12 +256,14 @@ report_old_pam_modules() {
         echo "Run 'sudo pam-auth-update', install the additional PAM files again if you use them,"
         echo "and delete the old module when nothing names it any more. It is named in:"
         # With and without /usr, both lead to it
-        grep -lsF -- "${real#/usr}" /etc/pam.d/* || echo "(no file in /etc/pam.d)"
+        pam_files_naming "${real#/usr}" || echo "(no file in /etc/pam.d)"
     done
 }
 
+# Only for the report: a failure must not end the installation
 PAM_MODULE="$(meson introspect "$BUILD_DIR" --installed |
-    python3 -I -c 'import json, sys; print(next((path for path in json.load(sys.stdin).values() if path.endswith("/pam_howdy.so")), ""))')"
+    python3 -I -c 'import json, sys; print(next((path for path in json.load(sys.stdin).values() if path.endswith("/pam_howdy.so")), ""))' 2> /dev/null)" ||
+    PAM_MODULE=""
 if [ -n "$PAM_MODULE" ]; then
     report_old_pam_modules "$PAM_MODULE"
 fi
