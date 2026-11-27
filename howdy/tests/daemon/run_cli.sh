@@ -467,6 +467,14 @@ if [ "${SLOW_TESTS:-0}" = 1 ]; then
 	sleep 33
 	expect "daemon stops after the idle timeout" "$(pgrep -f "^$T/management" > /dev/null && echo running || echo stopped)" stopped
 	expect "daemon is started again by the next call" "$(mcall List s "$USER_NAME")" 's "[]"'
+	# A call around the moment it gives up its name is answered, by it or by the next one
+	sleep 29.9
+	answers=""
+	for _ in 1 2 3 4 5 6; do
+		answers+="$(mcall List s "$USER_NAME");"
+		sleep 0.05
+	done
+	expect "calls while the daemon stops are answered" "$answers" "$(printf 's "[]";%.0s' 1 2 3 4 5 6)"
 fi
 
 second_pass

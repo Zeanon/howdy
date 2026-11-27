@@ -9,6 +9,8 @@
 #include <string_view>
 #include <vector>
 
+#include <systemd/sd-daemon.h>
+
 #include "caller.hh"
 #include "paths.hh"
 #include "polkit.hh"
@@ -123,7 +125,7 @@ int ManagementService::on_message(sd_bus_message* message, void* userdata, sd_bu
 
 int ManagementService::handle(sd_bus_message* message) {
 	uint8_t type = 0;
-	if (sd_bus_message_get_type(message, &type) < 0 || type != SD_BUS_MESSAGE_METHOD_CALL || stopping_) {
+	if (sd_bus_message_get_type(message, &type) < 0 || type != SD_BUS_MESSAGE_METHOD_CALL) {
 		return 0;
 	}
 
@@ -289,20 +291,34 @@ void ManagementService::execute(const Request& request) {
 }
 
 void ManagementService::arm_idle_timer() {
-	if (pending_ > 0 || stopping_) {
+	if (pending_ > 0) {
 		return;
 	}
-	sd_event_source_set_time_relative(idle_timer_, static_cast<std::uint64_t>(IDLE_TIMEOUT.count()) * USEC_PER_SEC);
+	const auto timeout = stopping_ ? DRAIN_TIMEOUT : IDLE_TIMEOUT;
+	sd_event_source_set_time_relative(idle_timer_, static_cast<std::uint64_t>(timeout.count()) * USEC_PER_SEC);
 	sd_event_source_set_enabled(idle_timer_, SD_EVENT_ONESHOT);
 }
 
 int ManagementService::on_idle(sd_event_source* /*source*/, std::uint64_t /*usec*/, void* userdata) {
 	auto* self = static_cast<ManagementService*>(userdata);
-	if (self->pending_ == 0) {
-		self->stopping_ = true;
-		log(LOG_INFO, "Howdy Management D-Bus service stopped after inactivity");
-		sd_event_exit(self->event_, 0);
+	if (self->pending_ != 0) {
+		return 0;
 	}
+	if (!self->stopping_) {
+		// Give up the name before the end: a call that comes now starts a new service, the
+		// ones that were sent here already are still answered
+		self->stopping_ = true;
+		// Else systemd takes the lost name for a failure and kills the process
+		sd_notify(0, "STOPPING=1");
+		const int r = sd_bus_release_name(self->bus_, paths::MANAGEMENT_BUS);
+		if (r < 0) {
+			log(LOG_WARNING, std::string("Failed to release the bus name: ") + std::strerror(-r));
+		}
+		self->arm_idle_timer();
+		return 0;
+	}
+	log(LOG_INFO, "Howdy Management D-Bus service stopped after inactivity");
+	sd_event_exit(self->event_, 0);
 	return 0;
 }
 

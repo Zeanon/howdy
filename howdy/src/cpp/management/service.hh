@@ -23,7 +23,7 @@ namespace howdy {
 // sudo), because the answers say how far a face is from the models, and a program that may ask
 // often enough could work out the models from them. The metric is "euclidean" or "dot", the face
 // an array of doubles. The service quits after a while without requests, it is started by D-Bus
-// activation again.
+// activation again. It gives up its name first and still answers what was on the way.
 class ManagementService {
   public:
 	ManagementService(sd_bus* bus, sd_event* event, ModelStore store);
@@ -36,6 +36,8 @@ class ManagementService {
 
 	// Time without requests until the service stops
 	static constexpr std::chrono::seconds IDLE_TIMEOUT{30};
+	// Time without requests after the name was given up until the process ends
+	static constexpr std::chrono::seconds DRAIN_TIMEOUT{1};
 
   private:
 	struct Request;

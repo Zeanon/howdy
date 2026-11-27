@@ -6,6 +6,7 @@ import json
 import math
 import syslog
 import asyncio
+import socket
 import traceback
 
 from . import paths_factory
@@ -55,6 +56,8 @@ POLKIT_ALLOW_USER_INTERACTION = 1
 
 
 IDLE_TIMEOUT = 30
+# Time without requests after the name was given up until the process ends
+DRAIN_TIMEOUT = 1
 
 
 def validate_label(label):
@@ -127,6 +130,21 @@ def check_model(model, model_id, expected_label, expected_time):
 		)
 
 
+def notify_stopping():
+	"""sd_notify STOPPING=1, nothing to do without systemd"""
+	address = os.environ.get("NOTIFY_SOCKET")
+	if not address:
+		return
+	# An @ at the start means the abstract namespace
+	if address.startswith("@"):
+		address = "\0" + address[1:]
+	try:
+		with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+			notify.sendto(b"STOPPING=1", address)
+	except OSError as exc:
+		syslog.syslog(syslog.LOG_WARNING, f"Failed to notify systemd: {exc}")
+
+
 class NotAuthorized(Exception):
 	"""The caller may not manage the face models"""
 
@@ -176,6 +194,15 @@ class ManagementInterface:
 		self.stopping = True
 		self.shutdown_event.set()
 
+	async def drain(self):
+		"""Answer what was sent here before the name was given up, until no call is
+		left and none came for a moment"""
+		while True:
+			await asyncio.sleep(DRAIN_TIMEOUT)
+			if not self.tasks:
+				return
+			await asyncio.wait(set(self.tasks))
+
 	def handle_message(self, msg):
 		if (
 			msg.message_type != MessageType.METHOD_CALL
@@ -192,9 +219,6 @@ class ManagementInterface:
 		signature, callback = method
 
 		if msg.signature not in (signature, "s" + signature):
-			return False
-
-		if self.stopping:
 			return False
 
 		self.cancel_idle_timer()
@@ -477,6 +501,13 @@ async def main():
 
 	# Wait until the service becomes idle
 	await management_service.shutdown_event.wait()
+
+	# Give up the name before the end: a call that comes now starts a new service, the
+	# ones that were sent here already are still answered. systemd is told first, else
+	# it takes the lost name for a failure and kills the process.
+	notify_stopping()
+	await bus.release_name(MANAGEMENT_BUS)
+	await management_service.drain()
 
 	syslog.syslog(
 		syslog.LOG_INFO,

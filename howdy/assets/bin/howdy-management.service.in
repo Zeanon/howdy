@@ -8,6 +8,8 @@ StartLimitBurst=5
 [Service]
 Type=dbus
 BusName=@management_bus@
+# The daemon says that it is stopping before it gives up its name after a while without requests
+NotifyAccess=main
 ExecStart=@management_exec@
 
 User=root
