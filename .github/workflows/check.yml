@@ -50,5 +50,6 @@ jobs:
           howdy/tests/daemon/run_trusted_file.sh
           howdy/tests/daemon/run_model_crypto.sh
           howdy/tests/daemon/run_snapshot.sh
+          howdy/tests/daemon/run_hotkey.sh
           howdy/tests/daemon/run_python.sh
           DAEMON_ONLY=1 howdy/tests/daemon/run_cli.sh

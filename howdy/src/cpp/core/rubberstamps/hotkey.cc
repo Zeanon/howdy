@@ -4,6 +4,7 @@
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -130,9 +131,9 @@ class KeyboardReader {
 		return devices_.empty();
 	}
 
-	// Handle the events since the last call and return the keys that were pressed
-	std::vector<int> poll() {
-		std::vector<int> presses;
+	// Handle the events since the last call. `on_press` is called for every key that was pressed, at
+	// that moment: a key that is let go again before the next call is pressed during the call all the same.
+	void poll(const std::function<void(int)>& on_press) {
 		for (const auto& [fd, device] : devices_) {
 			unsigned int flags = LIBEVDEV_READ_FLAG_NORMAL;
 			input_event event{};
@@ -149,13 +150,12 @@ class KeyboardReader {
 				}
 				if (event.value == 1) {
 					pressed_.insert(static_cast<int>(event.code));
-					presses.push_back(static_cast<int>(event.code));
+					on_press(static_cast<int>(event.code));
 				} else if (event.value == 0) {
 					pressed_.erase(static_cast<int>(event.code));
 				}
 			}
 		}
-		return presses;
 	}
 
 	[[nodiscard]] bool is_pressed(int code) const {
@@ -167,11 +167,10 @@ class KeyboardReader {
 	std::set<int> pressed_;
 };
 
-// Whether one of the new presses completed the hotkey
-bool hotkey_triggered(const Hotkey& hotkey, const KeyboardReader& reader, const std::vector<int>& presses) {
-	const bool in_hotkey = std::any_of(presses.begin(), presses.end(), [&](int press) {
-		return std::any_of(hotkey.begin(), hotkey.end(), [&](const KeyGroup& group) { return std::find(group.begin(), group.end(), press) != group.end(); });
-	});
+// Whether the press of this key completed the hotkey
+bool hotkey_triggered(const Hotkey& hotkey, const KeyboardReader& reader, int press) {
+	const bool in_hotkey =
+		std::any_of(hotkey.begin(), hotkey.end(), [&](const KeyGroup& group) { return std::find(group.begin(), group.end(), press) != group.end(); });
 	if (!in_hotkey) {
 		return false;
 	}
@@ -213,10 +212,15 @@ bool HotkeyStamp::run(const StampContext& context, const StampRule& rule) {
 		time_left -= 0.1;
 		context.set_message(time_text + std::to_string(static_cast<int>(time_left) + 1));
 
-		const auto presses = reader.poll();
+		bool aborted = false;
+		bool confirmed = false;
+		reader.poll([&](int press) {
+			aborted = aborted || hotkey_triggered(*abort_key, reader, press);
+			confirmed = confirmed || hotkey_triggered(*confirm_key, reader, press);
+		});
 
 		// If the abort key was pressed while the loop was sleeping
-		if (hotkey_triggered(*abort_key, reader, presses)) {
+		if (aborted) {
 			context.set_message(S("Authentication aborted"));
 			context.set_subtext("");
 			cancelable_sleep(context, milliseconds(1000));
@@ -224,7 +228,7 @@ bool HotkeyStamp::run(const StampContext& context, const StampRule& rule) {
 		}
 
 		// The authentication can continue if confirm was pressed
-		if (hotkey_triggered(*confirm_key, reader, presses)) {
+		if (confirmed) {
 			return true;
 		}
 

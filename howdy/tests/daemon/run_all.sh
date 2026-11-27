@@ -14,6 +14,7 @@ SUITES=(
 	run_trusted_file
 	run_model_crypto
 	run_snapshot
+	run_hotkey
 	run_python
 	run_parity
 	run_e2e
