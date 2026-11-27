@@ -1,16 +1,15 @@
 #include "model_store.hh"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <fstream>
-#include <limits>
 #include <optional>
 #include <stdexcept>
 
 #include <sys/stat.h>
 
 #include "model_crypto.hh"
+#include "model_time.hh"
 #include "trusted_file.hh"
 #include "util.hh"
 
@@ -35,21 +34,6 @@ constexpr std::size_t MAX_MODELS_PER_USER = 64;
 bool has_id(const nlohmann::json& model, std::int64_t model_id) {
 	const auto id = model.find("id");
 	return id != model.end() && id->is_number_integer() && id->get<std::int64_t>() == model_id;
-}
-
-inline std::optional<std::int64_t> get_model_time(const nlohmann::json& model) {
-	const auto time = model.find("time");
-	if (time == model.end() || !time->is_number()) {
-		return std::nullopt;
-	}
-
-	const long double value = time->get<long double>();
-
-	if (!std::isfinite(value) || value < static_cast<long double>(std::numeric_limits<std::int64_t>::min()) || value >= std::ldexp(1.0L, 63)) {
-		return std::nullopt;
-	}
-
-	return static_cast<std::int64_t>(value);
 }
 
 // The text goes to terminals and dialogs: no control characters, which includes the C1 ones that some

@@ -1,15 +1,14 @@
 #include "management_client.hh"
 
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <stdexcept>
 
 #include <nlohmann/json.hpp>
 
+#include "model_time.hh"
 #include "paths.hh"
 #include "polkit.hh"
 
@@ -23,21 +22,6 @@ struct MessageDeleter {
 	}
 };
 using MessagePtr = std::unique_ptr<sd_bus_message, MessageDeleter>;
-
-std::int64_t model_time(const nlohmann::json& model) {
-	const auto value_json = model.find("time");
-	if (value_json == model.end() || !value_json->is_number()) {
-		throw std::runtime_error("Invalid model time in reply of the management daemon");
-	}
-	const long double value = value_json->get<long double>();
-	// 2^63 is exactly representable even when long double is only a double. Use
-	// it as an exclusive upper bound, since INT64_MAX may round up to it.
-	const long double int64_upper_bound = std::ldexp(1.0L, 63);
-	if (!std::isfinite(value) || value < static_cast<long double>(std::numeric_limits<std::int64_t>::min()) || value >= int64_upper_bound) {
-		throw std::runtime_error("Invalid model time in reply of the management daemon");
-	}
-	return static_cast<std::int64_t>(value);
-}
 
 // Call a method of the management interface, `append` adds the arguments to the call. The daemon
 // may wait for the user to authenticate, so the timeout is long. Returns the reply, an error of
@@ -182,7 +166,11 @@ std::vector<ModelInfo> list_models(sd_bus* bus, const std::string& user) {
 	for (const auto& model : models) {
 		ModelInfo info;
 		info.id = model.at("id").get<long long>();
-		info.time = model_time(model);
+		const auto time = get_model_time(model);
+		if (!time.has_value()) {
+			throw std::runtime_error("Invalid model time in reply of the management daemon");
+		}
+		info.time = *time;
 		info.label = model.at("label").get<std::string>();
 		result.push_back(std::move(info));
 	}
