@@ -87,7 +87,9 @@ def validate_new_model(model):
 	would have no limit."""
 	if not isinstance(model, dict):
 		raise TypeError("Model must be a dictionary")
-	if not is_number(model.get("time")):
+	# The clients read the time as a 64 bit integer
+	time = model.get("time")
+	if not is_number(time) or not -(2**63) <= time < 2**63:
 		raise TypeError("Model has no valid time")
 	validate_label(model.get("label"))
 	data = model.get("data")

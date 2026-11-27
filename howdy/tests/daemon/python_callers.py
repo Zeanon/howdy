@@ -888,6 +888,8 @@ async def managing():
 				{"time": float("nan")},
 				"Model has no valid time",
 			),
+			("a time of 1e300", {"time": 1e300}, "Model has no valid time"),
+			("a time of 2^63", {"time": 2**63}, "Model has no valid time"),
 			("no data", {"data": None}, "Model has no valid data"),
 			("text as encoding", {"data": [["a"]]}, "Model has no valid data"),
 			("an encoding too long", {"data": [[1] * 513]}, "Model has no valid data"),
