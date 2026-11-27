@@ -4,6 +4,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstring>
 #include <filesystem>
@@ -288,11 +289,17 @@ class FfmpegReader final : public FrameReader {
 			}
 		}
 
-		if (height_ == 0) {
-			height_ = height;
+		if (width <= 0 || height <= 0) {
+			return;
 		}
-		if (width_ == 0) {
+		// The picture is scaled to what was set, a size that was not set keeps its shape
+		if (width_ == 0 && height_ == 0) {
 			width_ = width;
+			height_ = height;
+		} else if (width_ == 0) {
+			width_ = std::max(1, static_cast<int>(std::lround(static_cast<double>(width) * height_ / height)));
+		} else if (height_ == 0) {
+			height_ = std::max(1, static_cast<int>(std::lround(static_cast<double>(height) * width_ / width)));
 		}
 	}
 
@@ -318,6 +325,9 @@ class FfmpegReader final : public FrameReader {
 			device_format_,
 			"-i",
 			device_path_,
+			// The frames are cut by this size
+			"-vf",
+			"scale=" + std::to_string(width_) + ":" + std::to_string(height_),
 			"-f",
 			"rawvideo",
 			"-pix_fmt",

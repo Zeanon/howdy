@@ -1092,6 +1092,7 @@ class FfmpegStream:
 		return self
 
 	def output(self, *args, **kwargs):
+		self.output_options = kwargs
 		return self
 
 	def run_async(self, **kwargs):
@@ -1190,6 +1191,25 @@ check(
 	[no_device(lambda: short.read()[0]) for _ in range(4)],
 	[1, 1, 1, "no device"],
 )
+check(
+	"ffmpeg scales to the size the frames are cut by",
+	sys.modules["ffmpeg"].output_options.get("vf"),
+	"scale=2:2",
+)
+
+
+def filled(width, height):
+	"""The size of a reader after the one of a 640x480 camera was filled in"""
+	result = ffmpeg_reader.ffmpeg_reader("/dev/null", "v4l2")
+	result.width, result.height = width, height
+	result.fill_size(640, 480)
+	return result.width, result.height
+
+
+check("no size set: the one of the camera", filled(0, 0), (640, 480))
+check("only the width: the shape is kept", filled(320, 0), (320, 240))
+check("only the height: the shape is kept", filled(0, 240), (320, 240))
+check("both set: as they are", filled(100, 100), (100, 100))
 os.environ["PATH"] = original_path
 
 print("--- the cache directory of OpenVINO")

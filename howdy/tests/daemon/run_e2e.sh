@@ -68,6 +68,10 @@ E "genuine, strict certainty=99 in the config" TIMEOUT
 start_daemon "${NOLIVE[@]}"
 E "invalid argument" ERROR timeout=abc
 E "a threshold can not be set by an argument" SUCCESS certainty=1 confirmations=99 anti-spoof-threshold=0
+# The ffmpeg reader scales the picture to the size of the config, here only the width is set
+start_daemon "${NOLIVE[@]}" video.frame_width=400
+E "genuine face, scaled picture" SUCCESS
+start_daemon "${NOLIVE[@]}"
 cp "$T/impostor.dat" "$MODEL"
 E "foreign face" TIMEOUT
 USER_NAME=nosuchuser E "unknown user" "Call failed: Unknown user"

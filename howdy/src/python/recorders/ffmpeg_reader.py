@@ -112,16 +112,28 @@ class ffmpeg_reader:
 		else:
 			(width, height) = [x.strip() for x in probe[0].split("x")]
 
-		# Set height and width from probe if they haven't been set already
-		if height.isdigit() and self.get(CAP_PROP_FRAME_HEIGHT) == 0:
-			self.set(CAP_PROP_FRAME_HEIGHT, int(height))
-		if width.isdigit() and self.get(CAP_PROP_FRAME_WIDTH) == 0:
-			self.set(CAP_PROP_FRAME_WIDTH, int(width))
+		if width.isdigit() and height.isdigit() and int(width) and int(height):
+			self.fill_size(int(width), int(height))
 
 		if self.get(CAP_PROP_FRAME_WIDTH) <= 0 or self.get(CAP_PROP_FRAME_HEIGHT) <= 0:
 			raise NoDeviceException(
 				S("Could not determine the resolution of the camera through ffmpeg")
 			)
+
+	def fill_size(self, width, height):
+		"""Set what was not set from the size of the camera. The picture is scaled to
+		what was set, a size that was not set keeps its shape."""
+		wanted_width = self.get(CAP_PROP_FRAME_WIDTH)
+		wanted_height = self.get(CAP_PROP_FRAME_HEIGHT)
+		if wanted_width == 0 and wanted_height == 0:
+			self.set(CAP_PROP_FRAME_WIDTH, width)
+			self.set(CAP_PROP_FRAME_HEIGHT, height)
+		elif wanted_width == 0:
+			scaled = max(1, round(width * wanted_height / height))
+			self.set(CAP_PROP_FRAME_WIDTH, scaled)
+		elif wanted_height == 0:
+			scaled = max(1, round(height * wanted_width / width))
+			self.set(CAP_PROP_FRAME_HEIGHT, scaled)
 
 	def record(self, numframes):
 		"""Record a video, saving it to self.video array for processing later"""
@@ -136,7 +148,14 @@ class ffmpeg_reader:
 		# Record a predetermined amount of frames from the camera
 		process = (
 			ffmpeg.input(self.device_path, format=self.device_format)
-			.output("pipe:", format="rawvideo", pix_fmt="rgb24", vframes=numframes)
+			.output(
+				"pipe:",
+				format="rawvideo",
+				pix_fmt="rgb24",
+				vframes=numframes,
+				# The frames are cut by this size
+				vf=f"scale={int(self.width)}:{int(self.height)}",
+			)
 			.run_async(pipe_stdout=True, pipe_stderr=True)
 		)
 		stream, err = communicate(process)
