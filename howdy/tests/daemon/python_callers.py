@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import types
 
@@ -83,9 +84,11 @@ def stage():
 
 sys.path.insert(0, stage())
 
+import numpy as np  # noqa: E402
 from dbus_next import DBusError, MessageType  # noqa: E402
 from dbus_next.service import ServiceInterface  # noqa: E402
 
+from howdy import anti_spoof_core  # noqa: E402
 from howdy import howdy_authentication_interface as auth_module  # noqa: E402
 from howdy import howdy_management_daemon as management_module  # noqa: E402
 from howdy.caller import (  # noqa: E402
@@ -1028,8 +1031,71 @@ check(
 	(False, True),
 )
 
+print("--- several people in the picture (Python daemon)")
+
+
+def logs_in(person):
+	"""Whether the Python daemon lets in the user whose face is this one of the two
+	in the picture. The encodings of the two are far from each other."""
+	vectors = {0: np.eye(128)[0], 1: np.eye(128)[1]}
+	path = management_module.paths_factory.user_model_path("crowd")
+	os.makedirs(os.path.dirname(path), exist_ok=True)
+	os.chmod(os.path.dirname(path), 0o700)
+	with open(path, "w") as handle:
+		json.dump(
+			[{"id": 0, "time": 0, "label": "a", "data": [list(vectors[person] * 0.9)]}],
+			handle,
+		)
+	os.chmod(path, 0o600)
+
+	daemon = object.__new__(auth_module.HowdyAuthenticator)
+	picture = np.random.default_rng(1).integers(60, 200, (240, 320), np.uint8)
+	similarity = anti_spoof_core.SimilarityDetector()
+	similarity.init(8)
+	daemon.__dict__.update(
+		config=configparser.ConfigParser(),
+		video_capture=types.SimpleNamespace(
+			internal=types.SimpleNamespace(get=lambda _: 240),
+			read_frame=lambda: (np.dstack([picture] * 3), picture.copy()),
+		),
+		ui_uid=None,
+		use_openvino=False,
+		use_cnn=False,
+		face_detector=lambda frame, upsample: [0, 1],
+		pose_predictor=lambda frame, face: face,
+		face_encoder=types.SimpleNamespace(
+			compute_face_descriptor=lambda frame, face, jitters: vectors[face]
+		),
+		similarity_detector=similarity,
+		identical_threshold=0.9975,
+		sudden_change_threshold=0.9,
+		certainty=0.5,
+		confirmations=2,
+		micromotion_detector=None,
+		texture_detector=None,
+		spoof_detector=None,
+		spoof_detector_flir=None,
+		save_failed=False,
+		save_successful=False,
+		dark_threshold=60,
+		rotate=0,
+	)
+	return daemon._authenticate(
+		"crowd",
+		auth_module.Args(auth_popup=False, timeout=1),
+		threading.Event(),
+		auth_module.Timeout(time.monotonic() + 5),
+	)
+
+
+for person in (0, 1):
+	check(
+		f"person {person} of two logs in",
+		logs_in(person),
+		auth_module.HowdyStatus.Success,
+	)
+
 print("--- a rubber stamp looks after the popup and the one who waits")
-import threading  # noqa: E402
 
 from howdy import howdy_popup_interface as popup_module  # noqa: E402
 

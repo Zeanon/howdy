@@ -236,6 +236,19 @@ E "a value that is no number denies" NO_MATCH
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 1.2.3s faildeadly"
 E "a timeout that is no number denies" NO_MATCH
 
+echo "--- several people in the picture"
+# Each of them can log in, the checks that compare the frames look at one person only
+ffmpeg -loglevel error -y -loop 1 -i "$IMG_DIR/2008_002079.jpg" -t 3 -r 15 -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "$T/crowd.mp4"
+for face in 0 2; do
+	"$HOWDY_PYTHON" -I "$TEST_DIR/mkmodel.py" "$T/hog.json" 2008_002079.jpg "$face" "$MODEL"
+	chmod 600 "$MODEL"
+	start_daemon "${NOLIVE[@]}" "video.device_path=$T/crowd.mp4" video.max_height=2000 \
+		face_authentication.similarity_detection=true face_authentication.confirmations=2
+	E "face $face of several, with the similarity check" SUCCESS
+done
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+
 echo "--- the popup stays while a rubber stamp waits"
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 4s failsafe"
 dbus-monitor --address "$ADDR" "type='signal',interface='org.boltgolt.howdy.AuthPopup'" > "$T/monitor.log" 2>&1 &

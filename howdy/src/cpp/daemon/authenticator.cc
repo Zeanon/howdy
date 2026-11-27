@@ -496,121 +496,149 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 		// Get all faces from that frame, upsampled once
 		const auto face_locations = backend_->detect(gsframe);
 
-		for (const auto& fl : face_locations) {
-#ifdef HOWDY_WITH_OPENVINO
-			if (spoof_detector_flir_ && (*spoof_detector_flir_)(frame, fl) < damo_flir_threshold_) {
-				break;
-			}
-#endif
-
-			if (texture_detector_) {
-				// No value means the face is outside of the frame, reject it
-				const auto texture = (*texture_detector_)(gsframe, fl);
-				if (!texture.has_value() || *texture < texture_threshold_) {
-					break;
-				}
-			}
-
-			if (micromotion_detector_ && micromotion_detector_->calculate_displacement(backend_->motion_landmarks(frame, fl)) < micromotion_threshold_) {
-				break;
-			}
-
-			const auto face_encoding = backend_->encode(frame, fl);
-			if (!face_encoding.has_value()) {
-				continue;
-			}
-
-			bool accept = false;
+		// The distance of a face to the closest model, with OpenVINO the similarity to the most similar one
+		const auto best_match = [&](const Encoding& face) {
 			if (use_openvino_) {
 				double best = -std::numeric_limits<double>::infinity();
 				for (const auto& encoding : encodings) {
-					best = std::max(best, std::inner_product(encoding.begin(), encoding.end(), face_encoding->begin(), 0.0));
+					best = std::max(best, std::inner_product(encoding.begin(), encoding.end(), face.begin(), 0.0));
 				}
-				// OpenVINO matches are a similarity, the lowest certainty is a distance
-				lowest_certainty = std::min(lowest_certainty, 1 - best);
-				accept = certainty_ < best && best < 1;
-			} else {
-				double best = std::numeric_limits<double>::infinity();
-				for (const auto& encoding : encodings) {
-					double sum = 0;
-					for (std::size_t i = 0; i < encoding.size(); ++i) {
-						const double d = encoding[i] - (*face_encoding)[i];
-						sum += d * d;
-					}
-					best = std::min(best, std::sqrt(sum));
+				return best;
+			}
+			double best = std::numeric_limits<double>::infinity();
+			for (const auto& encoding : encodings) {
+				double sum = 0;
+				for (std::size_t i = 0; i < encoding.size(); ++i) {
+					const double d = encoding[i] - face[i];
+					sum += d * d;
 				}
-				// Update certainty if we have a new low
-				lowest_certainty = std::min(lowest_certainty, best);
-				accept = 0 < best && best < certainty_;
+				best = std::min(best, std::sqrt(sum));
+			}
+			return best;
+		};
+
+		// One face per frame, the one that is most like the models: the liveness checks compare a frame
+		// with the ones before, which only says something about one and the same person
+		if (face_locations.empty()) {
+			continue;
+		}
+		std::size_t chosen = 0;
+		// Only computed here if there is a choice to make, the checks may reject the face before
+		std::optional<Encoding> face_encoding;
+		if (face_locations.size() > 1) {
+			double chosen_value = 0;
+			for (std::size_t i = 0; i < face_locations.size(); ++i) {
+				auto candidate = backend_->encode(frame, face_locations[i]);
+				if (!candidate.has_value()) {
+					continue;
+				}
+				const double value = best_match(*candidate);
+				if (!face_encoding.has_value() || (use_openvino_ ? value > chosen_value : value < chosen_value)) {
+					chosen = i;
+					chosen_value = value;
+					face_encoding = std::move(candidate);
+				}
+			}
+			if (!face_encoding.has_value()) {
+				continue;
+			}
+		}
+		const auto& fl = face_locations[chosen];
+
+#ifdef HOWDY_WITH_OPENVINO
+		if (spoof_detector_flir_ && (*spoof_detector_flir_)(frame, fl) < damo_flir_threshold_) {
+			continue;
+		}
+#endif
+
+		if (texture_detector_) {
+			// No value means the face is outside of the frame, reject it
+			const auto texture = (*texture_detector_)(gsframe, fl);
+			if (!texture.has_value() || *texture < texture_threshold_) {
+				continue;
+			}
+		}
+
+		if (micromotion_detector_ && micromotion_detector_->calculate_displacement(backend_->motion_landmarks(frame, fl)) < micromotion_threshold_) {
+			continue;
+		}
+
+		if (!face_encoding.has_value()) {
+			face_encoding = backend_->encode(frame, fl);
+			if (!face_encoding.has_value()) {
+				continue;
+			}
+		}
+
+		const double best = best_match(*face_encoding);
+		// OpenVINO matches are a similarity, the lowest certainty is a distance
+		lowest_certainty = std::min(lowest_certainty, use_openvino_ ? 1 - best : best);
+		const bool accept = use_openvino_ ? certainty_ < best && best < 1 : 0 < best && best < certainty_;
+
+		if (similarity_detector_) {
+			const auto [similarity, stale] = (*similarity_detector_)(*face_encoding, identical_threshold_);
+			if (stale || similarity < sudden_change_threshold_) {
+				continue;
+			}
+		}
+
+		// Check if a match that's confident enough
+		if (accept) {
+			++confirmations_seen;
+			if (confirmations_seen < confirmations_) {
+				// Keep scanning until enough separate frames agree
+				continue;
 			}
 
-			if (similarity_detector_) {
-				const auto [similarity, stale] = (*similarity_detector_)(*face_encoding, identical_threshold_);
-				if (stale || similarity < sudden_change_threshold_) {
-					break;
+			// Resend the frame info once more before we terminate
+			send_to_ui(nullptr, true);
+
+			// Make snapshot if enabled
+			if (save_successful_) {
+				make_snapshot(
+					snapframes, S("SUCCESSFUL"), std::chrono::duration<double>(Clock::now() - start_time).count(), frames, lowest_certainty,
+					snapshot_retention_);
+			}
+
+			// Run the rubber stamps if enabled, they can still deny the authentication
+			if (config_.get_bool("rubberstamps", "enabled", false)) {
+				if (ui_uid_.has_value()) {
+					popup_.update_subtext(*ui_uid_, "");
+				}
+				const StampContext stamp_context{
+					config_,
+					*video_capture_,
+					*backend_,
+					clahe,
+					scaling_factor,
+					rotate_,
+					control.cancel,
+					[&](const std::string& message) {
+						if (ui_uid_.has_value()) {
+							popup_.update_message(*ui_uid_, message);
+						}
+					},
+					[&](const std::string& subtext) {
+						if (ui_uid_.has_value()) {
+							popup_.update_subtext(*ui_uid_, subtext);
+						}
+					},
+					[&] {
+						if (ui_uid_.has_value()) {
+							popup_.keep_alive(*ui_uid_);
+						}
+					},
+					// The client has gone, nobody waits for the result any more
+					[&] { return control.keepalive_expired(); },
+				};
+				switch (run_rubberstamps(stamp_context)) {
+					case StampResult::Denied: return Status::NoMatch;
+					case StampResult::Cancelled: return control.cancel.load() ? Status::Cancelled : Status::KeepAliveTimeout;
+					case StampResult::Passed: break;
 				}
 			}
 
-			// Check if a match that's confident enough
-			if (accept) {
-				++confirmations_seen;
-				if (confirmations_seen < confirmations_) {
-					// Keep scanning until enough separate frames agree. The break
-					// leaves the per-face loop so one frame can only ever count
-					// once, however many faces it happens to contain.
-					break;
-				}
-
-				// Resend the frame info once more before we terminate
-				send_to_ui(nullptr, true);
-
-				// Make snapshot if enabled
-				if (save_successful_) {
-					make_snapshot(
-						snapframes, S("SUCCESSFUL"), std::chrono::duration<double>(Clock::now() - start_time).count(), frames, lowest_certainty,
-						snapshot_retention_);
-				}
-
-				// Run the rubber stamps if enabled, they can still deny the authentication
-				if (config_.get_bool("rubberstamps", "enabled", false)) {
-					if (ui_uid_.has_value()) {
-						popup_.update_subtext(*ui_uid_, "");
-					}
-					const StampContext stamp_context{
-						config_,
-						*video_capture_,
-						*backend_,
-						clahe,
-						scaling_factor,
-						rotate_,
-						control.cancel,
-						[&](const std::string& message) {
-							if (ui_uid_.has_value()) {
-								popup_.update_message(*ui_uid_, message);
-							}
-						},
-						[&](const std::string& subtext) {
-							if (ui_uid_.has_value()) {
-								popup_.update_subtext(*ui_uid_, subtext);
-							}
-						},
-						[&] {
-							if (ui_uid_.has_value()) {
-								popup_.keep_alive(*ui_uid_);
-							}
-						},
-						// The client has gone, nobody waits for the result any more
-						[&] { return control.keepalive_expired(); },
-					};
-					switch (run_rubberstamps(stamp_context)) {
-						case StampResult::Denied: return Status::NoMatch;
-						case StampResult::Cancelled: return control.cancel.load() ? Status::Cancelled : Status::KeepAliveTimeout;
-						case StampResult::Passed: break;
-					}
-				}
-
-				return Status::Success;
-			}
+			return Status::Success;
 		}
 	}
 	return Status::KeepAliveTimeout;

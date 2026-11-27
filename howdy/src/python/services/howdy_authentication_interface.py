@@ -681,125 +681,144 @@ class HowdyAuthenticator:
 			# Upsamples 1 time
 			face_locations = self.face_detector(gsframe, 1)
 
-			# Loop through each face
-			for fl in face_locations:
-				if self.use_cnn and not self.use_openvino:
-					fl = fl.rect
+			if len(face_locations) == 0:
+				continue
+			if self.use_cnn and not self.use_openvino:
+				face_locations = [fl.rect for fl in face_locations]
 
-				if (
-					self.spoof_detector_flir is not None
-					and self.spoof_detector_flir(frame, fl) < self.damo_flir_threshold
-				):
-					break
-
-				if (
-					self.texture_detector is not None
-					and self.texture_detector(gsframe, fl) < self.texture_threshold
-				):
-					break
-
-				# fmt:off
-				# Fetch the faces in the image
+			def describe(face, frame=frame):
+				"""The encoding and, with dlib, the landmarks of a face, how close it
+				is to the closest model and the similarity to the most similar one with
+				OpenVINO. None without an encoding."""
 				if self.use_openvino:
-					if (
-						self.micromotion_detector is not None
-						and self.micromotion_detector(frame, fl)
-						< self.micromotion_threshold
-					):
-						break
+					encoding = self.face_encoder.encode(frame, face)
+					if encoding is None:
+						return None
+					return encoding, None, np.dot(encodings, encoding).max()
+				landmarks = self.pose_predictor(frame, face)
+				encoding = np.array(
+					self.face_encoder.compute_face_descriptor(frame, landmarks, 1)
+				)
+				return (
+					encoding,
+					landmarks,
+					np.linalg.norm(encodings - encoding, axis=1).min(),
+				)
 
-					face_encoding = self.face_encoder.encode(frame, fl)
-					if face_encoding is None:
-						continue
+			# One face per frame, the one that is most like the models: the liveness
+			# checks compare a frame with the ones before, which only says something
+			# about one and the same person
+			fl = face_locations[0]
+			# Only computed here if there is a choice to make, the checks may reject
+			# the face before
+			description = None
+			if len(face_locations) > 1:
+				candidates = [(face, describe(face)) for face in face_locations]
+				candidates = [c for c in candidates if c[1] is not None]
+				if not candidates:
+					continue
+				pick = max if self.use_openvino else min
+				fl, description = pick(candidates, key=lambda c: c[1][2])
 
-					best = np.dot(encodings, face_encoding).max()
-					# OpenVINO matches are a similarity, the lowest certainty is a distance
-					lowest_certainty = min(lowest_certainty, 1 - best)
-					accept = self.certainty < best < 1
+			if (
+				self.spoof_detector_flir is not None
+				and self.spoof_detector_flir(frame, fl) < self.damo_flir_threshold
+			):
+				continue
+
+			if (
+				self.texture_detector is not None
+				and self.texture_detector(gsframe, fl) < self.texture_threshold
+			):
+				continue
+
+			if self.micromotion_detector is not None:
+				if self.use_openvino:
+					movement = self.micromotion_detector(frame, fl)
 				else:
-					face_landmark = self.pose_predictor(frame, fl)
-					if (
-						self.micromotion_detector is not None
-						and self.micromotion_detector(face_landmark)
-						< self.micromotion_threshold
-					):
-						break
+					shape = (
+						self.pose_predictor(frame, fl)
+						if description is None
+						else description[1]
+					)
+					movement = self.micromotion_detector(shape)
+				if movement < self.micromotion_threshold:
+					continue
 
-					face_encoding = np.array(
-						self.face_encoder.compute_face_descriptor(
-							frame, face_landmark, 1
-						)
+			if description is None:
+				description = describe(fl)
+				if description is None:
+					continue
+			face_encoding, _, best = description
+
+			if self.use_openvino:
+				# OpenVINO matches are a similarity, the lowest certainty is a distance
+				lowest_certainty = min(lowest_certainty, 1 - best)
+				accept = self.certainty < best < 1
+			else:
+				# Update certainty if we have a new low
+				lowest_certainty = min(lowest_certainty, best)
+				accept = 0 < best < self.certainty
+
+			if self.similarity_detector is not None:
+				similarity, stale = self.similarity_detector(
+					face_encoding, self.identical_threshold
+				)
+				if stale or similarity < self.sudden_change_threshold:
+					continue
+
+			# Check if a match that's confident enough
+			if accept:
+				confirmations_seen += 1
+				if confirmations_seen < self.confirmations:
+					# Keep scanning until enough separate frames agree
+					continue
+
+				# Resend the frame info once more before we terminate
+				send_to_ui(frame_counter=True)
+
+				# Make snapshot if enabled
+				if self.save_successful:
+					self._make_snapshot(
+						snapframes,
+						S("SUCCESSFUL"),
+						time.monotonic() - start_time,
+						frames,
+						lowest_certainty,
 					)
 
-					best = np.linalg.norm(encodings - face_encoding, axis=1).min()
-					# Update certainty if we have a new low
-					lowest_certainty = min(lowest_certainty, best)
-					accept = 0 < best < self.certainty
-				# fmt: on
+				# Run the rubberstamps if enabled, they can still deny the authentication
+				if self.config.getboolean("rubberstamps", "enabled", fallback=False):
+					from . import rubberstamps  # type: ignore
 
-				if self.similarity_detector is not None:
-					similarity, stale = self.similarity_detector(
-						face_encoding, self.identical_threshold
-					)
-					if stale or similarity < self.sudden_change_threshold:
-						break
-
-				# Check if a match that's confident enough
-				if accept:
-					confirmations_seen += 1
-					if confirmations_seen < self.confirmations:
-						# Keep scanning until enough separate frames agree. The break
-						# leaves the per-face loop so one frame can only ever count
-						# once, however many faces it happens to contain.
-						break
-
-					# Resend the frame info once more before we terminate
-					send_to_ui(frame_counter=True)
-
-					# Make snapshot if enabled
-					if self.save_successful:
-						self._make_snapshot(
-							snapframes,
-							S("SUCCESSFUL"),
-							time.monotonic() - start_time,
-							frames,
-							lowest_certainty,
+					send_to_ui(subtext="")
+					try:
+						stamps_passed = rubberstamps.execute(
+							self.config,
+							lambda message=None, subtext=None: send_to_ui(
+								message=message, subtext=subtext
+							),
+							{
+								"video_capture": self.video_capture,
+								"face_detector": self.face_detector,
+								"pose_predictor": self.pose_predictor,
+								"clahe": clahe,
+							},
+							cancel_event,
+							keep_alive=self._keep_popup_alive,
+							# The client has gone, nobody waits for the result
+							abandoned=lambda: timeout.time <= time.monotonic(),
 						)
+					except rubberstamps.StampCancelled:
+						if cancel_event.is_set():
+							return HowdyStatus.Cancelled
+						return HowdyStatus.KeepAliveTimeout
 
-					# Run the rubberstamps if enabled, they can still deny the authentication
-					if self.config.getboolean(
-						"rubberstamps", "enabled", fallback=False
-					):
-						from . import rubberstamps  # type: ignore
+					if not stamps_passed:
+						return HowdyStatus.NoMatch
 
-						send_to_ui(subtext="")
-						try:
-							stamps_passed = rubberstamps.execute(
-								self.config,
-								lambda message=None, subtext=None: send_to_ui(
-									message=message, subtext=subtext
-								),
-								{
-									"video_capture": self.video_capture,
-									"face_detector": self.face_detector,
-									"pose_predictor": self.pose_predictor,
-									"clahe": clahe,
-								},
-								cancel_event,
-								keep_alive=self._keep_popup_alive,
-								# The client has gone, nobody waits for the result
-								abandoned=lambda: timeout.time <= time.monotonic(),
-							)
-						except rubberstamps.StampCancelled:
-							if cancel_event.is_set():
-								return HowdyStatus.Cancelled
-							return HowdyStatus.KeepAliveTimeout
-
-						if not stamps_passed:
-							return HowdyStatus.NoMatch
-
-					# End peacefully
-					return HowdyStatus.Success
+				# End peacefully
+				return HowdyStatus.Success
 		return HowdyStatus.KeepAliveTimeout
 
 
