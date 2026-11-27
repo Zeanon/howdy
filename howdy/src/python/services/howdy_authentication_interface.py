@@ -308,6 +308,10 @@ class HowdyAuthenticator:
 						self.spoof_detector_flir = openvino_face.SpoofDetectorFlir(device=self.openvino_device)
 					if self.use_micromotion_detection:
 						self.micromotion_detector = openvino_face.MicroMotionDetector(device=self.openvino_device)
+					# The nod rubber stamp needs the landmarks, also without micromotion detection
+					if self.config.getboolean("rubberstamps", "enabled", fallback=False):
+						landmarks = self.micromotion_detector or openvino_face.MicroMotionDetector(device=self.openvino_device)
+						self.pose_predictor = landmarks.landmarks
 				except openvino_face.OpenVINOException as exc:
 					syslog.syslog(syslog.LOG_ERR, f"OpenVINO init failed: '{exc.message}'")
 					syslog.syslog(syslog.LOG_ERR, S("OpenVINO data files have not been downloaded, please run the following commands:"))

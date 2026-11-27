@@ -12,6 +12,7 @@ so neither a bus nor polkit is needed.
 
 import asyncio
 import configparser
+import itertools
 import json
 import os
 import pwd
@@ -991,6 +992,41 @@ for name, stamp_rules, expected in (
 	passed = rubberstamps.execute(rules, lambda **kwargs: None, broken)
 	check(name, (passed, ran), (bool(expected), expected))
 nod.run = original_run
+
+print("--- the nod stamp with the eyes in the order of OpenVINO")
+
+
+def still_face():
+	"""A face that only trembles by less than a pixel. The corners of the eye on the
+	left of the picture come first, dlib numbers them the other way around."""
+	step = itertools.count()
+
+	def predict(frame, face):
+		shift = 0.3 * (next(step) % 2)
+		xs = (140 + shift, 120 + shift, 180 + shift, 200 + shift, 160 + shift)
+		return types.SimpleNamespace(
+			part=lambda i: types.SimpleNamespace(x=xs[i], y=100 + shift)
+		)
+
+	return predict
+
+
+stamp = nod()
+stamp.options = {}
+stamp.verbose = False
+stamp.declare_config()
+stamp.options.update(timeout=0.3, failsafe=True)
+stamp._send_to_ui = lambda **kwargs: None
+stamp.video_capture = types.SimpleNamespace(read_frame=lambda: (None, None))
+stamp.clahe = types.SimpleNamespace(apply=lambda frame: frame)
+stamp.face_detector = lambda frame, upsample: ["face"]
+stamp.pose_predictor = still_face()
+started = time.monotonic()
+check(
+	"it is not taken for a nod",
+	(stamp.run(), time.monotonic() - started >= 0.3),
+	(False, True),
+)
 
 print("--- a rubber stamp looks after the popup and the one who waits")
 import threading  # noqa: E402

@@ -164,7 +164,8 @@ void Authenticator::initialize_models() {
 	if (use_openvino_) {
 #ifdef HOWDY_WITH_OPENVINO
 		try {
-			backend_ = create_openvino_backend(openvino_device_, use_micromotion_detection_);
+			// The nod rubber stamp needs the landmarks too
+			backend_ = create_openvino_backend(openvino_device_, use_micromotion_detection_ || config_.get_bool("rubberstamps", "enabled", false));
 			if (use_anti_spoof_) {
 				spoof_detector_ = std::make_unique<SpoofDetector>(openvino_device_);
 			}

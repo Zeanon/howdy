@@ -52,9 +52,14 @@ class nod(RubberStamp):
 
 			# Get the position of the eyes and tip of the nose
 			face_landmarks = self.pose_predictor(frame, face_locations[0])
+			if face_landmarks is None:
+				continue
 
-			# Calculate the relative distance between the 2 eyes
-			reldist = face_landmarks.part(0).x - face_landmarks.part(2).x
+			# Calculate the relative distance between the 2 eyes, from the outer corner of one to
+			# the outer corner of the other. The first four points are the corners of the eyes,
+			# dlib and OpenVINO number them in another order.
+			corners = [face_landmarks.part(i).x for i in range(4)]
+			reldist = max(corners) - min(corners)
 			# Average this out with the distance found in the last frame to smooth it out
 			avg_reldist = (last_reldist + reldist) / 2
 

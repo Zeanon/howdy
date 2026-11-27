@@ -155,6 +155,17 @@ if [ "$HAS_OPENVINO" = 1 ]; then
 	start_daemon "${NOLIVE[@]}" face_authentication.use_openvino=true video.openvino_device=CPU \
 		face_authentication.use_anti_spoof=false face_authentication.use_damo_flir=false
 	E "openvino genuine face" SUCCESS
+	# A face that does not move but has the noise of a camera is no nod and no shake, the stamp waits
+	# (the stamp waits for exactly one face, the picture shows two people)
+	"$HOWDY_PYTHON" -I "$TEST_DIR/crop_face.py" "$T/openvino.json" "$IMG_DIR/2008_001009.jpg" "$T/single.jpg"
+	ffmpeg -loglevel error -y -loop 1 -i "$T/single.jpg" -t 8 -r 15 -pix_fmt yuv420p -vf noise=alls=6:allf=t -crf 0 "$T/noisy.mp4"
+	start_daemon "${NOLIVE[@]}" "video.device_path=$T/noisy.mp4" face_authentication.use_openvino=true video.openvino_device=CPU \
+		face_authentication.use_anti_spoof=false face_authentication.use_damo_flir=false \
+		face_authentication.micromotion_detection=true face_authentication.micromotion_threshold=0 \
+		rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 4s failsafe"
+	started=$SECONDS
+	E "openvino nod: a still face does not confirm" NO_MATCH
+	expect "and does not abort either" "$([ $((SECONDS - started)) -ge 4 ] && echo yes || echo "$((SECONDS - started)) s")" yes
 fi
 
 # A caller without privileges that was told that an authentication is running is told so again without the

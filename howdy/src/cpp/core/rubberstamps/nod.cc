@@ -67,8 +67,11 @@ bool NodStamp::run(const StampContext& context, const StampRule& rule) {
 			continue;
 		}
 
-		// Relative distance between the 2 eyes, averaged with the last frame to smooth it out
-		const auto reldist = static_cast<double>(landmarks[0].x - landmarks[2].x);
+		// Relative distance between the 2 eyes, from the outer corner of one to the outer corner of the
+		// other, averaged with the last frame to smooth it out. The first four points are the corners of
+		// the eyes, dlib and OpenVINO number them in another order.
+		const auto [left, right] = std::minmax({landmarks[0].x, landmarks[1].x, landmarks[2].x, landmarks[3].x});
+		const auto reldist = static_cast<double>(right - left);
 		const double avg_reldist = (last_reldist + reldist) / 2;
 
 		// Horizontal movement (shaking the head) and vertical movement (nodding)

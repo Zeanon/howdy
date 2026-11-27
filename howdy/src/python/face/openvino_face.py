@@ -347,6 +347,17 @@ class SpoofDetectorFlir:
 		)
 
 
+class Landmarks:
+	"""Points of a face with the interface of a dlib shape"""
+
+	def __init__(self, points):
+		self.points = points
+
+	def part(self, index):
+		x, y = self.points[index]
+		return types.SimpleNamespace(x=float(x), y=float(y))
+
+
 # Idea and code derived from https://github.com/oktorio/liveness_app/blob/main/liveness_app.py
 class MicroMotionDetector(AbstractMicroMotionDetector):
 	"""
@@ -394,14 +405,17 @@ class MicroMotionDetector(AbstractMicroMotionDetector):
 		y2 = max(0, min(h, y2))
 
 		if x2 <= x1 or y2 <= y1:
-			self.buffer.clear()
+			self._forget()
 			return None
 
 		face = frame[y1:y2, x1:x2]
 
 		if face.size == 0:
-			self.buffer.clear()
+			self._forget()
 			return None
+
+		if face.ndim == 2:
+			face = cv2.cvtColor(face, cv2.COLOR_GRAY2BGR)
 
 		# The model expects 3 channels and a 60x60 input.
 		# For grayscale IR, all three channels will be identical.
@@ -428,6 +442,17 @@ class MicroMotionDetector(AbstractMicroMotionDetector):
 		points[:, 1] = y1 + points[:, 1] * (y2 - y1)
 
 		return points
+
+	def _forget(self):
+		"""Without a face the movement starts anew"""
+		if self.buffer is not None:
+			self.buffer.clear()
+
+	def landmarks(self, frame, face_rect):
+		"""The landmarks as the rubber stamps read them, like the shape of dlib:
+		.part(i).x and .y. None if there is no face to look at."""
+		points = self._get_landmarks(frame, face_rect)
+		return None if points is None else Landmarks(points)
 
 	def __call__(self, frame, face_rect):
 		return self._calculate_displacement(self._get_landmarks(frame, face_rect))
