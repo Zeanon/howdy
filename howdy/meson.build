@@ -769,9 +769,16 @@ install_data(
 	rename: 'howdy',
 )
 
-fs = import('fs')
-if get_option('install_config') and not fs.exists(config_path)
-	install_data('assets/config/config.ini', install_dir: confdir, install_mode: 'rw-r--r--', install_tag: 'config')
+# A script and not install_data: whether there is a config has to be looked at when it is installed,
+# not when the build directory is set up
+if get_option('install_config')
+	meson.add_install_script(
+		find_program('sh'),
+		files('assets/config/install-config.sh'),
+		meson.current_source_dir() / 'assets/config/config.ini',
+		confdir,
+		install_tag: 'config',
+	)
 endif
 
 install_data(

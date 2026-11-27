@@ -15,13 +15,10 @@ override_dh_auto_configure:
 		-Dpam_dir=/usr/lib/$(DEB_HOST_MULTIARCH)/security \
 		-Dpython_path=/usr/bin/python3 \
 		-Dmodels_key_file= \
-		-Dinstall_config=false \
 		-Dopenvino=disabled
 
-# meson leaves the config out if there is one on the computer that builds the package,
-# here it is always part of it. The units and the sleep hook go to /lib, which is /usr/lib.
+# The units and the sleep hook go to /lib, which is /usr/lib
 execute_after_dh_auto_install:
-	install -D -m 0644 howdy/assets/config/config.ini $(PACKAGE_DIR)/etc/howdy/config.ini
 	if [ -d $(PACKAGE_DIR)/lib ]; then \
 		mkdir -p $(PACKAGE_DIR)/usr/lib && \
 		cp -a $(PACKAGE_DIR)/lib/. $(PACKAGE_DIR)/usr/lib/ && \

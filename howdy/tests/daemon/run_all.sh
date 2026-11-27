@@ -15,6 +15,7 @@ SUITES=(
 	run_model_crypto
 	run_snapshot
 	run_hotkey
+	run_packaging
 	run_python
 	run_parity
 	run_e2e
