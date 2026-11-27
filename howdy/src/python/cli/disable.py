@@ -42,20 +42,27 @@ else:
 	print(S("Please only use 0 (enable) or 1 (disable) as an argument"))
 	sys.exit(1)
 
+current = config.get("core", "disabled", fallback="")
+if not current:
+	print('Could not find the "disabled" option in ' + str(config_path))
+	sys.exit(1)
+
 # Don't do anything when the state is already the requested one
-if out_value == config.get("core", "disabled", fallback=True):
+if out_value == current:
 	print(S("The disable option has already been set to ") + out_value)
 	sys.exit(1)
 
+# Only the line of the disable config is replaced, written like that
+search = "disabled = " + current
+with open(config_path) as config_file:
+	if search not in config_file.read():
+		# Nothing would change, Howdy must not be said to be disabled then
+		print(f'Could not find "{search}" in {config_path}')
+		sys.exit(1)
+
 # Loop though the config file and only replace the line containing the disable config
 for line in fileinput.input([config_path], inplace=1):
-	print(
-		line.replace(
-			"disabled = " + config.get("core", "disabled", fallback=True),
-			"disabled = " + out_value,
-		),
-		end="",
-	)
+	print(line.replace(search, "disabled = " + out_value), end="")
 
 # Print what we just did
 if out_value == "true":

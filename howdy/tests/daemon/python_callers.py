@@ -1270,6 +1270,49 @@ for name, capture, want in (
 		setattr(owner, attribute, value)
 	check(f"howdy add, {name}: exit status and release", (code, released), want)
 
+print("--- howdy disable says only what it has done")
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import runpy  # noqa: E402
+
+disable_config = os.path.join(WORK_DIR, "disable.ini")
+
+
+def disable(content):
+	"""(exit status, the config afterwards) of `howdy disable 1`"""
+	with open(disable_config, "w") as handle:
+		handle.write(content)
+	builtins.howdy_args = types.SimpleNamespace(arguments=["1"])
+	originals = os.geteuid, paths_factory.config_file_path
+	os.geteuid = lambda: 0
+	paths_factory.config_file_path = lambda: disable_config
+	try:
+		with contextlib.redirect_stdout(io.StringIO()):
+			runpy.run_module("howdy.cli.disable")
+		code = 0
+	except SystemExit as exc:
+		code = exc.code
+	finally:
+		os.geteuid, paths_factory.config_file_path = originals
+	with open(disable_config) as handle:
+		return code, handle.read()
+
+
+for name, content, want in (
+	(
+		"the option is changed",
+		"[core]\ndisabled = false\n",
+		(0, "[core]\ndisabled = true\n"),
+	),
+	(
+		"written another way: an error",
+		"[core]\ndisabled=false\n",
+		(1, "[core]\ndisabled=false\n"),
+	),
+	("no such option: an error", "[core]\n", (1, "[core]\n")),
+):
+	check(name, disable(content), want)
+
 print("--- the howdy program of the Python cli")
 # A signal for it has to reach Python: the setup wizard ends `howdy add` with one
 with open(os.path.join(SOURCE_DIR, "..", "..", "assets", "bin", "howdy.in")) as handle:
