@@ -502,6 +502,6 @@ Code contributions are also very welcome. If you want to port Howdy to another d
 
 This package is in no way as secure as a password and will never be. Although it's harder to fool than normal face recognition, a person who looks similar to you, or a well-printed photo of you could be enough to do it. Howdy is a more quick and convenient way of logging in, not a more secure one.
 
-To minimize the chance of this program being compromised, it's recommended to leave Howdy in `/lib/security` and to keep it read-only.
+To minimize the chance of this program being compromised, it's recommended to leave Howdy where it is installed (the daemons in `/usr/local/lib/<multiarch>/Howdy`, `pam_howdy.so` in the `security` directory of the system libraries, the configuration in `/usr/local/etc/howdy`) and to keep these owned by root and writable by nobody else.
 
 DO NOT USE HOWDY AS THE SOLE AUTHENTICATION METHOD FOR YOUR SYSTEM.
