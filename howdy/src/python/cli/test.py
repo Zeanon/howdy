@@ -332,6 +332,9 @@ else:
 	pose_predictor = dlib.shape_predictor(
 		paths_factory.shape_predictor_5_face_landmarks_path()
 	)
+	from .. import dlib_face  # type: ignore
+
+	micromotion_detector = dlib_face.MicroMotionDetector()
 	face_encoder = dlib.face_recognition_model_v1(
 		paths_factory.dlib_face_recognition_resnet_model_v1_path()
 	)
@@ -498,16 +501,23 @@ try:
 			face_locations = face_detector(gsframe, 1)
 			rec_tm = time.monotonic() - rec_tm
 
-			print(f"spoof: {round(spoof_detector(frame) * 100, 3)}%")  # Anpassen
+			# The spoof detectors are models of OpenVINO
+			if use_openvino:
+				print(f"spoof: {round(spoof_detector(frame) * 100, 3)}%")  # Anpassen
 
 			# Loop though all faces and paint a ellipse around them
 			for slot, loc in enumerate(face_locations):
 				if use_cnn and not use_openvino:
 					loc = loc.rect
 
-				print(f"damo-flir: {round(spoof_detector_flir(frame, loc) * 100, 3)}%")
+				if use_openvino:
+					flir = spoof_detector_flir(frame, loc)
+					print(f"damo-flir: {round(flir * 100, 3)}%")
+					movement = micromotion_detector(frame, loc)
+				else:
+					movement = micromotion_detector(pose_predictor(frame, loc))
 
-				print(f"Micro-movement: {micromotion_detector(frame, loc):.4f}")
+				print(f"Micro-movement: {movement:.4f}")
 
 				texture = texture_detector(gsframe, loc)
 

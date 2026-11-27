@@ -623,7 +623,6 @@ if need_py
 				output: 'howdy_popup_interface.py',
 				configuration: dbus_conf_data,
 			),
-			'src/python/face/dlib_face.py',
 		]
 		py_rubberstamps += [
 			'src/python/rubberstamps/__init__.py',
@@ -657,6 +656,7 @@ if need_py
 	if need_py_capture
 		py_top += [
 			'src/python/face/anti_spoof_core.py',
+			'src/python/face/dlib_face.py',
 			'src/python/enroll/enroll_capture.py',
 			'src/python/enroll/enroll_helper.py',
 			'src/python/face/openvino_face.py',
