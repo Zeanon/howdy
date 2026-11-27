@@ -1047,6 +1047,19 @@ time.sleep(popup_module.POPUP_KEEPALIVE + 0.05)
 popup.keep_alive(1)
 check("none after the popup was closed", len(sent), 3)
 
+print("--- the still picture is not seen in a single comparison")
+from howdy.anti_spoof_core import SimilarityDetector  # noqa: E402
+
+
+def stale(buffer_size, frames):
+	detector = SimilarityDetector()
+	detector.init(buffer_size)
+	return [detector([1.0, 2.0, 3.0])[1] for _ in range(frames)]
+
+
+check("two comparisons are needed", stale(8, 4), [False, False, True, True])
+check("a window of one comparison needs that one", stale(2, 3), [False, True, True])
+
 print("--- the Python cli started with sudo")
 
 

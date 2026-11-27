@@ -170,8 +170,10 @@ std::pair<double, bool> SimilarityDetector::operator()(const std::vector<double>
 		return {1.0, false};
 	}
 
-	// Nearly identical encodings over the whole window.
-	const bool stale = std::all_of(similarities_->begin(), similarities_->end(), [&](double s) { return s >= identical_threshold; });
+	// Nearly identical encodings over the whole window. A single comparison says little, a
+	// face that is held still can be that for a moment.
+	const bool stale = similarities_->size() >= std::min(MIN_STALE_COMPARISONS, similarities_->maxlen()) &&
+					   std::all_of(similarities_->begin(), similarities_->end(), [&](double s) { return s >= identical_threshold; });
 
 	return {*similarity, stale};
 }

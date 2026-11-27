@@ -125,6 +125,11 @@ class TextureDetector:
 		return float(np.mean(self.buffer))
 
 
+# Comparisons that are needed before a face is taken for a still picture, a smaller
+# window needs all it has
+MIN_STALE_COMPARISONS = 2
+
+
 class SimilarityDetector:
 	def __init__(self):
 		self.encodings = None
@@ -175,7 +180,11 @@ class SimilarityDetector:
 		if similarity is None:
 			return 1.0, False
 
-		# Über das gesamte Fenster nahezu identische Encodings.
-		stale = all(s >= identical_threshold for s in self.similarities)
+		# Über das gesamte Fenster nahezu identische Encodings. Ein einzelner Vergleich
+		# sagt wenig, ein ruhig gehaltenes Gesicht kann das für einen Moment sein.
+		needed = min(MIN_STALE_COMPARISONS, self.similarities.maxlen)
+		stale = len(self.similarities) >= needed and all(
+			s >= identical_threshold for s in self.similarities
+		)
 
 		return similarity, stale

@@ -101,6 +101,10 @@ class SimilarityDetector {
 	std::pair<double, bool> operator()(const std::vector<double>& encoding, double identical_threshold);
 
   private:
+	// Comparisons that are needed before a face is taken for a still picture, a smaller
+	// window needs all it has
+	static constexpr std::size_t MIN_STALE_COMPARISONS = 2;
+
 	std::optional<RingBuffer<std::vector<float>>> encodings_;
 	std::optional<RingBuffer<double>> similarities_;
 };
