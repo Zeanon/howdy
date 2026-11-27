@@ -1335,7 +1335,9 @@ class Authentication { // NOLINT(clang-analyzer-optin.performance.Padding) the m
 			case Workaround::Native: pass_task_ptr->stop(true); break;
 			case Workaround::Input:
 				// Only for a prompt that is open: an Enter without one goes to whatever has the focus. A task that
-				// waits after a wrong password ends by itself, it is given the time for that.
+				// waits after a wrong password ends by itself, it is given the time for that. pam_unix does not tell
+				// whether it still asks: while it checks a password that was sent, for longer than this, an Enter is
+				// pressed without a prompt.
 				if (password && pass_task_ptr->active() && pass_task_ptr->wait(2 * DELAY_STEP) == std::future_status::timeout) {
 					end_prompt_with_enter();
 				}
