@@ -1753,6 +1753,15 @@ else:
 	)
 
 	set_key(KEY)
+	check(
+		"with a key a plain file is refused",
+		"not encrypted"
+		in (
+			refused(lambda: read_model_file(os.path.join(MODELS, "carol.dat"), "carol"))
+			or ""
+		),
+		True,
+	)
 	encrypted, already, failures = encrypt_all_models(MODELS)
 	check("the plain files are encrypted", (encrypted, already), (2, 0))
 	check(

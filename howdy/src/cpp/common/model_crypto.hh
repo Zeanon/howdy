@@ -30,8 +30,9 @@ std::string encrypt_model_file(const std::string& key, const std::string& userna
 std::string decrypt_model_file(const std::string& key, const std::string& username, const std::string& content);
 
 // The models of a user as JSON text, std::nullopt if the user has no file. Reads a
-// trusted file and decrypts it, a file without the header is the old plain format.
-// Throws if the file is encrypted but there is no key.
+// trusted file and decrypts it, a file without the header is the plain format. Throws
+// if the file is encrypted but there is no key, and if there is a key but the file is
+// not encrypted.
 std::optional<std::string> read_model_file(const std::filesystem::path& path, const std::string& username);
 
 // Atomically write the models of a user, encrypted if there is a key

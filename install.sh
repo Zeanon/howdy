@@ -271,7 +271,7 @@ fi
 # Models of the time before the encryption are encrypted now. A failure (for example a
 # file that is not valid) is reported, but does not stop the installation
 if [ -n "$MODELS_KEY_FILE" ]; then
-    encrypt_models || echo -e "\033[38;5;208mNot all face models could be encrypted, see above\e[0m"
+    encrypt_models || echo -e "\033[38;5;208mNot all face models could be encrypted, see above. With a key a plain file is not used\e[0m"
 fi
 
 systemctl --user daemon-reload

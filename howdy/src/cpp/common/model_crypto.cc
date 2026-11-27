@@ -150,11 +150,19 @@ std::string decrypt_model_file(const std::string& key, const std::string& userna
 
 std::optional<std::string> read_model_file(const std::filesystem::path& path, const std::string& username) {
 	auto content = read_trusted_file(path);
-	if (!content.has_value() || !is_encrypted_model_file(*content)) {
-		// Missing, or a file of the time before the encryption
+	if (!content.has_value()) {
 		return content;
 	}
 	const auto key = load_models_key();
+	if (!is_encrypted_model_file(*content)) {
+		// With a key only what was written with it counts, otherwise anyone who can write to
+		// the disk could add a face
+		if (key.has_value()) {
+			throw std::runtime_error(
+				"Face model file of " + username + " is not encrypted although there is a key, encrypt it with ./install.sh --encrypt-models");
+		}
+		return content;
+	}
 	if (!key.has_value()) {
 		throw std::runtime_error(
 			"The face models are encrypted, but the service has no " + std::string(MODELS_KEY_CREDENTIAL) +

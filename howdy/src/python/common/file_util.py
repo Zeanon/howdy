@@ -167,13 +167,21 @@ def decrypt_model_file(key, username, content):
 
 def read_model_file(path, username):
 	"""The models of a user as JSON text. A trusted file, decrypted if it is
-	encrypted, a file without the header is the old plain format.
+	encrypted. A file without the header is the plain format, it only counts while
+	there is no key.
 
 	Raises FileNotFoundError if the user has no file."""
 	content = read_trusted_bytes(path)
-	if not is_encrypted_model_file(content):
-		return content.decode()
 	key = load_models_key()
+	if not is_encrypted_model_file(content):
+		# With a key only what was written with it counts, otherwise anyone who can
+		# write to the disk could add a face
+		if key is not None:
+			raise ValueError(
+				f"Face model file of {username} is not encrypted although there is a key,"
+				" encrypt it with ./install.sh --encrypt-models"
+			)
+		return content.decode()
 	if key is None:
 		raise ValueError(
 			f"The face models are encrypted, but the service has no {MODELS_KEY_CREDENTIAL} credential"

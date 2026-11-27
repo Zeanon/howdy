@@ -87,11 +87,15 @@ int main(int argc, char** argv) {
 	store.add("alice", model);
 	check("without a key the file is plain", slurp(root / "models/alice.dat").find("\"label\"") != std::string::npos);
 
-	// With the key: the old file is read and written encrypted from now on
+	// With the key: a plain file is refused until it is encrypted
 	spit(root / "creds/models-key", key);
 	chmod((root / "creds/models-key").c_str(), 0400);
 	setenv("CREDENTIALS_DIRECTORY", (root / "creds").c_str(), 1);
-	check("a plain file is still read", store.list("alice").find("\"label\":\"a\"") != std::string::npos);
+	check("with a key a plain file is refused", error_of([&] { (void)store.list("alice"); }).find("not encrypted") != std::string::npos);
+	check(
+		"and nothing is added to it",
+		!error_of([&] { store.add("alice", model); }).empty() && !howdy::is_encrypted_model_file(slurp(root / "models/alice.dat")));
+	check("until it is encrypted", store.encrypt_all().encrypted == 1 && store.list("alice").find("\"label\":\"a\"") != std::string::npos);
 	store.add("alice", model);
 	const auto stored = slurp(root / "models/alice.dat");
 	check("with a key the file is encrypted", howdy::is_encrypted_model_file(stored));
