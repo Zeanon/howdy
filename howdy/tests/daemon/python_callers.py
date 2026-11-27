@@ -1128,7 +1128,7 @@ if original_dlib is not None:
 	sys.modules["dlib"] = original_dlib
 
 print("--- the certainty on a snapshot")
-from howdy import paths_factory, snapshot  # noqa: E402
+from howdy import snapshot  # noqa: E402
 from howdy.recorders import video_capture as capture_module  # noqa: E402
 
 snapshot_config = os.path.join(WORK_DIR, "snapshot.ini")
