@@ -237,7 +237,7 @@ Other arguments are refused, build options are set with `meson configure build -
 
 At the end the script tells you to run the model installers if the face models are not installed yet, see below. Without the installer script you can also install manually with `sudo meson install -C build`.
 
-Howdy is installed to `/usr/local/lib/<multiarch>/Howdy`, the configuration to `/usr/local/etc/howdy`, the PAM module to `/usr/lib/security` and the models to `/usr/local/share/howdy`. All of these locations can be changed, see [Build options](#build-options).
+Howdy is installed to `/usr/local/lib/<multiarch>/Howdy`, the configuration to `/usr/local/etc/howdy`, the PAM module to the `security` directory below the library directory of the system (`/lib/<multiarch>/security` on Debian and Ubuntu) and the models to `/usr/local/share/howdy`. All of these locations can be changed, see [Build options](#build-options).
 
 ### Encrypting the face models
 
@@ -294,7 +294,7 @@ Options are passed to `meson setup` (or `meson configure build`), for example `m
 | Option | Default | Description |
 |--------|---------|-------------|
 | `install_dir` | `<prefix>/lib/<multiarch>/Howdy` | Where the daemons and the Python sources are installed |
-| `pam_dir` | `/usr/lib/security` | Where `pam_howdy.so` is installed |
+| `pam_dir` | `/<libdir>/security` | Where `pam_howdy.so` is installed. `libdir` is the one of meson, on Debian and Ubuntu `lib/<multiarch>` |
 | `pam_unix_path` | found automatically | Full path of `pam_unix.so`, which `pam_howdy.so` uses for the password. Empty: searched in the usual directories of the distributions |
 | `config_dir` | `<prefix>/etc/howdy` | Configuration directory |
 | `user_models_dir` | `/var/lib/howdy/models` | Where the face models are stored. They are data of the daemon and not configuration (`/etc` is often versioned or backed up), so they are not below `config_dir`. Only for root (mode `0700`), below `/var/lib` systemd creates the directory. Models of an older installation have to be moved here once |
