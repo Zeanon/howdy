@@ -37,7 +37,7 @@ bool has_id(const nlohmann::json& model, std::int64_t model_id) {
 	return id != model.end() && id->is_number_integer() && id->get<std::int64_t>() == model_id;
 }
 
-inline std::optional<std::int64_t> model_time(const nlohmann::json& model) {
+inline std::optional<std::int64_t> get_model_time(const nlohmann::json& model) {
 	const auto time = model.find("time");
 	if (time == model.end() || !time->is_number()) {
 		return std::nullopt;
@@ -86,7 +86,7 @@ void validate_label(const std::string& label) {
 void check_model(const nlohmann::json& model, std::int64_t model_id, const std::string& expected_label, std::int64_t expected_time) {
 	const auto label = model.find("label");
 	const bool same_label = label != model.end() && label->is_string() && label->get<std::string>() == expected_label;
-	const auto time = model_time(model);
+	const auto time = get_model_time(model);
 	const bool same_time = time.has_value() && *time == expected_time;
 	if (!same_label || !same_time) {
 		throw std::runtime_error("Model " + std::to_string(model_id) + " has changed since the list was loaded, please reload the list");
@@ -106,7 +106,7 @@ void validate_new_model(const nlohmann::json& model) {
 	if (!model.is_object()) {
 		throw std::runtime_error("Model must be a dictionary");
 	}
-	if (!model_time(model).has_value()) {
+	if (!get_model_time(model).has_value()) {
 		throw std::runtime_error("Model has no valid time");
 	}
 	if (!model.contains("label") || !model.at("label").is_string()) {
