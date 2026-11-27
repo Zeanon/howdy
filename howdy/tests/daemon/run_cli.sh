@@ -258,6 +258,13 @@ expect "list, plain" "$output" "0,2023-11-14 22:13:20,first
 run "$HOWDY" list
 expect_contains "list header" "$output" "Known face models for $USER_NAME:"
 expect_contains "list row" "$output" "0   2023-11-14 22:13:20  first"
+# Started with sudo or doas the commands act for the user that did
+for variable in SUDO_USER DOAS_USER; do
+	run env -u SUDO_USER -u DOAS_USER -u PKEXEC_UID LOGNAME=root USER=root "$variable=$USER_NAME" "$HOWDY" list
+	expect_contains "list with sudo or doas ($variable)" "$output" "Known face models for $USER_NAME:"
+done
+run env -u SUDO_USER -u DOAS_USER -u PKEXEC_UID LOGNAME=root USER=root "$HOWDY" list
+expect_contains "root itself is still refused" "$output" "Can't run howdy commands as root"
 
 run "$HOWDY" rename
 expect_contains "rename without id" "$output" "Please add the ID of the model you want to rename as an argument"

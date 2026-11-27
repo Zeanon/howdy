@@ -17,6 +17,7 @@ import os
 import pwd
 import re
 import shutil
+import subprocess
 import sys
 import time
 import types
@@ -1046,8 +1047,42 @@ time.sleep(popup_module.POPUP_KEEPALIVE + 0.05)
 popup.keep_alive(1)
 check("none after the popup was closed", len(sent), 3)
 
+print("--- the Python cli started with sudo")
+
+
+def cli_version(**environment):
+	"""What `howdy version` says to root, with these variables set"""
+	env = {
+		k: v
+		for k, v in os.environ.items()
+		if k not in ("SUDO_USER", "DOAS_USER", "PKEXEC_UID")
+	}
+	env.update(LOGNAME="root", USER="root", **environment)
+	code = (
+		"import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
+		"runpy.run_module('howdy.cli', run_name='__main__')"
+	)
+	return subprocess.run(
+		[
+			sys.executable,
+			"-I",
+			"-c",
+			code,
+			os.path.join(WORK_DIR, "pyhowdy"),
+			"version",
+		],
+		env=env,
+		capture_output=True,
+		text=True,
+	).stdout.strip()
+
+
+check("root alone is refused", "as root" in cli_version(), True)
+check("sudo acts for its user", cli_version(SUDO_USER="nobody"), "Howdy 3.0.1")
+check("doas too", cli_version(DOAS_USER="nobody"), "Howdy 3.0.1")
+check("sudo of root is still root", "as root" in cli_version(SUDO_USER="root"), True)
+
 print("--- ffmpeg that does not deliver")
-import subprocess  # noqa: E402
 
 
 class FfmpegStream:

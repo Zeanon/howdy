@@ -109,8 +109,12 @@ args = parser.parse_args()
 # Save the args and user as builtins which can be accessed by the imports
 builtins.howdy_args = args
 
+root_commands = ["config", "set", "disable"]
+
 if args.user is None:
-	if args.command == "test":
+	# The test command runs as root through pkexec or sudo, but is meant for the user
+	# that started it. So are the other commands for a user, like sudo howdy add
+	if args.command == "test" or (user == "root" and args.command not in root_commands):
 		sudo_user = os.environ.get("SUDO_USER")
 		doas_user = os.environ.get("DOAS_USER")
 		pkexec_uid = os.environ.get("PKEXEC_UID")
@@ -118,8 +122,6 @@ if args.user is None:
 		user = next((u for u in [sudo_user, doas_user, pkexec_user, user] if u), "")
 	args.user = user
 
-
-root_commands = ["config", "set", "disable"]
 # Beyond this point the user can't change anymore, if we still have root as user we need to abort
 if args.user == "root" and args.command not in root_commands:
 	print(

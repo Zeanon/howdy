@@ -246,10 +246,13 @@ int main(int argc, char** argv) {
 
 	Options options = parse_arguments(original_arguments);
 
+	// The window can be started with sudo, it acts for the user that called it
+	const bool root_command = options.command == "config" || options.command == "set" || options.command == "disable" || options.command == "gui";
+
 	if (options.user.empty()) {
-		// The test command runs as root through pkexec or sudo, but is meant
-		// for the user that started it
-		if (options.command == "test") {
+		// The test command runs as root through pkexec or sudo, but is meant for the
+		// user that started it. So are the other commands for a user, like sudo howdy add
+		if (options.command == "test" || (user == "root" && !root_command)) {
 			const char* sudo_user = std::getenv("SUDO_USER");
 			const char* doas_user = std::getenv("DOAS_USER");
 			const char* pkexec_uid = std::getenv("PKEXEC_UID");
@@ -271,8 +274,6 @@ int main(int argc, char** argv) {
 	}
 
 	// Beyond this point the user can't change anymore, if we still have root as user we need to abort
-	// The window can be started with sudo, it acts for the user that called it
-	const bool root_command = options.command == "config" || options.command == "set" || options.command == "disable" || options.command == "gui";
 	if (options.user == "root" && !root_command) {
 		std::cerr << S("Can't run howdy commands as root, please run this command with the --user flag") << '\n';
 		return 1;
