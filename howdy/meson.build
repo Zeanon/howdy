@@ -172,6 +172,7 @@ shared_library(
 	install: true,
 	install_dir: pamdir,
 	install_tag: 'pam_module',
+	install_mode: 'rw-r--r--',
 	name_prefix: ''
 )
 # </pam module>
