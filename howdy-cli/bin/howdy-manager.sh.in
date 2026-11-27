@@ -124,22 +124,18 @@ remove_model() {
 toggle_howdy() {
     echo
     echo "1) Disable Howdy completely"
-    echo "2) Enable Howdy (restore defaults)"
+    echo "2) Enable Howdy"
     echo
     read -rp "Choose: " CHOICE
 
     case "$CHOICE" in
         1)
             require_root
-            howdy disable
+            howdy disable 1
             ;;
         2)
-            echo
-            echo "To enable Howdy again, edit the config:"
-            echo "sudo howdy config"
-            echo
-            echo "Set:"
-            echo "disabled = false"
+            require_root
+            howdy disable 0
             ;;
         *)
             echo "Invalid choice"
