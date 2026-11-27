@@ -101,7 +101,8 @@ struct Shared {
 	void abort() {
 		{
 			const std::lock_guard<std::mutex> lock(mutex);
-			if (!error.has_value()) {
+			// With the samples taken there is nothing left to cancel, only the wait ends
+			if (!error.has_value() && samples.empty()) {
 				cancelled = true;
 			}
 		}
@@ -346,8 +347,11 @@ class Worker {
 		}
 		shared_.post({Event::Kind::Finished, "", count});
 
-		// Let the user see the result
-		std::this_thread::sleep_for(std::chrono::duration<double>(settings_.timing.end_wait));
+		// Let the user see the result, until the dialog is closed
+		const auto shown_since = Clock::now();
+		while (!shared_.cancel && seconds_since(shown_since) < settings_.timing.end_wait) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
 	}
 
 	const EnrollSettings& settings_;
@@ -431,6 +435,13 @@ void on_cancel(GtkWidget* /*button*/, gpointer data) {
 
 void on_response(GtkDialog* /*dialog*/, gint /*response*/, gpointer data) {
 	static_cast<Dialog*>(data)->shared->abort();
+}
+
+// Escape and the window manager: only cancel. The window stays until the worker is done,
+// it is updated until then and destroyed afterwards
+gboolean on_delete(GtkWidget* /*window*/, GdkEvent* /*event*/, gpointer data) {
+	static_cast<Dialog*>(data)->shared->abort();
+	return TRUE;
 }
 
 // Show the latest frame and handle what the worker reports
@@ -538,6 +549,7 @@ void build_dialog(Dialog& dialog) {
 
 	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(window))), box);
 	g_signal_connect(window, "response", G_CALLBACK(on_response), &dialog);
+	g_signal_connect(window, "delete-event", G_CALLBACK(on_delete), &dialog);
 
 	// Belong to the window that asked for the dialog
 	if (dialog.settings->parent != nullptr) {

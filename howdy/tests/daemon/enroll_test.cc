@@ -1,7 +1,8 @@
 // Runs the guided capture of `howdy add` with short timings, to be run
 // with a display (xvfb-run) and a camera configured in the test config.
 //
-// Usage: enroll_test [--with-parent] [model file]
+// Usage: enroll_test [--with-parent] [--keep-open] [model file]
+//   --keep-open    the finished capture is shown for a minute
 //   --with-parent  the dialog belongs to a window of this program, whose X11 id
 //                  is printed
 //
@@ -32,10 +33,13 @@ int main(int argc, char** argv) {
 
 	// The window the dialog belongs to and the model to compare with
 	bool with_parent = false;
+	bool keep_open = false;
 	const char* model_file = nullptr;
 	for (int i = 1; i < argc; ++i) {
 		if (std::string(argv[i]) == "--with-parent") {
 			with_parent = true;
+		} else if (std::string(argv[i]) == "--keep-open") {
+			keep_open = true;
 		} else {
 			model_file = argv[i];
 		}
@@ -47,7 +51,7 @@ int main(int argc, char** argv) {
 		howdy::VideoCapture capture(config);
 
 		howdy::EnrollSettings settings{
-			*backend, capture, 60, [](const std::string& line) { std::cout << "say: " << line << std::endl; }, {0.5, 0.2, 1.0, 0.2},
+			*backend, capture, 60, [](const std::string& line) { std::cout << "say: " << line << std::endl; }, {0.5, 0.2, 1.0, keep_open ? 60.0 : 0.2},
 		};
 		GtkWidget* parent = nullptr;
 		if (with_parent) {

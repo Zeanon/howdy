@@ -411,6 +411,16 @@ if [ "$HAS_XVFB" = 1 ]; then
 	expect_contains "closing the dialog has an exit code of its own" "$output" "exit code: 3"
 	run xvfb-run -a "$TEST_DIR/dialog_check.sh" cancel "$T/enroll_test"
 	expect_contains "the enrollment reports the cancellation" "$output" "exit code: 1"
+	run xvfb-run -a "$TEST_DIR/dialog_check.sh" escape "$T/enroll_test"
+	expect_contains "Escape cancels" "$output" "cancelled"
+	expect_contains "and nothing breaks" "$output" "exit code: 1"
+	expect_missing "no destroyed widget is used" "$output" "Gtk-CRITICAL"
+	# The capture is done after some seconds and shown for a minute: closing it then keeps the samples
+	started=$SECONDS
+	run xvfb-run -a "$TEST_DIR/dialog_check.sh" late-cancel 20 "$T/enroll_test" --keep-open
+	expect_contains "Cancel after the capture keeps the samples" "$output" "samples: "
+	expect_contains "and ends well" "$output" "exit code: 0"
+	expect "without the rest of the wait" "$([ $((SECONDS - started)) -le 45 ] && echo yes || echo "$((SECONDS - started)) s")" yes
 
 	write_config "$T/blank.mp4"
 	run xvfb-run -a "$T/enroll_test"

@@ -8,6 +8,10 @@
 #   dialog_check.sh cancel <program and arguments>
 #       Starts the program, clicks "Cancel" in its dialog and prints how it
 #       exited, then what it said.
+#   dialog_check.sh escape <program and arguments>
+#       The same, but presses Escape in the dialog.
+#   dialog_check.sh late-cancel <seconds> <program and arguments>
+#       Clicks "Cancel" only after this time.
 set -uo pipefail
 # The title of the dialog has a dash that is not ASCII, xdotool needs a UTF-8 locale to find it
 export LC_ALL=C.UTF-8
@@ -39,6 +43,24 @@ no_dialog() {
 	exit 1
 }
 
+# Clicks until the program has ended. The button is at the bottom, where exactly depends on the
+# theme: try until the dialog reacts. Clicks that miss the button do nothing.
+click_cancel() {
+	local y
+	for y in 570 560 580 550 590 540 600 530 520 510 500 490 480 470; do
+		kill -0 "$pid" 2> /dev/null || break
+		xdotool mousemove --window "$dialog" 250 "$y" click 1
+		sleep 0.1
+	done
+}
+
+report() {
+	local code=0
+	wait "$pid" || code=$?
+	echo "exit code: $code"
+	cat "$log"
+}
+
 case "$mode" in
 	transient)
 		"$1" --with-parent > "$log" 2>&1 &
@@ -54,20 +76,31 @@ case "$mode" in
 		"$@" > "$log" 2>&1 &
 		pid=$!
 		dialog="$(find_dialog)" || no_dialog
-		# The button is at the bottom, where exactly depends on the theme: try
-		# until the dialog reacts. Clicks that miss the button do nothing.
-		for y in 570 560 580 550 590 540 600 530 520 510 500 490 480 470; do
-			kill -0 "$pid" 2> /dev/null || break
-			xdotool mousemove --window "$dialog" 250 "$y" click 1
-			sleep 0.1
-		done
-		code=0
-		wait "$pid" || code=$?
-		echo "exit code: $code"
-		cat "$log"
+		click_cancel
+		report
+		;;
+	escape)
+		"$@" > "$log" 2>&1 &
+		pid=$!
+		dialog="$(find_dialog)" || no_dialog
+		sleep 1
+		# The dialog does not take the focus by itself
+		xdotool windowfocus "$dialog"
+		xdotool key Escape
+		report
+		;;
+	late-cancel)
+		delay=$1
+		shift
+		"$@" > "$log" 2>&1 &
+		pid=$!
+		dialog="$(find_dialog)" || no_dialog
+		sleep "$delay"
+		click_cancel
+		report
 		;;
 	*)
-		echo "usage: dialog_check.sh transient|cancel ..."
+		echo "usage: dialog_check.sh transient|cancel|escape|late-cancel ..."
 		exit 2
 		;;
 esac
