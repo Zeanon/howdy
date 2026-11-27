@@ -1,3 +1,4 @@
 #!/bin/sh
 
-"@python_path@" -I -m howdy.cli "$@"
+# exec: a signal for this process (the setup wizard ends `howdy add`) reaches Python
+exec "@python_path@" -I -m howdy.cli "$@"

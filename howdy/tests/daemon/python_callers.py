@@ -1268,6 +1268,22 @@ for name, capture, want in (
 		setattr(owner, attribute, value)
 	check(f"howdy add, {name}: exit status and release", (code, released), want)
 
+print("--- the howdy program of the Python cli")
+# A signal for it has to reach Python: the setup wizard ends `howdy add` with one
+with open(os.path.join(SOURCE_DIR, "..", "..", "assets", "bin", "howdy.in")) as handle:
+	launcher = handle.read()
+stand_in_python = os.path.join(WORK_DIR, "launcher-python")
+with open(stand_in_python, "w") as handle:
+	handle.write('#!/bin/sh\necho "$$"\n')
+os.chmod(stand_in_python, 0o755)
+launcher_path = os.path.join(WORK_DIR, "launcher-howdy")
+with open(launcher_path, "w") as handle:
+	handle.write(launcher.replace("@python_path@", stand_in_python))
+os.chmod(launcher_path, 0o755)
+with subprocess.Popen([launcher_path], stdout=subprocess.PIPE) as process:
+	output = process.stdout.read()
+check("Python is the process that was started", int(output), process.pid)
+
 print("--- the camera that is opened when the path does not work")
 
 
