@@ -68,6 +68,9 @@ def _get_core(user=None):
 	if _core is None:
 		try:
 			cache_dir = _cache_dir()
+			# First itself: the mode does not apply to a directory that is made on the way
+			# to one below it
+			os.makedirs(cache_dir, mode=0o700, exist_ok=True)
 			# The OpenCL kernel caches go there too, not into /tmp, where everybody can
 			# create the directory first
 			for variable, name in (
@@ -80,7 +83,6 @@ def _get_core(user=None):
 			from openvino import Core
 
 			_core = Core()
-			os.makedirs(cache_dir, mode=0o700, exist_ok=True)
 			_core.set_property({"CACHE_DIR": cache_dir})
 		except Exception as exc:
 			raise Exception(f"Could not load OpenVINO Core cause of: [{exc}]")

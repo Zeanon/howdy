@@ -1100,6 +1100,31 @@ check(
 )
 os.environ["PATH"] = original_path
 
+print("--- the cache directory of OpenVINO")
+# Neither openvino nor dlib is needed for this
+original_dlib = sys.modules.get("dlib")
+sys.modules["dlib"] = types.ModuleType("dlib")
+sys.modules["openvino"] = types.SimpleNamespace(
+	Core=lambda: types.SimpleNamespace(set_property=lambda _: None)
+)
+from howdy import openvino_face  # noqa: E402
+
+cache = os.path.join(WORK_DIR, "ov-home", "openvino")
+shutil.rmtree(os.path.dirname(cache), ignore_errors=True)
+openvino_face._cache_dir = lambda: cache
+previous_umask = os.umask(0o022)
+openvino_face._get_core()
+os.umask(previous_umask)
+for name in ("", "cl_cache", "intel_ocl"):
+	check(
+		f"only for its owner: openvino/{name}",
+		oct(os.stat(os.path.join(cache, name)).st_mode & 0o777),
+		oct(0o700),
+	)
+del sys.modules["openvino"], sys.modules["dlib"]
+if original_dlib is not None:
+	sys.modules["dlib"] = original_dlib
+
 print("--- the camera that is opened when the path does not work")
 from howdy.recorders import video_capture as capture_module  # noqa: E402
 
