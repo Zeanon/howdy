@@ -1240,6 +1240,34 @@ check(
 check("howdy clear ends well", clear_code, 0)
 check("the models of the user are cleared", cleared, [["someone"]])
 
+released = []
+
+
+def cancelled(**kwargs):
+	raise add.enroll_helper.EnrollCancelled()
+
+
+def still_reading(**kwargs):
+	kwargs["video_capture"].still_reading = True
+	raise add.enroll_helper.EnrollCancelled()
+
+
+for name, capture, want in (
+	("a cancel", cancelled, (3, [True])),
+	("a cancel while the camera does not answer", still_reading, (3, [])),
+):
+	for owner, attribute, value in patched:
+		setattr(owner, attribute, value)
+	add.VideoCapture = lambda _: types.SimpleNamespace(
+		release=lambda: released.append(True)
+	)
+	add.enroll_capture.capture_guided_samples = capture
+	released.clear()
+	code = exit_code(add.run)
+	for owner, attribute, value in originals:
+		setattr(owner, attribute, value)
+	check(f"howdy add, {name}: exit status and release", (code, released), want)
+
 print("--- the camera that is opened when the path does not work")
 
 

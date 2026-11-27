@@ -1,3 +1,7 @@
+# The exit status of `howdy add` when the user has cancelled, as the C++ program has it
+EXIT_CANCELLED = 3
+
+
 class EnrollCancelled(Exception):
 	# Exception raised when enrollment was manually cancelled
 	def __init__(self, *args: object):

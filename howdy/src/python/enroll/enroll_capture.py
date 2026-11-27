@@ -44,6 +44,8 @@ DUPLICATE_DISTANCE = 0.05
 MAX_SAMPLES = 1 + len(GUIDE_STEPS) * SAMPLES_PER_STEP
 INIT_WAIT_SECONDS = 2
 END_WAIT_SECONDS = 1
+# How long a cancelled capture is waited for
+CAMERA_WAIT_SECONDS = 3
 
 HIGHLIGHT_COLOR = (42, 170, 229)  # 2AAAE5
 
@@ -99,6 +101,8 @@ def capture_guided_samples(
 	import numpy as np
 
 	gi.require_version("Gtk", "3.0")
+	gi.require_version("Gdk", "3.0")
+	from gi.repository import Gdk as gdk
 	from gi.repository import Gtk as gtk
 	from gi.repository import GLib as glib
 	from gi.repository import GdkPixbuf as gdkPixbuf
@@ -106,6 +110,14 @@ def capture_guided_samples(
 	from . import enroll_helper
 	from .rotation import fixed_rotation, rotate_frame
 	from .recorders.video_capture import NoDeviceException
+
+	# The camera is shown in a window while it records
+	if gdk.Screen.get_default() is None:
+		raise Exception(
+			S(
+				"Adding a model shows the camera in a window, run it in a graphical session"
+			)
+		)
 
 	rotate = fixed_rotation(rotate)
 
@@ -154,13 +166,15 @@ def capture_guided_samples(
 
 	abort_button = gtk.Button(label="Cancel")
 	abort_button.set_hexpand(False)
-	abort_button.connect(
-		"clicked",
-		lambda _: (
-			result.__setitem__("error", enroll_helper.EnrollCancelled()),
-			finished.set(),
-		),
-	)
+
+	def abort(*_):
+		# With the samples complete only the time they are shown is cut short
+		if result["samples"] is None and result["error"] is None:
+			result["error"] = enroll_helper.EnrollCancelled()
+		cancel.set()
+		finished.set()
+
+	abort_button.connect("clicked", abort)
 	button_box = gtk.Box(orientation=gtk.Orientation.HORIZONTAL)
 	button_box.pack_start(abort_button, True, True, 75)
 	box.pack_start(button_box, False, False, 20)
@@ -177,9 +191,7 @@ def capture_guided_samples(
 		if use_openvino:
 			face_encoding = face_encoder.encode(frame, face_location)
 			if face_encoding is None:
-				result["error"] = Exception(S("Failed to encode face, aborting"))
-				finished.set()
-				return
+				raise Exception(S("Failed to encode face, aborting"))
 			return face_encoding.tolist()
 		else:
 			face_landmark = pose_predictor(
@@ -231,9 +243,8 @@ def capture_guided_samples(
 		try:
 			frame, gsframe = video_capture.read_frame()
 		except NoDeviceException as exc:
-			result["error"] = Exception(exc.message)
-			finished.set()
-			return None, []
+			# Ends the capture, there is nothing to look for without a picture
+			raise Exception(exc.message) from exc
 
 		# Turn sideways mounted cameras upright, so the model is built from the
 		# same image that is used for authentication
@@ -286,20 +297,30 @@ def capture_guided_samples(
 		say(S(line))
 
 	def worker():
-		nonlocal valid_frames, dark_tries, dark_running_total
+		try:
+			capture()
+		except Exception as exc:
+			# The first reason counts (the user has cancelled, for example)
+			if result["error"] is None:
+				result["error"] = exc
+		finally:
+			# Always, the window waits for it
+			finished.set()
 
-		emit(S("\nPlease look straight into the camera"))
-		guide_label.set_markup(
-			f"<big><span foreground='#2AAAE5'><b>{GUIDE_STEPS[0]}</b></span></big>"
-		)
+	def capture():
+		nonlocal valid_frames, dark_tries, dark_running_total
 
 		# Give the user time to read
 		deadline = clock() + init_wait_seconds
-		while clock() < deadline:
+		while not cancel.is_set() and clock() < deadline:
 			get_frame()
 
 		# Loop through frames till we hit a timeout
+		face_locations = []
 		for _ in range(60):
+			if cancel.is_set():
+				return
+
 			# Get all faces from that frame as encodings
 			frame, face_locations = get_frame()
 
@@ -322,68 +343,57 @@ def capture_guided_samples(
 				)
 			else:
 				reason = S("No face detected, aborting")
-			result["error"] = Exception(reason)
-			finished.set()
-			return
+			raise Exception(reason)
 
 		# If more than 1 faces are detected we can't know which one belongs to the user
 		elif len(face_locations) > 1:
 			# video_capture.release()
-			result["error"] = Exception(S("Multiple faces detected, aborting"))
-			finished.set()
-			return
+			raise Exception(S("Multiple faces detected, aborting"))
 
 		first_sample = encode(frame, face_locations[0])
 		samples = [list(first_sample)]
 		total = min(max_samples, 1 + len(steps) * samples_per_step)
 
-		try:
-			events.put(("progress", len(samples), total))
+		events.put(("progress", len(samples), total))
 
-			for prompt in steps:
-				if cancel.is_set() or len(samples) >= max_samples:
-					break
+		for prompt in steps:
+			if cancel.is_set() or len(samples) >= max_samples:
+				break
 
-				events.put(("emit", guide_line(prompt)))
+			events.put(("emit", guide_line(prompt)))
 
-				settle_until = clock() + settle_seconds
-				while not cancel.is_set() and clock() < settle_until:
-					get_frame()
+			settle_until = clock() + settle_seconds
+			while not cancel.is_set() and clock() < settle_until:
+				get_frame()
 
-				deadline = clock() + step_seconds
-				got = 0
+			deadline = clock() + step_seconds
+			got = 0
 
-				while (
-					not cancel.is_set()
-					and got < samples_per_step
-					and len(samples) < max_samples
-					and clock() < deadline
-				):
-					frame, face_locations = get_frame()
-					if len(face_locations) != 1:
-						continue
+			while (
+				not cancel.is_set()
+				and got < samples_per_step
+				and len(samples) < max_samples
+				and clock() < deadline
+			):
+				frame, face_locations = get_frame()
+				if len(face_locations) != 1:
+					continue
 
-					descriptor = list(encode(frame, face_locations[0]))
-					if is_duplicate(descriptor, samples, np):
-						continue
+				descriptor = list(encode(frame, face_locations[0]))
+				if is_duplicate(descriptor, samples, np):
+					continue
 
-					samples.append(descriptor)
-					got += 1
-					events.put(("progress", len(samples), total))
+				samples.append(descriptor)
+				got += 1
+				events.put(("progress", len(samples), total))
 
-			result["samples"] = samples
+		if cancel.is_set():
+			return
 
-		except Exception as exc:
-			result["error"] = exc
-
-		finally:
-			if result["error"] is None:
-				events.put(("finished",))
-				deadline = clock() + end_wait_seconds
-				while clock() < deadline:
-					# get_frame()
-					pass
-			finished.set()
+		result["samples"] = samples
+		# The result is shown for a moment
+		events.put(("finished",))
+		cancel.wait(end_wait_seconds)
 
 	def update_ui():
 		nonlocal latest_frame
@@ -433,6 +443,12 @@ def capture_guided_samples(
 	loop = glib.MainLoop()
 	glib.timeout_add(33, update_ui)
 
+	# The window is only touched here, in the thread of the UI
+	emit(S("\nPlease look straight into the camera"))
+	guide_label.set_markup(
+		f"<big><span foreground='#2AAAE5'><b>{GUIDE_STEPS[0]}</b></span></big>"
+	)
+
 	thread = threading.Thread(
 		target=worker,
 		name="howdy-enroll",
@@ -440,13 +456,19 @@ def capture_guided_samples(
 	)
 	thread.start()
 
-	dialog.connect("response", lambda *_: cancel.set())
+	# Closing the dialog is cancelling too
+	dialog.connect("response", abort)
 
 	try:
 		loop.run()
 	finally:
 		cancel.set()
 		dialog.destroy()
+		# The caller releases the camera, nothing may read it any more then. A camera
+		# that does not answer must not hold up the window for good.
+		thread.join(CAMERA_WAIT_SECONDS)
+		if thread.is_alive():
+			video_capture.still_reading = True
 
 	if result["error"] is not None:
 		raise result["error"]

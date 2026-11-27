@@ -32,8 +32,9 @@ def exit(reason):
 		if isinstance(reason, Exception):
 			raise reason
 		raise Exception(reason)
-	if not isinstance(reason, enroll_helper.EnrollCancelled):
-		print(reason)
+	if isinstance(reason, enroll_helper.EnrollCancelled):
+		sys.exit(enroll_helper.EXIT_CANCELLED)
+	print(reason)
 	sys.exit(1)
 
 
@@ -234,7 +235,9 @@ async def _run(dialog=None):
 		finally:
 			# Release the camera on success and on any detection / encoding / read error
 			# (the wizard's live preview reopens the device right after add exits).
-			video_capture.release()
+			# A camera that is still being read is released when that has ended
+			if not getattr(video_capture, "still_reading", False):
+				video_capture.release()
 
 		if not samples:
 			reason = S("No samples captured, aborting")
