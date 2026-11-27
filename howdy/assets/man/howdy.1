@@ -1,44 +1,54 @@
 .\" Please adjust this date whenever revising the manpage.
-.TH HOWDY 1 "April 9, 2018" "Howdy help" "User Commands"
+.TH HOWDY 1 "November 27, 2026" "Howdy help" "User Commands"
 .SH NAME
 howdy \- Windows Hello style authentication for Linux
+.SH SYNOPSIS
+.B howdy
+[\-U USER] [\-\-plain] [\-h] [\-y] command [arguments...]
 .SH DESCRIPTION
 Howdy IR face recognition implements a PAM module to use your face as a authentication method.
-.SS "Usage:"
-.IP
-howdy [\-U USER] [\-y] [\-h] command [argument]
-.SS "Commands:"
+.PP
+Without \fB\-U\fR a command is for the user that runs it, and for the user that started
+sudo or doas.
+.SH COMMANDS
 .TP
-add
-Add a new face model for an user.
+\fBadd\fR [NAME]
+Add a new face model for a user.
 .TP
-clear
-Remove all face models for an user.
+\fBclear\fR
+Remove all face models of a user.
 .TP
-config
-Open the config file in gedit.
+\fBconfig\fR
+Open the config file in the editor of $EDITOR, else in nano or vi, and restart the
+authentication service.
 .TP
-disable
-Disable or enable howdy.
+\fBdisable\fR 0|1
+Enable (0) or disable (1) Howdy.
 .TP
-gui
+\fBgui\fR
 Open the configuration window (also started as howdy-gtk). With \fB\-\-force\-onboarding\fR it starts the setup wizard.
 .TP
-list
-List all saved face models for an user.
+\fBlist\fR
+List the face models of a user.
 .TP
-remove
-Remove a specific model for an user.
+\fBremove\fR ID
+Remove a face model of a user.
 .TP
-rename
-Give a model another name: howdy rename ID NAME.
+\fBrename\fR ID [NAME]
+Give a model another name.
 .TP
-clear
-Remove all face models for an user.
+\fBset\fR [SECTION.]OPTION VALUE
+Set an option of the config file. The section is needed if several have the option. Needs root.
 .TP
-test
+\fBsnapshot\fR
+Save a few frames of the camera to the snapshot directory.
+.TP
+\fBtest\fR
 Test the camera and recognition methods. Only root may compare the faces, run it with sudo.
-.SS "Optional arguments:"
+.TP
+\fBversion\fR
+Print the version.
+.SH OPTIONS
 .TP
 \fB\-U\fR USER, \fB\-\-user\fR USER
 Set the user account to use.
@@ -46,8 +56,10 @@ Set the user account to use.
 \fB\-y\fR
 Skip all questions.
 .TP
+\fB\-\-plain\fR
+Print machine-friendly output.
+.TP
 \fB\-h\fR, \fB\-\-help\fR
-Show this help message and exit.
-.PP
+Show a help message and exit.
 .SH AUTHOR
 Howdy was written by boltgolt. For more information visit https://github.com/boltgolt/howdy
