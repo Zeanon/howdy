@@ -190,12 +190,22 @@ class MainWindow(gtk.Window):
 
 	def on_about_link(self, label, uri):
 		"""Open links on about page as a non-root user"""
-		try:
-			user = os.getlogin()
-		except Exception:
-			user = os.environ.get("SUDO_USER")
+		command = ["timeout", "10", "xdg-open", uri]
 
-		subprocess.getstatusoutput(["sudo -u " + user + " timeout 10 xdg-open " + uri])
+		# Only root has to become another user, the one that asked for root with sudo
+		# or pkexec. A browser is not started as root.
+		if os.geteuid() == 0:
+			user = os.environ.get("SUDO_USER")
+			uid = os.environ.get("PKEXEC_UID")
+			if not user and uid:
+				user = pwd.getpwuid(int(uid)).pw_name
+			if not user or user == "root":
+				print(uri)
+				return True
+			command = ["sudo", "-u", user, *command]
+
+		# Not waited for, the window stays usable
+		subprocess.Popen(command)
 		return True
 
 	def exit(self, widget=None, context=None):

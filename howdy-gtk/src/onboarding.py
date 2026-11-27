@@ -3,16 +3,61 @@ import re
 import sys
 import time
 import fcntl
+import shlex
+import shutil
 import struct
 import threading
 import subprocess
 
 from .i18n import S
 from . import paths_factory
+from howdy import enroll_helper  # type: ignore
 
 from gi.repository import Gtk as gtk
 from gi.repository import GLib as glib
 from gi.repository import Pango as pango
+
+
+def privileged(argv):
+	"""A command that needs root: pkexec asks for it unless this already is root"""
+	if os.geteuid() == 0:
+		return argv
+	# pkexec only runs programs by their absolute path
+	return [
+		shutil.which("pkexec") or "pkexec",
+		shutil.which(argv[0]) or argv[0],
+	] + argv[1:]
+
+
+def run_in_background(argv, on_line, on_done):
+	"""Run a command without holding up the window, asking for root may take a while.
+	on_line(line) gets its output, on_done(status, output) is called when it has
+	ended, both in the UI thread. Returns a function that ends the command"""
+	processes = []
+
+	def work():
+		lines = []
+		try:
+			with subprocess.Popen(
+				argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+			) as process:
+				processes.append(process)
+				for raw in process.stdout:
+					lines.append(raw.decode("utf-8", "replace"))
+					glib.idle_add(lambda line=lines[-1]: on_line(line) and False)
+			status = process.returncode
+		except OSError as exc:
+			lines.append(str(exc))
+			status = 127
+		glib.idle_add(lambda: on_done(status, "".join(lines)) and False)
+
+	threading.Thread(target=work, daemon=True).start()
+
+	def stop():
+		for process in processes:
+			process.terminate()
+
+	return stop
 
 
 class OnboardingWindow(gtk.Window):
@@ -24,6 +69,8 @@ class OnboardingWindow(gtk.Window):
 		self.builder = gtk.Builder()
 		self.builder.add_from_file(paths_factory.onboarding_wireframe_path())
 		self.builder.connect_signals(self)
+		# Ends `howdy add` while it runs
+		self.stop_add = None
 
 		self.window = self.builder.get_object("onboardingwindow")
 		self.slidecontainer = self.builder.get_object("slidecontainer")
@@ -60,24 +107,41 @@ class OnboardingWindow(gtk.Window):
 		# the shown child may have zero/wrong dimensions
 		self.slidecontainer.queue_resize()
 
-		if self.window.current_slide == 1:
-			self.execute_slide1()
-		elif self.window.current_slide == 2:
-			glib.timeout_add(10, self.execute_slide2)
-		elif self.window.current_slide == 3:
-			glib.timeout_add(10, self.execute_slide3)
-		elif self.window.current_slide == 4:
-			self.execute_slide4()
-		elif self.window.current_slide == 5:
-			self.execute_slide5()
-		elif self.window.current_slide == 6:
-			self.execute_slide6()
-		elif self.window.current_slide == 7:
-			self.execute_slide7()
+		step = {
+			1: self.download_dlib_data,
+			2: self.download_openvino_data,
+			3: self.find_cameras,
+			4: self.check_infrared_emitter,
+			5: self.configure_camera,
+			6: self.enable_next,
+			7: self.finish,
+		}.get(self.window.current_slide)
+		if step is not None:
+			step()
 
-	def execute_slide1(self):
-		self.downloadoutputlabel = self.builder.get_object("downloadoutputlabel")
-		eventbox = self.builder.get_object("downloadeventbox")
+	def download_dlib_data(self):
+		self.download_data_files(
+			paths_factory.dlib_data_dir_path(),
+			"shape_predictor_5_face_landmarks.dat",
+			"downloadoutputlabel",
+			"downloadeventbox",
+			S("DLib datafiles have already been downloaded!\nClick Next to continue"),
+		)
+
+	def download_openvino_data(self):
+		self.download_data_files(
+			paths_factory.openvino_data_dir_path(),
+			"face-detection-adas-0001.xml",
+			"downloadoutputlabelopenvino",
+			"downloadeventboxopenvino",
+			S(
+				"OpenVINO datafiles have already been downloaded!\nClick Next to continue"
+			),
+		)
+
+	def download_data_files(self, directory, marker, label_id, box_id, done_text):
+		label = self.builder.get_object(label_id)
+		eventbox = self.builder.get_object(box_id)
 
 		# Give the download output a black background
 		css = gtk.CssProvider()
@@ -87,54 +151,37 @@ class OnboardingWindow(gtk.Window):
 		)
 
 		# TODO: Better way to do this?
-		if os.path.exists(
-			paths_factory.dlib_data_dir_path() / "shape_predictor_5_face_landmarks.dat"
-		):
-			self.downloadoutputlabel.set_text(
-				S(
-					"DLib datafiles have already been downloaded!\nClick Next to continue"
-				)
-			)
+		if os.path.exists(directory / marker):
+			label.set_text(done_text)
 			self.enable_next()
 			return
 
-		self.proc = subprocess.Popen(
-			"./install.sh",
-			stdout=subprocess.PIPE,
-			stderr=subprocess.STDOUT,
-			shell=True,
-			cwd=paths_factory.dlib_data_dir_path(),
+		lines = []
+
+		def show_line(line):
+			print("install.sh output:")
+			print(line)
+			lines.append(line)
+			del lines[:-10]
+			label.set_text(" ".join(lines))
+
+		def downloaded(status, output):
+			if status != 0:
+				self.show_error(S("Error while downloading datafiles"), " ".join(lines))
+				return
+			label.set_text(S("Done!\nClick Next to continue"))
+			self.enable_next()
+
+		# The data files are installed for the whole system
+		run_in_background(
+			privileged(
+				["/bin/sh", "-c", f"cd {shlex.quote(str(directory))} && ./install.sh"]
+			),
+			show_line,
+			downloaded,
 		)
 
-		self.download_lines = []
-		self.read_download_line()
-
-	def read_download_line(self):
-		line = self.proc.stdout.readline()
-		self.download_lines.append(line.decode("utf-8"))
-
-		print("install.sh output:")
-		print(line.decode("utf-8"))
-
-		if len(self.download_lines) > 10:
-			self.download_lines.pop(0)
-
-		self.downloadoutputlabel.set_text(" ".join(self.download_lines))
-
-		if line:
-			glib.timeout_add(10, self.read_download_line)
-			return
-
-		# Wait for the process to finish and check the status code
-		if self.proc.wait(5) != 0:
-			self.show_error(
-				S("Error while downloading datafiles"), " ".join(self.download_lines)
-			)
-
-		self.downloadoutputlabel.set_text(S("Done!\nClick Next to continue"))
-		self.enable_next()
-
-	def execute_slide2(self):
+	def find_cameras(self):
 		# Scan in a separate thread, opening every camera takes too long to do in the UI thread
 		threading.Thread(target=self.scan_devices, daemon=True).start()
 
@@ -216,9 +263,13 @@ class OnboardingWindow(gtk.Window):
 			time.sleep(0.5)
 
 			# Get the udevadm details to try to get a better name
-			udevadm = subprocess.check_output(
-				["udevadm info -r --query=all -n " + device_path], shell=True
-			).decode("utf-8")
+			try:
+				udevadm = subprocess.check_output(
+					["udevadm", "info", "-r", "--query=all", "-n", device_path]
+				).decode("utf-8", "replace")
+			except (OSError, subprocess.CalledProcessError):
+				# The camera keeps the name of its link
+				udevadm = ""
 
 			# Loop though udevadm to search for a better name
 			for line in udevadm.split("\n"):
@@ -288,7 +339,15 @@ class OnboardingWindow(gtk.Window):
 		self.loadinglabel.hide()
 		self.enable_next()
 
-	def execute_slide4(self):
+	def selected_camera(self):
+		"""(path, is infrared) of the camera that is selected, None without one"""
+		(listmodel, rowlist) = self.treeview.get_selection().get_selected_rows()
+		if len(rowlist) != 1:
+			return None
+		row = listmodel.get_iter(rowlist[0])
+		return listmodel.get_value(row, 2), listmodel.get_value(row, 3)
+
+	def check_infrared_emitter(self):
 		try:
 			import cv2
 		except Exception:
@@ -296,14 +355,11 @@ class OnboardingWindow(gtk.Window):
 				S("Error while importing OpenCV2"), S("Try reinstalling cv2")
 			)
 
-		selection = self.treeview.get_selection()
-		(listmodel, rowlist) = selection.get_selected_rows()
-
-		if len(rowlist) != 1:
+		selected = self.selected_camera()
+		if selected is None:
 			self.show_error(S("Error selecting camera"))
-
-		device_path = listmodel.get_value(listmodel.get_iter(rowlist[0]), 2)
-		is_gray = listmodel.get_value(listmodel.get_iter(rowlist[0]), 3)
+			return
+		device_path, is_gray = selected
 
 		if is_gray:
 			# test if linux-enable-ir-emitter help should be displayed,
@@ -333,43 +389,65 @@ class OnboardingWindow(gtk.Window):
 		self.builder.get_object("leieyesbutton").hide()
 		self.builder.get_object("leienobutton").hide()
 
+	def configure_camera(self):
+		selected = self.selected_camera()
+		if selected is None:
+			self.show_error(S("Error selecting camera"))
+			return
+
+		# The scan can start when the camera is configured
+		scanbutton = self.builder.get_object("scanbutton")
+		scanbutton.set_sensitive(False)
+
+		def configured(status, output):
+			if status != 0:
+				self.show_error(
+					S("Error setting camera path"),
+					S("Please set the camera path manually") + "\n\n" + output.strip(),
+				)
+				return
+			scanbutton.set_sensitive(True)
+			self.window.set_focus(scanbutton)
+
+		run_in_background(
+			privileged(["howdy", "set", "device_path", selected[0]]),
+			print,
+			configured,
+		)
+
 	def on_scanbutton_click(self, button):
-		# status = self.proc.wait(2)
-
-		# if status != 0:
-		# 	self.show_error(S("Error setting camera path"), S("Please set the camera path manually"))
-
+		button.set_sensitive(False)
 		self.dialog = gtk.MessageDialog(transient_for=self, modal=True)
 		self.dialog.set_title(S("Creating Model"))
 		self.dialog.props.text = S("Please look directly into the camera")
+		# It goes away when the model is there, not by Escape
+		self.dialog.connect("delete-event", lambda *_: True)
 		self.dialog.show_all()
 
 		# Wait a bit to allow the user to read the dialog
 		glib.timeout_add(600, self.run_add)
 
 	def run_add(self):
-		status, output = subprocess.getstatusoutput(["howdy add -y"])
+		def added(status, output):
+			self.stop_add = None
+			self.dialog.destroy()
 
-		print("howdy add output:")
-		print(output)
+			if status == enroll_helper.EXIT_CANCELLED:
+				# The scan can be started again
+				self.builder.get_object("scanbutton").set_sensitive(True)
+				return
+			if status != 0:
+				self.show_error(S("Can't save face model"), output)
+				return
+			self.go_next_slide()
 
-		self.dialog.destroy()
+		self.stop_add = run_in_background(["howdy", "add", "-y"], print, added)
 
-		if status != 0:
-			self.show_error(S("Can't save face model"), output)
-
-		glib.timeout_add(10, self.go_next_slide)
-
-	def execute_slide5(self):
-		self.enable_next()
-
-	def execute_slide6(self):
-		self.enable_next()
-
-	def execute_slide7(self):
+	def finish(self):
 		radio_buttons = self.builder.get_object("radiobalanced").get_group()
 		radio_selected = False
-		radio_certanty = 5.0
+		# A percentage, the higher the stricter (as the C++ window has it)
+		radio_certanty = 75
 
 		for button in radio_buttons:
 			if button.get_active():
@@ -378,33 +456,35 @@ class OnboardingWindow(gtk.Window):
 		if not radio_selected:
 			self.show_error(S("Error reading radio buttons"))
 		elif radio_selected == "radiofast":
-			radio_certanty = 4.2
+			radio_certanty = 65
 		elif radio_selected == "radiobalanced":
-			radio_certanty = 3.5
+			radio_certanty = 75
 		elif radio_selected == "radiosecure":
-			radio_certanty = 2.2
-
-		self.proc = subprocess.Popen(
-			"howdy set certainty " + str(radio_certanty),
-			stdout=subprocess.PIPE,
-			stderr=subprocess.STDOUT,
-			shell=True,
-		)
+			radio_certanty = 88
 
 		self.nextbutton.hide()
 		self.builder.get_object("cancelbutton").hide()
 
 		finishbutton = self.builder.get_object("finishbutton")
 		finishbutton.show()
-		self.window.set_focus(finishbutton)
+		# Not before it is saved: pkexec may still be asking for the password
+		finishbutton.set_sensitive(False)
 
-		status = self.proc.wait(2)
+		def saved(status, output):
+			if status != 0:
+				self.show_error(
+					S("Error setting certainty"),
+					S("Certainty is set to the default value, Howdy setup is complete"),
+				)
+				return
+			finishbutton.set_sensitive(True)
+			self.window.set_focus(finishbutton)
 
-		if status != 0:
-			self.show_error(
-				S("Error setting certainty"),
-				S("Certainty is set to the default value, Howdy setup is complete"),
-			)
+		run_in_background(
+			privileged(["howdy", "set", "certainty", str(radio_certanty)]),
+			print,
+			saved,
+		)
 
 	def enable_next(self):
 		self.nextbutton.set_sensitive(True)
@@ -428,5 +508,7 @@ class OnboardingWindow(gtk.Window):
 
 	def exit(self, widget=None, context=None):
 		"""Cleanly exit"""
+		if self.stop_add is not None:
+			self.stop_add()
 		gtk.main_quit()
 		sys.exit(0)

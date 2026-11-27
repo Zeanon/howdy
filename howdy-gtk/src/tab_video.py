@@ -103,7 +103,12 @@ def capture_frame(self):
 	if self.capture is None:
 		return
 
-	_, frame = self.capture.read()
+	ok, frame = self.capture.read()
+	if not ok:
+		# No picture: say so and stop, the next switch to the tab tries again
+		print(S("Can't open camera"))
+		self.opencvimage.set_from_icon_name("camera-disabled", gtk.IconSize.DIALOG)
+		return
 
 	frame = self.cv2.flip(frame, 1)
 	frame = self.cv2.resize(
