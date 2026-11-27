@@ -78,11 +78,22 @@ howdy-gtk
 
 #### Debian
 
-Download the .deb file from the [Releases page](https://github.com/boltgolt/howdy/releases) and install it with apt from the folder you downloaded it to:
+Build the package from the source (the build dependencies are listed in `debian/control`) and install it with apt:
 
 ```
-sudo apt install ./howdy_*.deb
+sudo apt build-dep .
+dpkg-buildpackage -us -uc -b
+sudo apt install ../howdy_*.deb
 ```
+
+Then download the dlib models and start the authentication service:
+
+```
+sudo /usr/share/howdy/dlib-models/install.sh
+sudo systemctl restart howdy-authentication.service
+```
+
+The package holds the C++ implementation without OpenVINO and without the [encryption of the face models](#encrypting-the-face-models), for these build from source. The configuration is `/etc/howdy/config.ini`. Face models of older packages are copied to `/var/lib/howdy/models`, `apt purge howdy` deletes them.
 
 #### Arch Linux
 

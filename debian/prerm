@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+# Out of the PAM configuration before the module is gone
+if [ "$1" = remove ]; then
+	pam-auth-update --package --remove howdy
+fi
+
+#DEBHELPER#
+
+exit 0

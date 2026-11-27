@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+# What was made while Howdy was in use: the face models, the snapshots, the cache and
+# the downloaded models
+if [ "$1" = purge ]; then
+	rm -rf /var/lib/howdy /var/log/howdy /var/cache/howdy
+	rm -f /usr/share/howdy/dlib-models/*.dat /usr/share/howdy/openvino-models/*.xml /usr/share/howdy/openvino-models/*.bin
+fi
+
+#DEBHELPER#
+
+exit 0

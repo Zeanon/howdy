@@ -110,7 +110,11 @@ ENV/
 debian/howdy.substvars
 debian/files
 debian/debhelper-build-stamp
-debian/howdy
+debian/howdy/
+debian/.debhelper/
+debian/*.debhelper
+debian/*.debhelper.log
+obj-*/
 
 # vscode
 .vscode/*

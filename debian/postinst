@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+	# Packages before 3.0.3 kept the face models in /etc. Only once, on the upgrade from one
+	# of them: a model that was removed later must not come back
+	if [ -n "$2" ] && dpkg --compare-versions "$2" lt "3.0.3~"; then
+		install -d -m 0700 /var/lib/howdy/models
+		for old in /etc/howdy/models/*.dat; do
+			[ -f "$old" ] || continue
+			new="/var/lib/howdy/models/${old##*/}"
+			[ -e "$new" ] && continue
+			install -m 0600 "$old" "$new"
+			echo "Copied the face model $old to $new"
+		done
+	fi
+
+	pam-auth-update --package
+
+	if [ ! -f /usr/share/howdy/dlib-models/shape_predictor_5_face_landmarks.dat ]; then
+		echo "Howdy needs the dlib models, download them with:"
+		echo "    sudo /usr/share/howdy/dlib-models/install.sh"
+		echo "    sudo systemctl restart howdy-authentication.service"
+	fi
+fi
+
+#DEBHELPER#
+
+exit 0

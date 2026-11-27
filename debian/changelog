@@ -1,3 +1,13 @@
+howdy (3.0.3) unstable; urgency=medium
+
+  * One package, built from the Meson project, for the C++ implementation.
+    It replaces howdy-gtk.
+  * The face models of older packages are copied to /var/lib/howdy/models.
+  * dlib is taken from the distribution, nothing is downloaded or built during
+    the installation. Run /usr/share/howdy/dlib-models/install.sh once.
+
+ -- Zeanon <thezeanon@gmail.com>  Fri, 27 Nov 2026 15:00:00 +0100
+
 howdy (3.0.2) jammy; urgency=medium
 
   * Added arm64 packages (thanks @ooaklee!)
