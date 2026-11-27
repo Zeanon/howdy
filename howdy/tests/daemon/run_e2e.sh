@@ -238,6 +238,12 @@ gap=$(awk '/member=(Show|UpdateMessage|UpdateSubtext|Close)/ {
 END { if (!stamp) print "no stamp"; else print (longest < 0.9 ? "short" : longest) }' "$T/monitor.log")
 expect "no long pause between the signals" "$gap" short
 
+echo "--- a client that goes while a rubber stamp waits"
+start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 10s failsafe"
+NOPOLL=5 E "the stamp is given up" KEEPALIVE_TIMEOUT
+# The camera is free again, the next one does not get a busy answer
+E "the next authentication runs" NO_MATCH
+
 echo "--- a camera that delivers nothing"
 # ffmpeg is a stand-in that never ends, the daemon gives it up
 mkdir -p "$T/hang"

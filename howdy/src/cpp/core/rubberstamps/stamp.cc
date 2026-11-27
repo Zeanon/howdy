@@ -20,7 +20,7 @@ void cancelable_sleep(const StampContext& context, std::chrono::milliseconds dur
 }
 
 void check_cancelled(const StampContext& context) {
-	if (context.cancel.load()) {
+	if (context.cancel.load() || (context.abandoned && context.abandoned())) {
 		throw StampCancelled();
 	}
 	if (context.keep_alive) {

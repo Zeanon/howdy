@@ -145,15 +145,14 @@ StampResult run_rubberstamps(const StampContext& context) {
 	}
 
 	for (const auto& [stamp, rule] : stamps) {
-		// Don't start a stamp if the authentication was cancelled already
-		check_cancelled(context);
-
 		if (verbose) {
 			log(LOG_INFO, "Executing rubberstamp " + rule.type);
 		}
 
 		bool result = false;
 		try {
+			// Don't start a stamp if the authentication was cancelled already
+			check_cancelled(context);
 			result = stamp->run(context, rule);
 		} catch (const StampCancelled&) {
 			return StampResult::Cancelled;

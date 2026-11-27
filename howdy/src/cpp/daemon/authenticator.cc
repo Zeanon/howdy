@@ -598,10 +598,12 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 								popup_.keep_alive(*ui_uid_);
 							}
 						},
+						// The client has gone, nobody waits for the result any more
+						[&] { return control.keepalive_expired(); },
 					};
 					switch (run_rubberstamps(stamp_context)) {
 						case StampResult::Denied: return Status::NoMatch;
-						case StampResult::Cancelled: return Status::Cancelled;
+						case StampResult::Cancelled: return control.cancel.load() ? Status::Cancelled : Status::KeepAliveTimeout;
 						case StampResult::Passed: break;
 					}
 				}

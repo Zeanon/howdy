@@ -12,11 +12,11 @@ namespace howdy {
 using Option = std::variant<long, double, std::string>;
 using Options = std::map<std::string, Option>;
 
-// Sleep, but stop early and throw StampCancelled if the authentication is cancelled
+// Sleep, but stop early and throw StampCancelled if the authentication is over
 void cancelable_sleep(const StampContext& context, std::chrono::milliseconds duration);
 
-// Throw StampCancelled if the authentication was cancelled, and keep the popup alive.
-// Call this regularly.
+// Throw StampCancelled if the authentication was cancelled or the one who asked for it
+// has gone, and keep the popup alive. Call this regularly.
 void check_cancelled(const StampContext& context);
 
 // The base of all rubber stamps. To add one, derive from it, declare the options

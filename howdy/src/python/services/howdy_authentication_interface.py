@@ -783,9 +783,13 @@ class HowdyAuthenticator:
 								},
 								cancel_event,
 								keep_alive=self._keep_popup_alive,
+								# The client has gone, nobody waits for the result
+								abandoned=lambda: timeout.time <= time.monotonic(),
 							)
 						except rubberstamps.StampCancelled:
-							return HowdyStatus.Cancelled
+							if cancel_event.is_set():
+								return HowdyStatus.Cancelled
+							return HowdyStatus.KeepAliveTimeout
 
 						if not stamps_passed:
 							return HowdyStatus.NoMatch

@@ -991,7 +991,9 @@ for name, stamp_rules, expected in (
 	check(name, (passed, ran), (bool(expected), expected))
 nod.run = original_run
 
-print("--- a rubber stamp looks after the popup")
+print("--- a rubber stamp looks after the popup and the one who waits")
+import threading  # noqa: E402
+
 from howdy import howdy_popup_interface as popup_module  # noqa: E402
 
 alive = []
@@ -1000,6 +1002,27 @@ stamp.keep_alive = lambda: alive.append(True)
 stamp.sleep(0.35)
 check("it keeps the popup alive while it sleeps", len(alive) >= 4, True)
 
+
+def stops(**attributes):
+	"""Whether a sleep of 5 seconds ends early with these attributes of the stamp"""
+	instance = rubberstamps.RubberStamp()
+	for name, value in attributes.items():
+		setattr(instance, name, value)
+	started = time.monotonic()
+	try:
+		instance.sleep(5)
+	except rubberstamps.StampCancelled:
+		return time.monotonic() - started < 1
+	return False
+
+
+check("it stops when nobody waits any more", stops(abandoned=lambda: True), True)
+gone_at = time.monotonic() + 0.2
+check(
+	"also in the middle of a sleep",
+	stops(abandoned=lambda: time.monotonic() > gone_at, cancel_event=threading.Event()),
+	True,
+)
 
 popup = popup_module.UIInterface()
 sent = []
