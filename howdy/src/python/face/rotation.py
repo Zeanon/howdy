@@ -24,30 +24,29 @@ def upright_rotations(rotate):
 	return [fixed_rotation(rotate)]
 
 
+def applied_rotation(rotate, frame_number):
+	"""
+	The fixed mode (0 is not turned) that rotate_frame() applies to the frame with
+	this number.
+	"""
+	# Check landscape and both portrait orientations
+	if rotate == 1:
+		return (0, 3, 4)[frame_number % 3]
+	# Check both portrait orientations
+	if rotate == 2:
+		return 3 if frame_number % 2 == 0 else 4
+	# Fixed portrait orientations, for cameras that are mounted sideways
+	return fixed_rotation(rotate)
+
+
 def rotate_frame(frame, rotate, frame_number):
 	"""
 	Returns the frame turned the way the rotate option asks for. Modes 1 and 2
 	try several orientations, so they depend on the frame number.
 	"""
-	code = None
-	# Check landscape and both portrait orientations
-	if rotate == 1:
-		if frame_number % 3 == 1:
-			code = cv2.ROTATE_90_COUNTERCLOCKWISE
-		elif frame_number % 3 == 2:
-			code = cv2.ROTATE_90_CLOCKWISE
-	# Check both portrait orientations
-	elif rotate == 2:
-		if frame_number % 2 == 0:
-			code = cv2.ROTATE_90_COUNTERCLOCKWISE
-		else:
-			code = cv2.ROTATE_90_CLOCKWISE
-	# Fixed portrait orientations, for cameras that are mounted sideways
-	elif rotate == 3:
-		code = cv2.ROTATE_90_COUNTERCLOCKWISE
-	elif rotate == 4:
-		code = cv2.ROTATE_90_CLOCKWISE
-
-	if code is None:
-		return frame
-	return cv2.rotate(frame, code)
+	applied = applied_rotation(rotate, frame_number)
+	if applied == 3:
+		return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+	if applied == 4:
+		return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+	return frame

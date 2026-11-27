@@ -257,6 +257,16 @@ done
 cp "$T/genuine.dat" "$MODEL"
 chmod 600 "$MODEL"
 
+echo "--- two pictures that take turns in two places"
+# The same still face, five frames on the left and five on the right: the jump is no movement
+ffmpeg -loglevel error -y -f lavfi -i "color=c=gray:s=720x480:r=15:d=3" -loop 1 -i "$IMG_DIR/2008_001009.jpg" \
+	-filter_complex "[1:v]scale=360:480[face];[0:v][face]overlay=x='if(lt(mod(n,10),5),0,360)':y=0:shortest=0" -t 3 -pix_fmt yuv420p "$T/jump.mp4"
+cp "$T/genuine.dat" "$MODEL"
+chmod 600 "$MODEL"
+start_daemon "${NOLIVE[@]}" "video.device_path=$T/jump.mp4" face_authentication.micromotion_detection=true \
+	face_authentication.confirmations=2
+E "pictures that take turns are rejected" TIMEOUT
+
 echo "--- the nod stamp with a camera that is turned either way"
 # One face that nods, filmed sideways: only a frame that is turned shows it upright
 "$HOWDY_PYTHON" -I "$TEST_DIR/crop_face.py" "$T/hog.json" "$IMG_DIR/2008_001009.jpg" "$T/single.jpg"
@@ -278,6 +288,15 @@ for setup in "1 nod-upright-ir" "2 nod-sideways-ir"; do
 		"rubberstamps.stamp_rules=nod 15s failsafe"
 	E "a nod is seen with rotate = $rotate and a blinking IR emitter" SUCCESS
 done
+
+echo "--- turned frames with a detector that finds turned faces"
+# The CNN detector finds the face in every way the frames are turned, each in another place: the checks that
+# compare the frames keep them apart. It takes long without a GPU.
+ffmpeg -loglevel error -y -loop 1 -i "$T/single.jpg" -t 3 -r 15 -pix_fmt yuv420p \
+	-vf "pad=480:400:20:20:gray,crop=480:360:0:'20+20*sin(2*PI*n/10)'" "$T/moving.mp4"
+start_daemon "${NOLIVE[@]}" "video.device_path=$T/moving.mp4" video.rotate=1 face_authentication.use_cnn=true \
+	face_authentication.micromotion_detection=true face_authentication.confirmations=2 face_authentication.timeout=120
+E "CNN, rotate = 1, a moving face" SUCCESS
 
 echo "--- the popup stays while a rubber stamp waits"
 start_daemon "${NOLIVE[@]}" rubberstamps.enabled=true "rubberstamps.stamp_rules=nod 4s failsafe"

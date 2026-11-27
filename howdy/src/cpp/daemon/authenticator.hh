@@ -120,8 +120,6 @@ class Authenticator {
 	std::unique_ptr<SpoofDetector> spoof_detector_;
 	std::unique_ptr<SpoofDetectorFlir> spoof_detector_flir_;
 #endif
-	std::optional<MicroMotionTracker> micromotion_detector_;
-	std::optional<TextureDetector> texture_detector_;
 	std::optional<SimilarityDetector> similarity_detector_;
 
 	// Config values

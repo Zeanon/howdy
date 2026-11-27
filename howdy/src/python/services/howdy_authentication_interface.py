@@ -28,7 +28,7 @@ from . import snapshot
 from .caller import CallerError, is_privileged, may_access, query_caller_uid
 from .file_util import read_model_file
 from .enroll_capture import flatten_models
-from .rotation import rotate_frame
+from .rotation import applied_rotation, rotate_frame
 from .recorders.video_capture import VideoCapture, NoDeviceException
 
 
@@ -388,14 +388,6 @@ class HowdyAuthenticator:
 				self._cleaned_up = False
 
 				args = self._parse_args(args, timeout.limit)
-				if self.micromotion_detector is not None:
-					self.micromotion_detector.init(
-						self.micromotion_detection_buffer_size
-					)
-
-				if self.texture_detector is not None:
-					self.texture_detector.init(self.texture_detection_buffer_size)
-
 				if self.similarity_detector is not None:
 					self.similarity_detector.init(self.similarity_detection_buffer_size)
 
@@ -536,6 +528,10 @@ class HowdyAuthenticator:
 		snapframes = []
 		# The lowest certainty value (distance) of all frames, for the snapshot
 		lowest_certainty = 10
+		# What the checks measure over several frames, for each way the frames are
+		# turned (a face has another place and shape in a turned frame): the face
+		# and the buffers of the movement and the texture
+		tracked = {}
 
 		# send_to_ui(message=S("Starting up..."))
 
@@ -719,6 +715,26 @@ class HowdyAuthenticator:
 					continue
 				pick = max if self.use_openvino else min
 				fl, description = pick(candidates, key=lambda c: c[1][2])
+
+			rotation = applied_rotation(self.rotate, frames)
+			before = tracked.get(rotation)
+			checks = (
+				(self.micromotion_detector, self.micromotion_detection_buffer_size),
+				(self.texture_detector, self.texture_detection_buffer_size),
+			)
+			# Another place is another face, like a second picture next to the first
+			# one: the jump is no movement, and what was measured is not about this one
+			if before is None or not before[0].contains(fl.center()):
+				for detector, size in checks:
+					if detector is not None:
+						detector.init(size)
+				buffers = [d.buffer if d is not None else None for d, _ in checks]
+			else:
+				buffers = before[1]
+				for (detector, _), buffer in zip(checks, buffers):
+					if detector is not None:
+						detector.buffer = buffer
+			tracked[rotation] = (fl, buffers)
 
 			if (
 				self.spoof_detector_flir is not None

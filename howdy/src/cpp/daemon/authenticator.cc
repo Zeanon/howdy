@@ -6,6 +6,7 @@
 #include <ctime>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <stdexcept>
 #include <string_view>
@@ -197,12 +198,6 @@ void Authenticator::initialize_models() {
 		}
 	}
 
-	if (use_micromotion_detection_) {
-		micromotion_detector_.emplace();
-	}
-	if (use_texture_detection_) {
-		texture_detector_.emplace();
-	}
 	if (use_similarity_detection_) {
 		similarity_detector_.emplace();
 	}
@@ -260,12 +255,6 @@ Status Authenticator::authenticate(const std::string& username, const std::vecto
 	try {
 		const Args parsed = parse_args(args, control.limit_timeout);
 
-		if (micromotion_detector_) {
-			micromotion_detector_->init(micromotion_detection_buffer_size_);
-		}
-		if (texture_detector_) {
-			texture_detector_->init(texture_detection_buffer_size_);
-		}
 		if (similarity_detector_) {
 			similarity_detector_->init(similarity_detection_buffer_size_);
 		}
@@ -300,12 +289,6 @@ Status Authenticator::authenticate(const std::string& username, const std::vecto
 }
 
 void Authenticator::cleanup() {
-	if (micromotion_detector_) {
-		micromotion_detector_->reset();
-	}
-	if (texture_detector_) {
-		texture_detector_->reset();
-	}
 	if (similarity_detector_) {
 		similarity_detector_->reset();
 	}
@@ -356,6 +339,14 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 	std::vector<cv::Mat> snapframes;
 	// The lowest certainty value (distance) of all frames, for the snapshot
 	double lowest_certainty = 10;
+	// What the checks measure over several frames, for each way the frames are turned: a face has
+	// another place and shape in a turned frame
+	struct Tracked {
+		dlib::rectangle place;
+		std::optional<MicroMotionTracker> micromotion;
+		std::optional<TextureDetector> texture;
+	};
+	std::map<int, Tracked> tracked;
 
 	const auto send_to_ui = [&](const char* message, bool frame_counter) {
 		// Only if the popup was requested
@@ -545,21 +536,36 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 		}
 		const auto& fl = face_locations[chosen];
 
+		const auto [entry, first_look] = tracked.try_emplace(applied_rotation(rotate_, static_cast<int>(frames)));
+		Tracked& seen = entry->second;
+		// Another place is another face, like a second picture next to the first one: the jump is no
+		// movement, and what was measured is not about this one
+		if (first_look || !seen.place.contains(dlib::center(fl))) {
+			seen = Tracked{};
+			if (use_micromotion_detection_) {
+				seen.micromotion.emplace().init(micromotion_detection_buffer_size_);
+			}
+			if (use_texture_detection_) {
+				seen.texture.emplace().init(texture_detection_buffer_size_);
+			}
+		}
+		seen.place = fl;
+
 #ifdef HOWDY_WITH_OPENVINO
 		if (spoof_detector_flir_ && (*spoof_detector_flir_)(frame, fl) < damo_flir_threshold_) {
 			continue;
 		}
 #endif
 
-		if (texture_detector_) {
+		if (seen.texture) {
 			// No value means the face is outside of the frame, reject it
-			const auto texture = (*texture_detector_)(gsframe, fl);
+			const auto texture = (*seen.texture)(gsframe, fl);
 			if (!texture.has_value() || *texture < texture_threshold_) {
 				continue;
 			}
 		}
 
-		if (micromotion_detector_ && micromotion_detector_->calculate_displacement(backend_->motion_landmarks(frame, fl)) < micromotion_threshold_) {
+		if (seen.micromotion && seen.micromotion->calculate_displacement(backend_->motion_landmarks(frame, fl)) < micromotion_threshold_) {
 			continue;
 		}
 

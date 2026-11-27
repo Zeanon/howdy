@@ -38,23 +38,28 @@ inline constexpr int ROTATE_FIXED_CW = 4;
 	}
 }
 
-// Rotate the frame in place according to the rotate mode. Mode 2 alternates
-// the direction on every frame, which lines up badly with IR emitters that
-// light every second frame, so 3 and 4 are fixed. Unknown modes leave the
-// frame untouched.
-inline void rotate_frame(cv::Mat& frame, int rotate, int frame_number) {
+// The fixed mode (0 is not turned) that rotate_frame() applies to the frame with this number.
+// Mode 2 alternates the direction on every frame, which lines up badly with IR emitters that
+// light every second frame, so 3 and 4 are fixed. Unknown modes leave the frames as they are.
+[[nodiscard]] inline int applied_rotation(int rotate, int frame_number) noexcept {
 	switch (rotate) {
 		case 1:
 			if (frame_number % 3 == 1) {
-				cv::rotate(frame, frame, cv::ROTATE_90_COUNTERCLOCKWISE);
-			} else if (frame_number % 3 == 2) {
-				cv::rotate(frame, frame, cv::ROTATE_90_CLOCKWISE);
+				return ROTATE_FIXED_CCW;
 			}
-			break;
-		case 2: cv::rotate(frame, frame, frame_number % 2 == 0 ? cv::ROTATE_90_COUNTERCLOCKWISE : cv::ROTATE_90_CLOCKWISE); break;
-		case ROTATE_FIXED_CCW: cv::rotate(frame, frame, cv::ROTATE_90_COUNTERCLOCKWISE); break;
-		case ROTATE_FIXED_CW: cv::rotate(frame, frame, cv::ROTATE_90_CLOCKWISE); break;
-		default: break;
+			return frame_number % 3 == 2 ? ROTATE_FIXED_CW : 0;
+		case 2: return frame_number % 2 == 0 ? ROTATE_FIXED_CCW : ROTATE_FIXED_CW;
+		default: return fixed_rotation(rotate);
+	}
+}
+
+// Rotate the frame in place according to the rotate mode
+inline void rotate_frame(cv::Mat& frame, int rotate, int frame_number) {
+	const int applied = applied_rotation(rotate, frame_number);
+	if (applied == ROTATE_FIXED_CCW) {
+		cv::rotate(frame, frame, cv::ROTATE_90_COUNTERCLOCKWISE);
+	} else if (applied == ROTATE_FIXED_CW) {
+		cv::rotate(frame, frame, cv::ROTATE_90_CLOCKWISE);
 	}
 }
 

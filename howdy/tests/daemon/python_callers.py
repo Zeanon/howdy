@@ -1128,24 +1128,46 @@ with open(CONFIG) as handle:
 print("--- several people in the picture (Python daemon)")
 
 
-def logs_in(person):
-	"""Whether the Python daemon lets in the user whose face is this one of the two
-	in the picture. The encodings of the two are far from each other."""
+class Face:
+	"""The rectangle of a face, as the daemon uses it, in one of several places"""
+
+	def __init__(self, person, place=None, step=0):
+		self.person = person
+		self.place = person if place is None else place
+		self.step = step
+
+	def center(self):
+		return self.place
+
+	def contains(self, point):
+		return point == self.place
+
+
+class Movement(anti_spoof_core.AbstractMicroMotionDetector):
+	"""The movement of the nose, which is further to the right in another place"""
+
+	def __call__(self, face):
+		x = 100 * face.place + face.step
+		eyes = [(x - 20, 50), (x - 10, 50), (x + 10, 50), (x + 20, 50)]
+		return self._calculate_displacement(np.array([*eyes, (x, 70)], np.float32))
+
+
+def authentication(people, faces, **settings):
+	"""What the Python daemon answers a user who has the models of these people, when
+	faces(frame number) are in the picture. The encodings of the two people are far
+	from each other."""
 	vectors = {0: np.eye(128)[0], 1: np.eye(128)[1]}
 	path = management_module.paths_factory.user_model_path("crowd")
 	os.makedirs(os.path.dirname(path), exist_ok=True)
 	os.chmod(os.path.dirname(path), 0o700)
+	data = [list(vectors[person] * 0.9) for person in people]
 	with open(path, "w") as handle:
-		json.dump(
-			[{"id": 0, "time": 0, "label": "a", "data": [list(vectors[person] * 0.9)]}],
-			handle,
-		)
+		json.dump([{"id": 0, "time": 0, "label": "a", "data": data}], handle)
 	os.chmod(path, 0o600)
 
 	daemon = object.__new__(auth_module.HowdyAuthenticator)
 	picture = np.random.default_rng(1).integers(60, 200, (240, 320), np.uint8)
-	similarity = anti_spoof_core.SimilarityDetector()
-	similarity.init(8)
+	frames = itertools.count()
 	daemon.__dict__.update(
 		config=configparser.ConfigParser(),
 		video_capture=types.SimpleNamespace(
@@ -1155,18 +1177,21 @@ def logs_in(person):
 		ui_uid=None,
 		use_openvino=False,
 		use_cnn=False,
-		face_detector=lambda frame, upsample: [0, 1],
+		face_detector=lambda frame, upsample: faces(next(frames)),
 		pose_predictor=lambda frame, face: face,
 		face_encoder=types.SimpleNamespace(
-			compute_face_descriptor=lambda frame, face, jitters: vectors[face]
+			compute_face_descriptor=lambda frame, face, jitters: vectors[face.person]
 		),
-		similarity_detector=similarity,
+		similarity_detector=None,
 		identical_threshold=0.9975,
 		sudden_change_threshold=0.9,
 		certainty=0.5,
 		confirmations=2,
 		micromotion_detector=None,
+		micromotion_detection_buffer_size=8,
+		micromotion_threshold=0.03,
 		texture_detector=None,
+		texture_detection_buffer_size=5,
 		spoof_detector=None,
 		spoof_detector_flir=None,
 		save_failed=False,
@@ -1174,20 +1199,69 @@ def logs_in(person):
 		dark_threshold=60,
 		rotate=0,
 	)
+	daemon.__dict__.update(settings)
 	return daemon._authenticate(
 		"crowd",
-		auth_module.Args(auth_popup=False, timeout=1),
+		auth_module.Args(auth_popup=False, timeout=0.5),
 		threading.Event(),
 		auth_module.Timeout(time.monotonic() + 5),
 	)
 
 
 for person in (0, 1):
+	similarity = anti_spoof_core.SimilarityDetector()
+	similarity.init(8)
 	check(
 		f"person {person} of two logs in",
-		logs_in(person),
+		authentication(
+			[person], lambda n: [Face(0), Face(1)], similarity_detector=similarity
+		),
 		auth_module.HowdyStatus.Success,
 	)
+
+
+def with_movement(faces):
+	movement = Movement()
+	movement.init(8)
+	return authentication([0], faces, micromotion_detector=movement)
+
+
+check(
+	"a face that moves is let in",
+	with_movement(lambda n: [Face(0, step=3 * (n % 4))]),
+	auth_module.HowdyStatus.Success,
+)
+
+
+def turned(step):
+	"""rotate = 1: the face is somewhere else in each of the three ways a frame is
+	turned, step(n) says how it moves"""
+
+	def faces(call):
+		frame = call + 1
+		return [Face(0, place=frame % 3, step=step(call))]
+
+	movement = Movement()
+	movement.init(8)
+	return authentication([0], faces, micromotion_detector=movement, rotate=1)
+
+
+check(
+	"rotate = 1: a face that moves is let in",
+	turned(lambda n: 3 * ((n // 3) % 4)),
+	auth_module.HowdyStatus.Success,
+)
+check(
+	"rotate = 1: a still face is not, wherever the turned frames show it",
+	turned(lambda n: 0),
+	auth_module.HowdyStatus.Timeout,
+)
+# Two still pictures of the user that take turns, five frames each
+check(
+	"two still pictures in two places are no movement",
+	with_movement(lambda n: [Face(0, place=(n // 5) % 2)]),
+	auth_module.HowdyStatus.Timeout,
+)
 
 print("--- a rubber stamp looks after the popup and the one who waits")
 
