@@ -5,9 +5,7 @@
 #include <pango/pangocairo.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
-#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -408,7 +406,7 @@ class PopupWindow final {
 
 class PopupService final {
   public:
-	explicit PopupService(char** argv) : argv_(argv), uid_(getuid()) {
+	PopupService() : uid_(getuid()) {
 		loop_ = g_main_loop_new(nullptr, false);
 	}
 
@@ -447,10 +445,15 @@ class PopupService final {
 		return exit_code_;
 	}
 
-  private:
-	char** argv_;
+	// The screen was unlocked: the service is to be set up anew
+	[[nodiscard]] bool restart_requested() const {
+		return restart_;
+	}
 
+  private:
 	const uid_t uid_;
+
+	bool restart_ = false;
 
 	GMainLoop* loop_ = nullptr;
 
@@ -597,20 +600,20 @@ class PopupService final {
 		}
 
 		if (!locked) {
-			unlock_timeout_id_ = g_timeout_add(500, restart_process, this);
+			unlock_timeout_id_ = g_timeout_add(500, restart_service, this);
 		}
 	}
 
-	static gboolean restart_process(gpointer user_data) {
+	static gboolean restart_service(gpointer user_data) {
 		auto* self = static_cast<PopupService*>(user_data);
 
 		self->unlock_timeout_id_ = 0;
 
 		log_message(LOG_INFO, "Screen unlocked; restarting authentication popup");
 
-		execv("/proc/self/exe", self->argv_);
-
-		log_message(LOG_ERR, std::string("Unable to restart popup process: ") + std::strerror(errno));
+		// Ends run(), main() sets up a new service
+		self->restart_ = true;
+		g_main_loop_quit(self->loop_);
 
 		return G_SOURCE_REMOVE;
 	}
@@ -633,9 +636,16 @@ int main(int argc, char** argv) {
 	}
 
 	try {
-		PopupService service(argv);
+		// A new service after every unlock of the screen, in this process: systemd does
+		// not have to start it again
+		int result = 0;
+		bool restart = true;
+		while (restart) {
+			PopupService service;
 
-		const int result = service.run();
+			result = service.run();
+			restart = service.restart_requested();
+		}
 
 		closelog();
 		return result;

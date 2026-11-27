@@ -235,6 +235,8 @@ def restart_popup_service():
 
 
 def run():
+	global unlock_timeout_id
+
 	if not gtk.init_check():
 		raise RuntimeError("GTK initialization failed: no accessible display")
 
@@ -345,11 +347,24 @@ def run():
 
 	syslog.syslog(syslog.LOG_INFO, "Howdy popup service is ready")
 
-	gtk.main()
+	try:
+		gtk.main()
+	finally:
+		# run() is called again after an unlock of the screen: nothing of this run is
+		# left behind
+		if unlock_timeout_id is not None:
+			glib.source_remove(unlock_timeout_id)
+			unlock_timeout_id = None
+		if window is not None:
+			window.destroy()
+		bus.disconnect()
+		screensaver_bus.disconnect()
 	if terminate:
 		raise SystemExit(1)
 
 
 if __name__ == "__main__":
+	# A new set of connections after every unlock of the screen, in this process:
+	# systemd does not have to start it again
 	while True:
 		run()
