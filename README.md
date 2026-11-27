@@ -239,6 +239,8 @@ At the end the script tells you to run the model installers if the face models a
 
 Howdy is installed to `/usr/local/lib/<multiarch>/Howdy`, the configuration to `/usr/local/etc/howdy`, the PAM module to the `security` directory below the library directory of the system (`/lib/<multiarch>/security` on Debian and Ubuntu) and the models to `/usr/local/share/howdy`. All of these locations can be changed, see [Build options](#build-options).
 
+An older installation may have put `pam_howdy.so` somewhere else, for example into `/usr/lib/security`. PAM files that name it with its full path go on loading that old module. After an update run `sudo pam-auth-update`, install the additional PAM files again if you use them (`sudo additional/install-additional.sh`, see [Setup](#setup)) and delete the old module when no file in `/etc/pam.d` names it any more. `./install.sh` says so when it finds one.
+
 ### Encrypting the face models
 
 The face models are stored as plain JSON, readable only by root. If you have a TPM 2.0 you can encrypt them (AES-256-GCM). The key is a systemd credential that is sealed to the TPM, so it never lies on the disk in the clear.

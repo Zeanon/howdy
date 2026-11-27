@@ -219,6 +219,37 @@ sudo bash -c '
     systemctl --global enable howdy-auth-popup.service
 ' bash "$BUILD_DIR" "$MODELS_DIR" "$PYTHON_SITE_PACKAGES"
 
+# A pam_howdy.so that an older installation has put into another directory is not
+# removed: a PAM file that names its full path would go on loading it. It is reported,
+# with the files that name it.
+report_old_pam_modules() {
+    local installed="$1" old real reported=" "
+    for old in /usr/lib/security/pam_howdy.so /lib/security/pam_howdy.so /usr/lib64/security/pam_howdy.so \
+        /usr/lib/*/security/pam_howdy.so /usr/local/lib/security/pam_howdy.so /usr/local/lib/*/security/pam_howdy.so; do
+        # (-ef: /lib is a link to /usr/lib on most systems)
+        if [ ! -e "$old" ] || [ "$old" -ef "$installed" ]; then
+            continue
+        fi
+        real="$(realpath -- "$old")"
+        if [[ "$reported" == *" $real "* ]]; then
+            continue
+        fi
+        reported+="$real "
+        echo
+        echo -e "\033[38;5;208mAn older PAM module is left at $old, the new one is $installed\e[0m"
+        echo "Run 'sudo pam-auth-update', install the additional PAM files again if you use them,"
+        echo "and delete the old module when nothing names it any more. It is named in:"
+        # With and without /usr, both lead to it
+        grep -lsF -- "${real#/usr}" /etc/pam.d/* || echo "(no file in /etc/pam.d)"
+    done
+}
+
+PAM_MODULE="$(meson introspect "$BUILD_DIR" --installed |
+    python3 -I -c 'import json, sys; print(next((path for path in json.load(sys.stdin).values() if path.endswith("/pam_howdy.so")), ""))')"
+if [ -n "$PAM_MODULE" ]; then
+    report_old_pam_modules "$PAM_MODULE"
+fi
+
 # Models of the time before the encryption are encrypted now. A failure (for example a
 # file that is not valid) is reported, but does not stop the installation
 if [ -n "$MODELS_KEY_FILE" ]; then
