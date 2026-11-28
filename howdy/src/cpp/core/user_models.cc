@@ -5,8 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
-#include "paths.hh"
 #include "model_crypto.hh"
+#include "paths.hh"
 
 namespace howdy {
 
