@@ -184,7 +184,7 @@ class HowdyAuthenticator:
 			0, str_to_seconds(self.config.get("snapshots", "retention", fallback="7d"))
 		)
 		self.snapshot_max_count = max(
-			0, self.config.getint("snapshots", "max_snapshots", fallback=200)
+			0, self.config.getint("snapshots", "max_snapshots", fallback=100)
 		)
 
 		self.use_anti_spoof = self.config.getboolean(

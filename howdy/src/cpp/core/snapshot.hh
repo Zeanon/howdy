@@ -19,7 +19,7 @@ std::filesystem::path generate_snapshot(const std::vector<cv::Mat>& frames, cons
 // How long and how many snapshots are kept, zero means no limit
 struct SnapshotRetention {
 	std::chrono::seconds max_age{7 * 24 * 3600};
-	std::size_t max_count = 200;
+	std::size_t max_count = 100;
 };
 
 // Delete the snapshots that are older than the retention allows and, of the

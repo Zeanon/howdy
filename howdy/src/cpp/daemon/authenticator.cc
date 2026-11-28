@@ -154,7 +154,7 @@ void Authenticator::read_config() {
 	save_failed_ = config_.get_bool("snapshots", "save_failed", false);
 	save_successful_ = config_.get_bool("snapshots", "save_successful", false);
 	snapshot_retention_.max_age = std::chrono::seconds(std::max(0LL, str_to_seconds(config_.get("snapshots", "retention", "7d"))));
-	snapshot_retention_.max_count = static_cast<std::size_t>(std::max(0L, config_.get_int("snapshots", "max_snapshots", 200)));
+	snapshot_retention_.max_count = static_cast<std::size_t>(std::max(0L, config_.get_int("snapshots", "max_snapshots", 100)));
 	dark_threshold_ = config_.get_float("video", "dark_threshold", 50.0);
 	max_height_ = config_.get_float("video", "max_height", 320.0);
 	rotate_ = static_cast<int>(config_.get_int("video", "rotate", 0));
