@@ -33,9 +33,9 @@ for key, value in parser.items("options") if parser.has_section("options") else 
 
 # The build directory is set up when there is none yet, and anew with --reconfigure
 if [[ " $* " == *" --reconfigure "* ]] || [ ! -f "$BUILD_DIR/meson-private/coredata.dat" ]; then
-    echo "################################"
-    echo "# Setting up the build dir     #"
-    echo "################################"
+    echo "#############################"
+    echo "# Setting up the build dir #"
+    echo "#############################"
 
     # The options of the old one are kept, without models_key_file for example the
     # services could not read the encrypted models any more
