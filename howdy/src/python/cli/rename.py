@@ -89,7 +89,9 @@ async def _run(expected_label=None, expected_time=None):
 		try:
 			encodings = await list_models(bus)
 		except FileNotFoundError:
-			reason = S(f"No face model known for the user {user}, please run:\n")
+			reason = S("No face model known for the user {}, please run:\n").format(
+				user
+			)
 			reason += "\thowdy add"
 			exit(reason)
 
@@ -99,7 +101,7 @@ async def _run(expected_label=None, expected_time=None):
 
 		# Abort if no matching id exists
 		if found is None:
-			exit(S(f"No model with ID {id} exists for {user}"))
+			exit(S("No model with ID {} exists for {}").format(id, user))
 
 		# Get the new name from the cli arguments if provided, otherwise ask for it
 		if len(builtins.howdy_args.arguments) > 1:
@@ -110,7 +112,7 @@ async def _run(expected_label=None, expected_time=None):
 				exit(S("Please add the new name of the model as an argument"))
 			try:
 				label = input(
-					S(f"Enter a new label for this model [{found['label']}]: ")
+					S("Enter a new label for this model [{}]: ").format(found["label"])
 				)
 			except EOFError:
 				label = ""
@@ -139,6 +141,6 @@ async def _run(expected_label=None, expected_time=None):
 		except Exception as exc:
 			exit(f"Failed to rename face model: {exc}")
 
-		say(S(f"Renamed model {id}"))
+		say(S("Renamed model {}").format(id))
 	finally:
 		bus.disconnect()

@@ -24,8 +24,8 @@ class hotkey(RubberStamp):
 		# Set the ui to default strings
 		self.send_to_ui(
 			message=time_string.format(int(time_left)),
-			subtext=S(
-				f"Press {self.options['abort_key']} to abort, {self.options['confirm_key']} to authorise"
+			subtext=S("Press {} to abort, {} to authorise").format(
+				self.options["abort_key"], self.options["confirm_key"]
 			),
 		)
 

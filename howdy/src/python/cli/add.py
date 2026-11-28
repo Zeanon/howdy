@@ -186,11 +186,13 @@ async def _run(dialog=None):
 		# as when the setup wizard / Settings runs add with capture_output).
 		if builtins.howdy_args.y or not sys.stdin.isatty():
 			if not builtins.howdy_args.gui:
-				say(S(f'Using default label "{label}" because of -y flag'))
+				say(S('Using default label "{}" because of -y flag').format(label))
 		else:
 			# Ask the user for a custom label
 			try:
-				label_in = input(S(f"Enter a label for this new model [{label}]: "))
+				label_in = input(
+					S("Enter a label for this new model [{}]: ").format(label)
+				)
 			except EOFError:
 				label_in = ""
 
@@ -244,7 +246,7 @@ async def _run(dialog=None):
 			exit(reason)
 
 		insert_model["data"].extend(samples)
-		say(S(f"Captured {len(samples)} face samples"))
+		say(S("Captured {} face samples").format(len(samples)))
 
 		try:
 			await send_model(bus, insert_model)
@@ -252,6 +254,6 @@ async def _run(dialog=None):
 			exit(f"Failed to save face model: {exc}")
 
 		# Give let the user know how it went
-		say(S(f"\nScan complete\nAdded a new model to {user}"))
+		say(S("\nScan complete\nAdded a new model to {}").format(user))
 	finally:
 		bus.disconnect()

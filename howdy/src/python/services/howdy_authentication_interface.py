@@ -599,9 +599,10 @@ class HowdyAuthenticator:
 					syslog.syslog(
 						syslog.LOG_ERR,
 						S(
-							"All frames were too dark, please check dark_threshold in config\n"
-							f"Average darkness: {dark_running_total / max(1, valid_frames)}, "
-							f"Threshold: {self.dark_threshold}"
+							"All frames were too dark, please check dark_threshold in config\nAverage darkness: {}, Threshold: {}"
+						).format(
+							dark_running_total / max(1, valid_frames),
+							self.dark_threshold,
 						),
 					)
 					return HowdyStatus.TooDark

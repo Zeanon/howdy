@@ -178,9 +178,8 @@ def on_model_delete(self, button):
 		dialog.set_title(S("Confirm Model Deletion"))
 		# The name is text, not markup: "&" or "<" in it would break the dialog
 		dialog.set_markup(
-			S(
-				f"Are you sure you want to delete model {glib.markup_escape_text(model_id)} "
-				f"({glib.markup_escape_text(name)})?"
+			S("Are you sure you want to delete model {} ({})?").format(
+				glib.markup_escape_text(model_id), glib.markup_escape_text(name)
 			)
 		)
 

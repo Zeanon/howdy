@@ -74,7 +74,7 @@ async def _run():
 		try:
 			await clear_models(bus)
 		except Exception as exc:
-			print(S(f"Failed to clear models: {exc}"))
+			print(S("Failed to clear models: {}").format(exc))
 			sys.exit(1)
 
 		print(S("\nModels cleared"))

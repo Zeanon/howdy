@@ -65,7 +65,7 @@ async def _run(gui=False):
 			if gui:
 				return []
 
-			print(S(f"Failed to retrieve face models: {exc}"))
+			print(S("Failed to retrieve face models: {}").format(exc))
 			sys.exit(1)
 
 		if not encodings:
@@ -73,7 +73,9 @@ async def _run(gui=False):
 				return []
 
 			if not builtins.howdy_args.plain:
-				print(S(f"No face model known for the user {user}, please run:"))
+				print(
+					S("No face model known for the user {}, please run:").format(user)
+				)
 				print("\n\thowdy add\n")
 
 			sys.exit(1)
@@ -93,7 +95,7 @@ async def _run(gui=False):
 
 		# Print a header if we're not in plain mode
 		if not builtins.howdy_args.plain:
-			print(S(f"Known face models for {user}:"))
+			print(S("Known face models for {}:").format(user))
 			print("\n\033[1;29m" + S("ID  Date                 Label\033[0m"))
 
 		# Loop through all encodings and print info about them

@@ -126,14 +126,14 @@ def execute(
 		# Error out if the regex did not match (invalid line). A stamp that can't run must
 		# not let the authentication pass, also not one with a typo
 		if not regex_result:
-			print(S(f"Error parsing rubberstamp rule: {rule}"))
+			print(S("Error parsing rubberstamp rule: {}").format(rule))
 			return False
 
 		type = regex_result.group(1)
 
 		# Error out if the stamp name in the rule is not a file
 		if type not in installed_stamps:
-			print(S(f"Stamp not installed: {type}"))
+			print(S("Stamp not installed: {}").format(type))
 			return False
 
 		# Load the stamp as a module of this package, so its relative imports work
@@ -143,7 +143,7 @@ def execute(
 		try:
 			constructor = getattr(module, type)
 		except AttributeError:
-			print(S(f"Stamp error: Class {type} not found"))
+			print(S("Stamp error: Class {} not found").format(type))
 			return False
 
 		# Init the class and set common values
@@ -165,7 +165,7 @@ def execute(
 		# Parse and set the 2 required options for all rubberstamps
 		timeout = parse_timeout(regex_result.group(2))
 		if timeout is None:
-			print(S(f"Error parsing rubberstamp rule: {rule}"))
+			print(S("Error parsing rubberstamp rule: {}").format(rule))
 			return False
 		instance.options = {
 			"timeout": timeout,

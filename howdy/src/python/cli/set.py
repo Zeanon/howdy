@@ -49,7 +49,7 @@ found = list(option_lines())
 
 # If we don't have the line it is not in the config file
 if not found:
-	print(S(f'Could not find a "{set_name}" config option to set'))
+	print(S('Could not find a "{}" config option to set').format(set_name))
 	sys.exit(1)
 
 sections = list(dict.fromkeys(name for _, name in found))

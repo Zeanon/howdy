@@ -284,7 +284,9 @@ def capture_guided_samples(
 			except ValueError:
 				pass
 			progress_label.set_markup(
-				S(f"<span foreground='#2AAAE5'><b>Samples: {count}/{total}</b></span>")
+				S("<span foreground='#2AAAE5'><b>Samples: {}/{}</b></span>").format(
+					count, total
+				)
 			)
 			return
 		if line.startswith("@guide "):
@@ -292,7 +294,7 @@ def capture_guided_samples(
 			# 	say(line)
 			line = line[len("@guide ") :]
 			guide_label.set_markup(
-				S(f"<big><span foreground='#2AAAE5'><b>{line}</b></span></big>")
+				S("<big><span foreground='#2AAAE5'><b>{}</b></span></big>").format(line)
 			)
 		say(S(line))
 
@@ -337,8 +339,8 @@ def capture_guided_samples(
 				reason = (
 					S("All frames were too dark, please check dark_threshold in config")
 					+ " "
-					+ S(
-						f"Average darkness: {dark_running_total / valid_frames}, Threshold: {dark_threshold}"
+					+ S("Average darkness: {}, Threshold: {}").format(
+						dark_running_total / valid_frames, dark_threshold
 					)
 				)
 			else:

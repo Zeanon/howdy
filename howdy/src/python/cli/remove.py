@@ -88,7 +88,9 @@ async def _run(expected_label=None, expected_time=None):
 		try:
 			encodings = await list_models(bus)
 		except FileNotFoundError:
-			reason = S(f"No face model known for the user {user}, please run:\n")
+			reason = S("No face model known for the user {}, please run:\n").format(
+				user
+			)
 			reason += "\thowdy add"
 			exit(reason)
 
@@ -105,8 +107,8 @@ async def _run(expected_label=None, expected_time=None):
 				if not builtins.howdy_args.y:
 					# Double check with the user
 					print(
-						S(
-							f'This will remove the model called "{enc["label"]}" for {user}'
+						S('This will remove the model called "{}" for {}').format(
+							enc["label"], user
 						)
 					)
 					ans = input(S("Do you want to continue [y/N]: "))
@@ -128,7 +130,7 @@ async def _run(expected_label=None, expected_time=None):
 
 		# Abort if no matching id was found
 		if not found:
-			exit(S(f"No model with ID {id} exists for {user}"))
+			exit(S("No model with ID {} exists for {}").format(id, user))
 
 		try:
 			await remove_model(
@@ -143,6 +145,6 @@ async def _run(expected_label=None, expected_time=None):
 		if len(encodings) == 1:
 			say(S("Removed last model, howdy disabled for user"))
 		else:
-			say(S(f"Removed model {id}"))
+			say(S("Removed model {}").format(id))
 	finally:
 		bus.disconnect()
