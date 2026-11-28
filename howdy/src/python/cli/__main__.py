@@ -69,7 +69,9 @@ parser.add_argument(
 # Add an argument for the extra arguments of disable and remove
 parser.add_argument(
 	"arguments",
-	help=S("Optional arguments for the add, disable, remove, rename and set commands."),
+	help=S(
+		"Optional arguments for the add, config, disable, remove, rename and set commands."
+	),
 	nargs="*",
 )
 

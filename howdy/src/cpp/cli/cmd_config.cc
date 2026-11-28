@@ -8,7 +8,11 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <ranges>
+#include <sstream>
+#include <string_view>
+#include <utility>
 
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -143,6 +147,75 @@ std::vector<std::string> load_config_lines() {
 	}
 }
 
+// They open the file as the user and ask for the password themselves to save it
+constexpr std::array<std::string_view, 2> SELF_SAVING_EDITORS{"kate", "kwrite"};
+
+// Other graphical editors and the option that makes them stay until the file is closed
+constexpr std::array<std::pair<std::string_view, std::string_view>, 4> GRAPHICAL_EDITORS{{
+	{"code", "--wait"},
+	{"codium", "--wait"},
+	{"gedit", "--wait"},
+	{"gnome-text-editor", "--standalone"},
+}};
+
+// Edit the config in the editor that was named on the command line, with its options if there are
+// any: "kate" or "vim -n"
+int edit_with(const std::string& command) {
+	const std::string program = command.substr(0, command.find(' '));
+	if (which(program).empty()) {
+		throw CliError(std::string(S("Could not find the editor ")) + program);
+	}
+	const std::string name = std::filesystem::path(program).filename().string();
+	const auto* const graphical = std::ranges::find(GRAPHICAL_EDITORS, name, &std::pair<std::string_view, std::string_view>::first);
+
+	const bool saves_itself = std::ranges::find(SELF_SAVING_EDITORS, name) != SELF_SAVING_EDITORS.end();
+	std::istringstream words(command);
+	std::vector<std::string> arguments{std::istream_iterator<std::string>(words), std::istream_iterator<std::string>()};
+	arguments.push_back(config_path().string());
+
+	if (geteuid() == 0) {
+		// Graphical editors refuse to run as root, or have no access to the screen of the user
+		if (saves_itself || graphical != GRAPHICAL_EDITORS.end()) {
+			throw CliError(name + S(" can not run as root, please run this command as your user:\n\n\thowdy config ") + name);
+		}
+		std::cout << S("Opening config.ini in ") << name << '\n';
+		return run_program(arguments) == 0 ? 0 : 1;
+	}
+
+	if (saves_itself) {
+		std::cout << S("Opening config.ini in ") << name << '\n';
+		// exec does not write out what is buffered
+		std::cout.flush();
+		std::vector<char*> argv;
+		argv.reserve(arguments.size() + 1);
+		for (auto& argument : arguments) {
+			argv.push_back(argument.data());
+		}
+		argv.push_back(nullptr);
+		execvp(argv[0], argv.data());
+		throw CliError("Failed to start " + program + ": " + std::strerror(errno));
+	}
+
+	// sudoedit runs the editor as the user on a copy of the file and writes it back as root
+	if (which("sudoedit").empty()) {
+		throw CliError(S("Choosing the editor needs sudoedit, which is not installed"));
+	}
+	std::string editor = command;
+	if (graphical != GRAPHICAL_EDITORS.end() && command == program) {
+		editor += " ";
+		editor += graphical->second;
+	}
+	if (setenv("SUDO_EDITOR", editor.c_str(), 1) != 0) {
+		throw CliError(std::string("Could not set SUDO_EDITOR: ") + std::strerror(errno));
+	}
+	std::cout << S("Opening config.ini in ") << name << '\n';
+	// exec does not write out what is buffered
+	std::cout.flush();
+	const std::string path = config_path().string();
+	execlp("sudoedit", "sudoedit", "--", path.c_str(), static_cast<char*>(nullptr));
+	throw CliError(std::string("Failed to start sudoedit: ") + std::strerror(errno));
+}
+
 } // namespace
 
 void elevate(const std::vector<std::string>& original_arguments) {
@@ -196,7 +269,12 @@ void elevate(const std::vector<std::string>& original_arguments) {
 	}
 }
 
-int run_config(const Options& /*options*/, const std::vector<std::string>& original_arguments) {
+int run_config(const Options& options, const std::vector<std::string>& original_arguments) {
+	// Before the elevation: the named editor is run as the user
+	if (!options.arguments.empty()) {
+		return edit_with(options.arguments[0]);
+	}
+
 	// Make sure we run as root
 	elevate(original_arguments);
 	// This is this far down so running the command for help is always possible

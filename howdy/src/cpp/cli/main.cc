@@ -36,7 +36,7 @@ void print_help() {
 			  << S("The command option to execute, can be one of the following: add, clear, config, disable, gui, list, "
 				   "remove, rename, snapshot, set, test or version.")
 			  << "\n"
-			  << "  arguments             " << S("Optional arguments for the add, disable, remove, rename and set commands.") << "\n\n"
+			  << "  arguments             " << S("Optional arguments for the add, config, disable, remove, rename and set commands.") << "\n\n"
 			  << "options:\n"
 			  << "  -U USER, --user USER  " << S("Set the user account to use.") << "\n"
 			  << "  -y                    " << S("Skip all questions.") << "\n"

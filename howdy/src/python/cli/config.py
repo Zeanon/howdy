@@ -6,6 +6,7 @@ import sys
 import errno
 import shutil
 import subprocess
+import builtins
 
 from ..i18n import S
 from .. import paths_factory
@@ -34,6 +35,62 @@ def elevate(env):
 			if exc.errno != errno.ENOENT or args[0] == "sudo":
 				raise
 
+
+# Other graphical editors and the option that makes them stay until the file is closed
+GRAPHICAL_EDITORS = {
+	"code": "--wait",
+	"codium": "--wait",
+	"gedit": "--wait",
+	"gnome-text-editor": "--standalone",
+}
+
+# They open the file as the user and ask for the password themselves to save it
+SELF_SAVING_EDITORS = ("kate", "kwrite")
+
+
+def edit_with(command):
+	"""Edit the config in the editor that was named on the command line, with its
+	options if there are any: "kate" or "vim -n". Ends the process."""
+	program = command.split(" ")[0]
+	if not shutil.which(program):
+		print(S("Could not find the editor {}").format(program))
+		sys.exit(1)
+	name = os.path.basename(program)
+	config_path = str(paths_factory.config_file_path())
+
+	if os.geteuid() == 0:
+		# Graphical editors refuse to run as root, or have no access to the screen of
+		# the user
+		if name in SELF_SAVING_EDITORS or name in GRAPHICAL_EDITORS:
+			print(
+				S(
+					"{0} can not run as root, please run this command as your user:\n\n\thowdy config {0}"
+				).format(name)
+			)
+			sys.exit(1)
+		print(S("Opening config.ini in {}").format(name))
+		sys.exit(1 if subprocess.call([*command.split(), config_path]) else 0)
+
+	if name in SELF_SAVING_EDITORS:
+		print(S("Opening config.ini in {}").format(name), flush=True)
+		arguments = command.split()
+		os.execvp(arguments[0], [*arguments, config_path])
+
+	# sudoedit runs the editor as the user on a copy of the file and writes it back as
+	# root
+	if not shutil.which("sudoedit"):
+		print(S("Choosing the editor needs sudoedit, which is not installed"))
+		sys.exit(1)
+	if name in GRAPHICAL_EDITORS and command == program:
+		command += " " + GRAPHICAL_EDITORS[name]
+	os.environ["SUDO_EDITOR"] = command
+	print(S("Opening config.ini in {}").format(name), flush=True)
+	os.execlp("sudoedit", "sudoedit", "--", config_path)
+
+
+# Before the elevation: the named editor is run as the user
+if builtins.howdy_args.arguments:
+	edit_with(builtins.howdy_args.arguments[0])
 
 # Make sure we run as sudo
 elevate(

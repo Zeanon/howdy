@@ -465,7 +465,7 @@ Use `howdy --help` or `man howdy` for the full list.
 |---------|-------------|
 | `add` | Add a new face model for a user |
 | `clear` | Remove all face models for a user |
-| `config` | Open the config file in your default editor |
+| `config` | Open the config file in `$EDITOR`, nano or vi. `howdy config EDITOR` opens it in that one, for example `howdy config kate`: run it without sudo, the editor runs as your user. Kate and KWrite open the file directly and ask for the password when you save, for other editors `sudoedit` writes the file back |
 | `disable` | Disable or enable Howdy |
 | `gui` | Open the configuration window (also started as `howdy-gtk`). `--force-onboarding` starts the setup wizard. |
 | `list` | List all saved face models for a user |

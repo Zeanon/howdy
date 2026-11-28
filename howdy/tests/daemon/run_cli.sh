@@ -395,6 +395,25 @@ expect "config opens the editor" "$output" "Opening config.ini in fake-editor"
 expect "config was edited" "$(tail -1 "$T/etc/config.ini")" "# edited"
 expect "config leaves the services alone, they read it themselves" "$(cat "$T/systemctl.log")" ""
 
+# A named editor runs as the user: Kate directly, others through sudoedit, which is a
+# stand-in as well
+printf '#!/bin/sh\necho "$SUDO_EDITOR|$*"\n' > "$T/bin/sudoedit"
+printf '#!/bin/sh\necho "kate got $*"\n' > "$T/bin/kate"
+printf '#!/bin/sh\n' > "$T/bin/gedit"
+chmod +x "$T/bin/sudoedit" "$T/bin/kate" "$T/bin/gedit"
+run env PATH="$T/bin:$PATH" "$HOWDY" config kate
+expect_contains "config kate opens the file itself" "$output" "kate got $T/etc/config.ini"
+run env PATH="$T/bin:$PATH" "$HOWDY" config gedit
+expect_contains "config with a graphical editor waits for the window" "$output" "gedit --wait|-- $T/etc/config.ini"
+run env PATH="$T/bin:$PATH" "$HOWDY" config "fake-editor -x"
+expect_contains "config with an editor and its options" "$output" "fake-editor -x|-- $T/etc/config.ini"
+run env PATH="$T/bin:$PATH" unshare -r "$HOWDY" config kate
+expect_contains "config kate as root is refused" "$output" "kate can not run as root"
+run env PATH="$T/bin:$PATH" unshare -r "$HOWDY" config fake-editor
+expect_contains "config as root with a named editor" "$output" "Opening config.ini in fake-editor"
+run env PATH="$T/bin:$PATH" "$HOWDY" config no-such-editor
+expect_contains "config with an editor that is not installed" "$output" "Could not find the editor no-such-editor"
+
 echo "--- cli, snapshot"
 write_config "$T/still.mp4"
 run "$HOWDY" snapshot

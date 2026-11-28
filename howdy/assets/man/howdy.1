@@ -18,9 +18,14 @@ Add a new face model for a user.
 \fBclear\fR
 Remove all face models of a user.
 .TP
-\fBconfig\fR
-Open the config file in the editor of $EDITOR, else in nano or vi. The authentication
-service loads a changed config at the next authentication.
+\fBconfig\fR [EDITOR]
+Open the config file in the editor of $EDITOR, else in nano or vi. With EDITOR, for
+example \fBhowdy config kate\fR, in that one: run it without sudo then, the editor runs
+as your user. Kate and KWrite open the file directly and ask for the password when it is
+saved, for other editors
+.BR sudoedit (8)
+writes the file back. The authentication service loads a changed config at the next
+authentication.
 .TP
 \fBdisable\fR 0|1
 Enable (0) or disable (1) Howdy.
