@@ -821,6 +821,7 @@ class HowdyAuthenticator:
 								"pose_predictor": self.pose_predictor,
 								"clahe": clahe,
 								"scaling_factor": scaling_factor,
+								"rotation": applied_rotation(self.rotate, frames),
 							},
 							cancel_event,
 							keep_alive=self._keep_popup_alive,

@@ -1043,13 +1043,13 @@ check(
 )
 
 
-# A camera that is mounted sideways, with the CNN detector of dlib, which wraps its
-# rectangles: the face is only upright in a turned frame
+# The stamp turns its frames like the one the face was recognised in, with the CNN
+# detector of dlib, which wraps its rectangles and finds turned faces as well
 def nodding_face():
 	step = itertools.count()
 
 	def predict(frame, face):
-		assert face == "upright", face
+		assert face == "face", face
 		nose = 100 + 20 * (next(step) % 2)
 		xs = (200, 180, 120, 140, 160)
 		return types.SimpleNamespace(
@@ -1057,20 +1057,6 @@ def nodding_face():
 		)
 
 	return predict
-
-
-for mode in (3, 2):
-	stamp.options.update(timeout=2, failsafe=True)
-	stamp.config.read_dict({"video": {"rotate": str(mode)}})
-	stamp.video_capture = types.SimpleNamespace(
-		read_frame=lambda: (None, np.zeros((2, 4), np.uint8))
-	)
-	stamp.face_detector = lambda frame, upsample: (
-		[types.SimpleNamespace(rect="upright")] if frame.shape == (4, 2) else []
-	)
-	stamp.pose_predictor = nodding_face()
-	stamp.sleep = lambda seconds: None
-	check(f"a nod is seen with rotate = {mode}", stamp.run(), True)
 
 
 def blinking_camera():
@@ -1087,19 +1073,22 @@ def blinking_camera():
 	return types.SimpleNamespace(read_frame=read_frame)
 
 
-for mode, name, upright in (
-	(1, "an upright camera", lambda f: f.shape == (2, 4) and f[0, 0] == 255),
-	(1, "a sideways camera", lambda f: f.shape == (4, 2) and f[0, 1] == 255),
-	(2, "a sideways camera", lambda f: f.shape == (4, 2) and f[0, 1] == 255),
+for rotation, name, shape, mark in (
+	(0, "not turned", (2, 4), (0, 0)),
+	(3, "counterclockwise", (4, 2), (3, 0)),
+	(4, "clockwise", (4, 2), (0, 1)),
 ):
 	stamp.options.update(timeout=2, failsafe=True)
-	stamp.config.read_dict({"video": {"rotate": str(mode)}})
+	stamp.opencv = dict(stamp.opencv, rotation=rotation)
 	stamp.video_capture = blinking_camera()
-	stamp.face_detector = lambda frame, upsample, upright=upright: (
-		[types.SimpleNamespace(rect="upright")] if upright(frame) else []
+	stamp.face_detector = lambda frame, upsample, shape=shape, mark=mark: (
+		[types.SimpleNamespace(rect="face")]
+		if frame.shape == shape and frame[mark] == 255
+		else []
 	)
 	stamp.pose_predictor = nodding_face()
-	check(f"blinking IR, rotate = {mode}, {name}: a nod is seen", stamp.run(), True)
+	stamp.sleep = lambda seconds: None
+	check(f"blinking IR, the frames {name}: a nod is seen", stamp.run(), True)
 
 print("--- howdy set replaces a value on several lines")
 CONFIG = os.path.join(WORK_DIR, "etc", "config.ini")

@@ -4,14 +4,10 @@ import cv2
 
 from ..i18n import S
 from ..recorders.video_capture import NoDeviceException
-from ..rotation import rotate_frame, upright_rotations
+from ..rotation import rotate_frame
 
 # Import the root rubberstamp class
 from . import RubberStamp
-
-
-# How many frames in a row show no face before another way to turn them is tried
-EMPTY_FRAMES_BEFORE_TURN = 5
 
 
 class nod(RubberStamp):
@@ -34,14 +30,9 @@ class nod(RubberStamp):
 		# Contains booleans recording successful nods and their directions
 		recorded_nods = {"x": [], "y": []}
 
-		# The frames are turned and scaled like the ones of the authentication. With the
-		# alternating modes the way that shows a face is kept, the movement of the nose
-		# can only be followed in frames that are turned the same way.
-		rotations = upright_rotations(self.config.getint("video", "rotate", fallback=0))
-		rotation = 0
-		# Frames in a row without a face. One alone says nothing about the way the
-		# frames are turned: an IR emitter may light only every second one
-		empty_frames = 0
+		# The frames are turned like the one the face was recognised in, so that up and
+		# down stay what they are, and scaled like the ones of the authentication
+		rotation = self.opencv.get("rotation", 0)
 		scaling_factor = self.opencv.get("scaling_factor", 1)
 
 		starttime = time.monotonic()
@@ -57,7 +48,7 @@ class nod(RubberStamp):
 				print(exc.message)
 				return False
 
-			frame = rotate_frame(frame, rotations[rotation], 0)
+			frame = rotate_frame(frame, rotation, 0)
 			if scaling_factor != 1:
 				frame = cv2.resize(
 					frame,
@@ -74,16 +65,6 @@ class nod(RubberStamp):
 			face_locations = self.face_detector(frame, 1)
 
 			# Only continue if exactly 1 face is visible in the frame
-			if len(face_locations) > 0:
-				empty_frames = 0
-			elif len(rotations) > 1:
-				empty_frames += 1
-				if empty_frames == EMPTY_FRAMES_BEFORE_TURN:
-					# Try the next way, positions of the one before do not count there
-					rotation = (rotation + 1) % len(rotations)
-					empty_frames = 0
-					last_nosepoint = {"x": -1, "y": -1}
-					last_reldist = -1
 			if len(face_locations) != 1:
 				continue
 

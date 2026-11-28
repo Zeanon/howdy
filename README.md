@@ -449,7 +449,7 @@ Some cameras deliver an image that is rotated, for example the IR camera of the 
 | `3` | Always rotate 90° counter-clockwise |
 | `4` | Always rotate 90° clockwise |
 
-Modes 1 and 2 alternate the direction every frame, which lines up badly with IR emitters that light up every second frame. For a sideways mounted camera use `3` or `4`.
+Modes 1 and 2 alternate the direction every frame, which lines up badly with IR emitters that light up every second frame. For a sideways mounted camera use `3` or `4`. The nod rubber stamp turns its frames like the one the face was recognised in; with a camera that is always sideways and mode `1` that can be a lying face, where nodding and shaking the head are swapped.
 
 `howdy add` and `howdy test` only apply the fixed modes 3 and 4. They would flicker (test) or store models of mixed orientations (add) otherwise. A model is therefore always created from the same upright image that is used for authentication.
 

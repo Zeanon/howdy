@@ -617,7 +617,7 @@ Status Authenticator::run(const std::string& username, const Args& args, const R
 					*backend_,
 					clahe,
 					scaling_factor,
-					rotate_,
+					applied_rotation(rotate_, static_cast<int>(frames)),
 					control.cancel,
 					[&](const std::string& message) {
 						if (ui_uid_.has_value()) {

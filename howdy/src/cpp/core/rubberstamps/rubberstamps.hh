@@ -43,8 +43,9 @@ struct StampContext {
 	cv::Ptr<cv::CLAHE> clahe;
 	// Scaling of the frames, as used for the authentication
 	double scaling_factor;
-	// [video] rotate, only the fixed modes are applied
-	int rotate;
+	// How the frame the face was recognised in was turned, as a fixed rotate mode (0 is not
+	// turned). The stamps turn theirs the same way, so that up and down stay what they are
+	int rotation;
 	const std::atomic<bool>& cancel;
 	// Update the main text and the subtext of the auth popup
 	std::function<void(const std::string&)> set_message;

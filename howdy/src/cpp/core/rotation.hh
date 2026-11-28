@@ -1,7 +1,5 @@
 #pragma once
 
-#include <vector>
-
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -26,16 +24,6 @@ inline constexpr int ROTATE_FIXED_CW = 4;
 // store models of different orientations.
 [[nodiscard]] inline int fixed_rotation(int rotate) noexcept {
 	return (rotate == ROTATE_FIXED_CCW || rotate == ROTATE_FIXED_CW) ? rotate : 0;
-}
-
-// The ways a frame may have to be turned for an upright face, as fixed modes (0 is not turned):
-// one for the fixed modes, all of them for the alternating ones
-[[nodiscard]] inline std::vector<int> upright_rotations(int rotate) {
-	switch (rotate) {
-		case 1: return {0, ROTATE_FIXED_CCW, ROTATE_FIXED_CW};
-		case 2: return {ROTATE_FIXED_CCW, ROTATE_FIXED_CW};
-		default: return {fixed_rotation(rotate)};
-	}
 }
 
 // The fixed mode (0 is not turned) that rotate_frame() applies to the frame with this number.
