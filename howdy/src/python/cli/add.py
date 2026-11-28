@@ -178,9 +178,10 @@ async def _run(dialog=None):
 			say(S("Adding face model for the user ") + user)
 
 		label = S("Model #") + str(encodings[-1]["id"] + 1 if encodings else 0)
-		# Get the label from the cli arguments if provided
-		if builtins.howdy_args.arguments:
-			label = builtins.howdy_args.arguments[0]
+		# Get the label from the cli arguments if provided, an empty one (an empty field
+		# of the settings window) keeps the default
+		if builtins.howdy_args.arguments and builtins.howdy_args.arguments[0].strip():
+			label = builtins.howdy_args.arguments[0][:24]
 
 		# Keep the default name if we can't ask questions (-y, or no TTY / closed stdin
 		# as when the setup wizard / Settings runs add with capture_output).

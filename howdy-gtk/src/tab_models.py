@@ -50,6 +50,7 @@ def on_model_add(self, button):
 
 	# Create the input field
 	entry = gtk.Entry()
+	entry.set_max_length(24)
 	entry.connect("activate", lambda _: dialog.response(gtk.ResponseType.OK))
 
 	# Add a label to ask for a model name
