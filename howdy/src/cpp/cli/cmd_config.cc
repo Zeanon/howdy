@@ -228,7 +228,6 @@ int run_config(const Options& /*options*/, const std::vector<std::string>& origi
 
 	try {
 		run_program({editor, config_path().string()});
-		run_program({"systemctl", "restart", paths::AUTHENTICATION_SERVICE_NAME});
 	} catch (const std::exception& exc) {
 		std::cout << S("Failed to open editor: ") << exc.what() << '\n';
 	}

@@ -342,7 +342,8 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 
 	// A user without a face model is answered at once, without the camera and whatever else is running. The
 	// client must not tell it from a scan that is about to start, it would ask the user to look into the camera.
-	const bool has_model = self->authenticator_.has_face_model(username);
+	const Preview preview = self->authenticator_.preview(username);
+	const bool has_model = preview.has_face_model;
 
 	std::string request_id;
 	{
@@ -384,6 +385,7 @@ int AuthenticationService::method_start(sd_bus_message* message, void* userdata,
 		request->username = username;
 		request->args = std::move(args);
 		request->control.limit_timeout = !trusted;
+		request->control.config_changed = preview.config_changed;
 		request->control.extend_keepalive(INITIAL_KEEPALIVE);
 
 		self->requests_[request_id] = request;

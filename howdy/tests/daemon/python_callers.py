@@ -301,7 +301,7 @@ async def authentication():
 
 	# A user without a face model is answered at once, also while a scan runs, and is not made to wait
 	INTERFACE.authenticator = types.SimpleNamespace(
-		has_face_model=lambda username: False, start_cooldown=0
+		preview=lambda username: auth_module.Preview(False, False), start_cooldown=0
 	)
 	INTERFACE.active_request = "running"
 	started = await as_caller(":daemon", "StartAuthentication", "root", [])
@@ -321,7 +321,7 @@ async def authentication():
 		"running",
 	)
 	INTERFACE.authenticator = types.SimpleNamespace(
-		has_face_model=lambda username: True, start_cooldown=0
+		preview=lambda username: auth_module.Preview(True, False), start_cooldown=0
 	)
 	check(
 		"with a model the running scan makes the caller wait",
@@ -334,7 +334,7 @@ async def authentication():
 	nobody = pwd.getpwnam("nobody").pw_uid
 	INTERFACE.bus = Bus({":nobody": nobody})
 	INTERFACE.authenticator = types.SimpleNamespace(
-		has_face_model=lambda username: False, start_cooldown=60
+		preview=lambda username: auth_module.Preview(False, False), start_cooldown=60
 	)
 	first = await as_caller(":nobody", "StartAuthentication", "nobody", [])
 	check("cooldown: the first request is accepted", isinstance(first, str), True)
@@ -350,12 +350,12 @@ async def authentication():
 	reads = []
 	model = [True]
 
-	def has_face_model(username):
+	def preview(username):
 		reads.append(username)
-		return model[0]
+		return auth_module.Preview(model[0], False)
 
 	INTERFACE.authenticator = types.SimpleNamespace(
-		has_face_model=has_face_model,
+		preview=preview,
 		start_cooldown=60,
 		authenticate=lambda *args: auth_module.HowdyStatus.Success,
 	)
@@ -1089,6 +1089,65 @@ for rotation, name, shape, mark in (
 	stamp.pose_predictor = nodding_face()
 	stamp.sleep = lambda seconds: None
 	check(f"blinking IR, the frames {name}: a nod is seen", stamp.run(), True)
+
+print("--- the daemon loads a changed config")
+daemon = object.__new__(auth_module.HowdyAuthenticator)
+loaded = []
+daemon.__dict__.update(
+	_models_lock=threading.Lock(),
+	_model_options=None,
+	_config_loaded=None,
+	_initialized=False,
+	_prune_snapshots=lambda: None,
+	_initialize_models=lambda: loaded.append(daemon.use_cnn),
+	_initialize_checks=lambda: None,
+)
+
+
+def request():
+	"""What a request does with the config"""
+	return daemon._load_if_needed(daemon.preview("nobody-here").config_changed)
+
+
+def write_config(text):
+	path = auth_module.paths_factory.config_file_path()
+	os.makedirs(os.path.dirname(path), exist_ok=True)
+	with open(path, "w") as handle:
+		handle.write("[face_authentication]\n" + text)
+
+
+write_config("certainty = 75\n")
+check("the first load", (request(), loaded), (True, [False]))
+before = daemon.certainty
+write_config("certainty = 99\n")
+check(
+	"another certainty, the same models",
+	(request(), daemon.certainty != before, loaded),
+	(True, True, [False]),
+)
+write_config("use_cnn = true\n")
+check(
+	"another detector, new models",
+	(request(), loaded),
+	(True, [False, True]),
+)
+check(
+	"an unchanged file is not loaded again",
+	(request(), loaded),
+	(True, [False, True]),
+)
+write_config("use_cnn = perhaps\n")
+check("a value that can't be read", request(), False)
+check("and the next time", request(), False)
+check(
+	"the request goes on to say so", daemon.preview("nobody-here").has_face_model, True
+)
+write_config("use_cnn = true\n")
+check(
+	"the repaired config",
+	(request(), loaded),
+	(True, [False, True, True]),
+)
 
 print("--- howdy set replaces a value on several lines")
 CONFIG = os.path.join(WORK_DIR, "etc", "config.ini")

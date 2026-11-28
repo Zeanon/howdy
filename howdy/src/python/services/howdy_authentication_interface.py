@@ -18,6 +18,7 @@ import numpy as np
 from enum import StrEnum
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple
 
 from dbus_next import DBusError, MessageType
 from dbus_next.service import ServiceInterface, method
@@ -93,6 +94,11 @@ def probability_to_certainty(probability):
 	return 0.5 * ((100.0 - p) / 50.0) ** 0.569323
 
 
+class Preview(NamedTuple):
+	has_face_model: bool
+	config_changed: bool
+
+
 class HowdyAuthenticator:
 	def __init__(self, auth_ui):
 		self._camera_lock = threading.Lock()
@@ -112,26 +118,100 @@ class HowdyAuthenticator:
 		self.texture_detector = None
 		self.similarity_detector = None
 
+		# Held while the config and the models are replaced, and by preview(),
+		# which runs on another thread
+		self._models_lock = threading.Lock()
+		self._config_loaded = None
+		self._model_options = None
+		# Read before it is parsed, so that a change in between is seen at the next
+		# request
+		self._load(self._config_text())
+
+	@staticmethod
+	def _config_text():
+		"""None if the config file can not be read"""
+		try:
+			with open(paths_factory.config_file_path(), "rb") as config_file:
+				return config_file.read()
+		except OSError:
+			return None
+
+	def _load(self, text):
+		"""Apply the config, the models are only loaded if their options changed"""
+		self._initialized = False
 		self._read_config()
 		# Old snapshots go away even if no new ones are saved any more
 		self._prune_snapshots()
-		self._initialize_models()
 
+		options = (
+			self.use_openvino,
+			self.use_cnn,
+			self.openvino_device,
+			self.use_anti_spoof,
+			self.use_damo_flir,
+			self.use_micromotion_detection,
+			# The nod rubber stamp needs the landmarks
+			self.config.getboolean("rubberstamps", "enabled", fallback=False),
+		)
+		if options != self._model_options:
+			self._model_options = None
+			self._initialize_models()
+			self._model_options = options
+		self._initialize_checks()
+
+		self._config_loaded = text
 		self._initialized = True
 
-	def has_face_model(self, username):
-		"""Whether the user has a face model, otherwise there is nothing to look for.
-		True if that can not be said, the authentication then reports what is wrong."""
+	def _load_if_needed(self, changed):
+		"""Load the config file if it was changed or the last try failed, False if it
+		fails now"""
+		if self._initialized and not changed:
+			return True
+		with self._models_lock:
+			text = self._config_text()
+			# A file that can not be read right now, while an editor replaces it, keeps
+			# the settings
+			if self._initialized and text is None:
+				return True
+
+			syslog.syslog(syslog.LOG_INFO, "Loading the changed config")
+			try:
+				self._load(text)
+			# The models end the process if they can't be loaded at its start
+			except (Exception, SystemExit):
+				syslog.syslog(syslog.LOG_ERR, "Could not load the changed config")
+				syslog.syslog(syslog.LOG_ERR, traceback.format_exc())
+				# Nothing is authenticated with half of it, the next request tries again
+				self._model_options = None
+				return False
+			return True
+
+	def preview(self, username):
+		"""What is known about a request before it starts: whether the user has a face
+		model, otherwise there is nothing to look for, and whether the config file was
+		changed, the authentication has to load it then. It is the one place where the
+		file is compared. A model is also reported if that can not be said, the
+		authentication then reports what is wrong."""
+		if not self._models_lock.acquire(blocking=False):
+			# It is loaded right now, the authentication looks again
+			return Preview(True, True)
 		try:
+			text = self._config_text()
+			changed = text is not None and text != self._config_loaded
+			# The models in use may not be the ones the authentication takes
+			if changed or not self._initialized:
+				return Preview(True, changed)
 			models = json.loads(
 				read_model_file(paths_factory.user_model_path(username), username)
 			)
 			encodings, _ = flatten_models(models, 256 if self.use_openvino else 128)
-			return len(encodings) > 0
+			return Preview(len(encodings) > 0, False)
 		except FileNotFoundError:
-			return False
+			return Preview(False, False)
 		except Exception:
-			return True
+			return Preview(True, False)
+		finally:
+			self._models_lock.release()
 
 	def _read_config(self):
 		self.config = configparser.ConfigParser()
@@ -291,6 +371,14 @@ class HowdyAuthenticator:
 		return result
 
 	def _initialize_models(self):
+		# The old ones go first, and none stays of a check that is turned off now
+		self.face_encoder = None
+		self.face_detector = None
+		self.pose_predictor = None
+		self.spoof_detector = None
+		self.spoof_detector_flir = None
+		self.micromotion_detector = None
+
 		# fmt: off
 		# Start face detector, encoder and predictor
 		if self.use_openvino:
@@ -364,7 +452,13 @@ class HowdyAuthenticator:
 			if self.use_micromotion_detection:
 				from . import dlib_face
 				self.micromotion_detector = dlib_face.MicroMotionDetector()
+		# fmt: on
 
+	def _initialize_checks(self):
+		"""The checks without a model"""
+		self.texture_detector = None
+		self.similarity_detector = None
+		# fmt: off
 		if self.use_texture_detection or self.use_similarity_detection:
 			from . import anti_spoof_core
 			if self.use_texture_detection:
@@ -373,16 +467,16 @@ class HowdyAuthenticator:
 				self.similarity_detector = anti_spoof_core.SimilarityDetector()
 		# fmt: on
 
-	def authenticate(self, username, args, cancel_event, timeout):
+	def authenticate(self, username, args, cancel_event, timeout, config_changed=False):
 		# Returns Success, NoMatch, Timeout, NoDevice, Cancelled or Error.
-
-		if not self._initialized:
-			return HowdyStatus.NotInitialized
 
 		# Only one instance can use the camera at the same time.
 		with self._camera_lock:
 			if cancel_event.is_set():
 				return HowdyStatus.Cancelled
+			# Whatever changed the config, howdy set or an editor, it counts from now on
+			if not self._load_if_needed(config_changed):
+				return HowdyStatus.NotInitialized
 
 			try:
 				self._cleaned_up = False
@@ -925,7 +1019,8 @@ class AuthenticationInterface(ServiceInterface):
 		# A user without a face model is answered at once, without the camera and
 		# whatever else is running. The client must not tell it from a scan that is
 		# about to start, it would ask the user to look into the camera.
-		has_model = self.authenticator.has_face_model(username)
+		preview = self.authenticator.preview(username)
+		has_model = preview.has_face_model
 
 		with self.lock:
 			if has_model and self.active_request is not None:
@@ -974,7 +1069,7 @@ class AuthenticationInterface(ServiceInterface):
 		def run_authentication():
 			try:
 				result = self.authenticator.authenticate(
-					username, args, cancel_event, timeout
+					username, args, cancel_event, timeout, preview.config_changed
 				)
 			except Exception:
 				syslog.syslog(syslog.LOG_ERR, "Authentication worker failed")

@@ -345,7 +345,7 @@ If the camera shows an image but the emitter doesn't light up, take a look at [l
 
 ### 2. Configure Howdy
 
-Open the configuration with `sudo howdy config` (or edit `/usr/local/etc/howdy/config.ini`) and set at least:
+Open the configuration with `sudo howdy config` (or edit `/usr/local/etc/howdy/config.ini`) and set at least (the daemon loads a changed config at the next authentication, it needs no restart):
 
 - `device_path` in `[video]` to the camera from step 1
 - `dark_threshold` in `[video]` if scans are rejected as too dark. A larger value accepts darker images.

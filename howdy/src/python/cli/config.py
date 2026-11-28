@@ -77,7 +77,6 @@ if editor:
 	# Open the editor as a subprocess and fork it
 	try:
 		subprocess.call([editor, paths_factory.config_file_path()])
-		subprocess.call(["systemctl", "restart", "@howdy_authentication_service_name@"])
 	except Exception as exc:
 		print(S("Failed to open editor: {}").format(exc))
 

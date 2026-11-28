@@ -38,6 +38,11 @@ NOLIVE=(
 
 # The daemon reads the config once at startup
 DPID=""
+# change_config [SECTION.KEY=VALUE ...], the running daemon reads it at the next request
+change_config() {
+	"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$CONFIG_TEMPLATE" "$T/etc/config.ini" "${BASE[@]}" "$@"
+}
+
 start_daemon() {
 	"$HOWDY_PYTHON" -I "$TEST_DIR/mkconf.py" "$CONFIG_TEMPLATE" "$T/etc/config.ini" "${BASE[@]}" "$@"
 	if [ -n "$DPID" ]; then
@@ -62,10 +67,15 @@ rm -f "$MODEL"
 E "no model" NO_ENROLLED_FACE
 cp "$T/genuine.dat" "$MODEL"
 E "genuine face" SUCCESS
-# The thresholds come from the config file, the daemon reads it once at startup
-start_daemon "${NOLIVE[@]}" face_authentication.certainty=99
-E "genuine, strict certainty=99 in the config" TIMEOUT
-start_daemon "${NOLIVE[@]}"
+# The thresholds come from the config file, a change counts without a restart of the daemon
+change_config "${NOLIVE[@]}" face_authentication.certainty=99
+E "genuine, strict certainty=99 in the changed config" TIMEOUT
+change_config "${NOLIVE[@]}" face_authentication.use_cnn=true face_authentication.timeout=120
+E "the changed config takes other models" SUCCESS
+change_config "${NOLIVE[@]}" face_authentication.timeout=nonsense
+E "a changed config that can not be applied" NOT_INITIALIZED
+change_config "${NOLIVE[@]}"
+E "the repaired config" SUCCESS
 E "invalid argument" ERROR timeout=abc
 E "a threshold can not be set by an argument" SUCCESS certainty=1 confirmations=99 anti-spoof-threshold=0
 # The ffmpeg reader scales the picture to the size of the config, here only the width is set

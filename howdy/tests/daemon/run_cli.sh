@@ -393,7 +393,7 @@ chmod +x "$T/bin/systemctl" "$T/bin/fake-editor"
 run env EDITOR="$T/bin/fake-editor" PATH="$T/bin:$PATH" unshare -r "$HOWDY" config
 expect "config opens the editor" "$output" "Opening config.ini in fake-editor"
 expect "config was edited" "$(tail -1 "$T/etc/config.ini")" "# edited"
-expect "config restarts the authentication" "$(cat "$T/systemctl.log")" "restart howdy-authentication-test.service"
+expect "config leaves the services alone, they read it themselves" "$(cat "$T/systemctl.log")" ""
 
 echo "--- cli, snapshot"
 write_config "$T/still.mp4"

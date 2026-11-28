@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "config.hh"
@@ -65,6 +66,9 @@ struct RequestControl {
 	std::atomic<bool> cancel{false};
 	// The caller has no privileges: the timeout it asks for is limited. Set before the worker gets the request
 	bool limit_timeout = false;
+	// The config file is not the one that was loaded, see Authenticator::preview(). Set before
+	// the worker gets the request
+	bool config_changed = false;
 	// The client has to poll GetResult regularly, otherwise the
 	// authentication stops once this deadline is reached.
 	std::atomic<Clock::rep> keepalive_deadline{0};
@@ -78,21 +82,30 @@ struct RequestControl {
 	}
 };
 
+// What is known about a request before it starts
+struct Preview {
+	// Whether the user has a face model, otherwise there is nothing to look for. True if that
+	// can not be said, the authentication then reports what is wrong.
+	bool has_face_model = true;
+	// The config file was changed, the authentication has to load it first
+	bool config_changed = false;
+};
+
 class Authenticator {
   public:
 	// Throws ModelException (or other exceptions) if the models can not be loaded
 	explicit Authenticator(PopupSink& popup);
 
-	// args: show-auth-popup[=bool] and timeout=<time>
+	// args: show-auth-popup[=bool] and timeout=<time>. With control.config_changed the config is
+	// loaded first, NotInitialized if that fails
 	Status authenticate(const std::string& username, const std::vector<std::string>& args, const RequestControl& control);
 
-	// Whether the user has a face model, otherwise there is nothing to look for. True if that
-	// can not be said, the authentication then reports what is wrong.
-	[[nodiscard]] bool has_face_model(const std::string& username) const;
+	// Called for every request, the one place where the config file is compared
+	[[nodiscard]] Preview preview(const std::string& username) const;
 
 	// How long a caller without privileges has to wait after its authentication to start the next one
 	[[nodiscard]] std::chrono::seconds start_cooldown() const {
-		return start_cooldown_;
+		return start_cooldown_.load();
 	}
 
   private:
@@ -102,8 +115,16 @@ class Authenticator {
 		double timeout;
 	};
 
+	// What decides which models are loaded: use_openvino, use_cnn, openvino_device, the two anti
+	// spoof checks and whether landmarks are needed
+	using ModelOptions = std::tuple<bool, bool, std::string, bool, bool, bool>;
+
 	void read_config();
-	void initialize_models();
+	// Apply config_, the models are only loaded if their options changed
+	void load_settings();
+	void initialize_models(bool landmarks);
+	// Load the config file if it was changed or the last try failed, false if it fails now
+	[[nodiscard]] bool load_if_needed(bool changed);
 	[[nodiscard]] Args parse_args(const std::vector<std::string>& args, bool limit_timeout) const;
 	Status run(const std::string& username, const Args& args, const RequestControl& control);
 	void cleanup();
@@ -111,7 +132,14 @@ class Authenticator {
 	PopupSink& popup_;
 	std::mutex camera_lock_;
 
+	// The config file as it was loaded last, to see whether it was changed
+	std::string config_path_;
+	std::optional<std::string> config_text_;
 	Config config_;
+	std::optional<ModelOptions> model_options_;
+	// Held while the config and the models are replaced, and by preview(), which runs
+	// on another thread
+	mutable std::mutex models_mutex_;
 	std::unique_ptr<VideoCapture> video_capture_;
 	std::optional<std::uint32_t> ui_uid_;
 
@@ -126,7 +154,8 @@ class Authenticator {
 	bool use_cnn_ = false;
 	bool use_openvino_ = false;
 	double timeout_ = 4;
-	std::chrono::seconds start_cooldown_{2};
+	// Read by the thread of the bus while another one loads the config
+	std::atomic<std::chrono::seconds> start_cooldown_{std::chrono::seconds(2)};
 	// The certainty of the config as a distance (dlib) or as a similarity (OpenVINO)
 	double certainty_ = 75;
 	int confirmations_ = 5;

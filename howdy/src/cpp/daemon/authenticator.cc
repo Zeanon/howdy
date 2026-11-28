@@ -5,6 +5,8 @@
 #include <cmath>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -95,9 +97,25 @@ void make_snapshot(
 	}
 }
 
+// std::nullopt if the file can not be read
+std::optional<std::string> file_text(const std::string& path) {
+	std::ifstream file(path, std::ios::binary);
+	if (!file) {
+		return std::nullopt;
+	}
+	return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
 } // namespace
 
-Authenticator::Authenticator(PopupSink& popup) : popup_(popup), config_((std::filesystem::path(paths::CONFIG_DIR) / "config.ini").string()) {
+Authenticator::Authenticator(PopupSink& popup)
+	: popup_(popup), config_path_((std::filesystem::path(paths::CONFIG_DIR) / "config.ini").string()),
+	  // Read before it is parsed, so that a change in between is seen at the next request
+	  config_text_(file_text(config_path_)), config_(config_path_) {
+	load_settings();
+}
+
+void Authenticator::load_settings() {
 	if (config_.parse_error() != 0) {
 		log(LOG_WARNING, "Could not parse the config file completely, error at line " + std::to_string(config_.parse_error()));
 	}
@@ -108,7 +126,47 @@ Authenticator::Authenticator(PopupSink& popup) : popup_(popup), config_((std::fi
 	} catch (const std::exception& exc) {
 		log(LOG_WARNING, std::string("Could not delete the old snapshots: ") + exc.what());
 	}
-	initialize_models();
+
+	// The nod rubber stamp needs the landmarks too
+	const bool landmarks = use_micromotion_detection_ || config_.get_bool("rubberstamps", "enabled", false);
+	const ModelOptions options{use_openvino_, use_cnn_, openvino_device_, use_anti_spoof_, use_damo_flir_, landmarks};
+	if (model_options_ != options) {
+		model_options_.reset();
+		initialize_models(landmarks);
+		model_options_ = options;
+	}
+
+	similarity_detector_.reset();
+	if (use_similarity_detection_) {
+		similarity_detector_.emplace();
+	}
+}
+
+bool Authenticator::load_if_needed(bool changed) {
+	// Without models the last try has failed
+	if (backend_ && !changed) {
+		return true;
+	}
+	const std::lock_guard<std::mutex> lock(models_mutex_);
+	auto text = file_text(config_path_);
+	// A file that can not be read right now, while an editor replaces it, keeps the settings
+	if (backend_ && !text.has_value()) {
+		return true;
+	}
+
+	log(LOG_INFO, "Loading the changed config");
+	try {
+		config_ = Config(config_path_);
+		load_settings();
+		config_text_ = std::move(text);
+	} catch (const std::exception& exc) {
+		log(LOG_ERR, std::string("Could not load the changed config: ") + exc.what());
+		// Nothing is authenticated with half of it, the next request tries again
+		backend_.reset();
+		model_options_.reset();
+		return false;
+	}
+	return true;
 }
 
 void Authenticator::read_config() {
@@ -161,12 +219,20 @@ void Authenticator::read_config() {
 	openvino_device_ = trim(to_upper(config_.get("video", "openvino_device", "GPU")), "\"");
 }
 
-void Authenticator::initialize_models() {
+void Authenticator::initialize_models(bool landmarks) {
+	// The old ones go first, both at once could be too much for a GPU
+	backend_.reset();
+#ifdef HOWDY_WITH_OPENVINO
+	spoof_detector_.reset();
+	spoof_detector_flir_.reset();
+#else
+	static_cast<void>(landmarks);
+#endif
+
 	if (use_openvino_) {
 #ifdef HOWDY_WITH_OPENVINO
 		try {
-			// The nod rubber stamp needs the landmarks too
-			backend_ = create_openvino_backend(openvino_device_, use_micromotion_detection_ || config_.get_bool("rubberstamps", "enabled", false));
+			backend_ = create_openvino_backend(openvino_device_, landmarks);
 			if (use_anti_spoof_) {
 				spoof_detector_ = std::make_unique<SpoofDetector>(openvino_device_);
 			}
@@ -196,10 +262,6 @@ void Authenticator::initialize_models() {
 			log(LOG_ERR, "\tsudo ./install.sh");
 			throw;
 		}
-	}
-
-	if (use_similarity_detection_) {
-		similarity_detector_.emplace();
 	}
 }
 
@@ -238,14 +300,14 @@ Authenticator::Args Authenticator::parse_args(const std::vector<std::string>& ar
 }
 
 Status Authenticator::authenticate(const std::string& username, const std::vector<std::string>& args, const RequestControl& control) {
-	if (!backend_) {
-		return Status::NotInitialized;
-	}
-
 	// Only one instance can use the camera at the same time.
 	const std::lock_guard<std::mutex> lock(camera_lock_);
 	if (control.cancel.load()) {
 		return Status::Cancelled;
+	}
+	// Whatever changed the config, howdy set or an editor, it counts from now on
+	if (!load_if_needed(control.config_changed)) {
+		return Status::NotInitialized;
 	}
 
 	// Release the camera and close the popup, however this function is left
@@ -310,16 +372,27 @@ void Authenticator::cleanup() {
 	}
 }
 
-bool Authenticator::has_face_model(const std::string& username) const {
+Preview Authenticator::preview(const std::string& username) const {
+	Preview result;
 	try {
-		if (!backend_) {
-			return true;
+		const std::unique_lock<std::mutex> lock(models_mutex_, std::try_to_lock);
+		// It is loaded right now, the authentication looks again
+		if (!lock.owns_lock()) {
+			result.config_changed = true;
+			return result;
+		}
+		const auto text = file_text(config_path_);
+		result.config_changed = text.has_value() && text != config_text_;
+		// The models in use may not be the ones the authentication takes
+		if (result.config_changed || !backend_) {
+			return result;
 		}
 		const auto loaded = load_user_encodings(username, backend_->encoding_size());
-		return loaded.has_value() && !loaded->empty();
+		result.has_face_model = loaded.has_value() && !loaded->empty();
 	} catch (const std::exception&) {
-		return true;
+		result.has_face_model = true;
 	}
+	return result;
 }
 
 Status Authenticator::run(const std::string& username, const Args& args, const RequestControl& control) { // NOLINT(readability-function-cognitive-complexity)
