@@ -174,7 +174,9 @@ def on_model_delete(self, button):
 		seconds = listmodel.get_value(tree_iter, 3)
 
 		dialog = gtk.MessageDialog(
-			parent=self, flags=gtk.DialogFlags.MODAL, buttons=gtk.ButtonsType.OK_CANCEL
+			parent=self.window,
+			flags=gtk.DialogFlags.MODAL,
+			buttons=gtk.ButtonsType.OK_CANCEL,
 		)
 		dialog.set_title(S("Confirm Model Deletion"))
 		# The name is text, not markup: "&" or "<" in it would break the dialog
